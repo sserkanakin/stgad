@@ -1,0 +1,10 @@
+dataset: pemsbay
+num_nodes: 325
+raw_h5: data/raw/PEMS-BAY.h5
+adj_pkl: data/raw/adj_mx_pemsbay.pkl
+t_in: 12
+t_out: 12
+stride: 1
+split_train: 0.7
+split_val: 0.8
+tod_size: 288

@@ -1,0 +1,10 @@
+dataset: metrla
+num_nodes: 207
+raw_h5: data/raw/METR-LA.h5
+adj_pkl: data/raw/adj_mx_metrla.pkl
+t_in: 12
+t_out: 12
+stride: 1
+split_train: 0.7
+split_val: 0.8   # cumulative (0.7 train, 0.1 val, 0.2 test)
+tod_size: 288    # 5-min slots per day

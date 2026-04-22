@@ -1,0 +1,15 @@
+data/raw/
+data/processed/
+results/checkpoints/
+results/residuals/
+third_party/
+__pycache__/
+*.pyc
+.venv/
+wandb/
+*.pt
+*.h5
+*.pkl
+*.npz
+*.egg-info/
+.DS_Store

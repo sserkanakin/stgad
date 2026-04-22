@@ -1,0 +1,9 @@
+name: smoke_mac
+dataset: metrla
+seed: 0
+backbone_epochs: 1
+diffusion_epochs: 5
+batch_size: 16
+n_samples_eval: 20
+prior: kronecker
+wandb_mode: offline

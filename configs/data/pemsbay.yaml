@@ -1,6 +1,6 @@
 dataset: pemsbay
 num_nodes: 325
-raw_h5: data/raw/PEMS-BAY.h5
+raw_h5: data/raw/pems-bay.h5
 adj_pkl: data/raw/adj_mx_pemsbay.pkl
 t_in: 12
 t_out: 12

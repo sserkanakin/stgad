@@ -1,0 +1,18 @@
+# Graph WaveNet hyperparameters — num_nodes overridden per dataset
+in_dim: 2             # speed + time_of_day
+out_dim: 12           # predict all 12 horizons at once
+residual_channels: 32
+dilation_channels: 32
+skip_channels: 256
+end_channels: 512
+kernel_size: 2
+blocks: 4
+layers: 2
+gcn_bool: true
+addaptadj: true
+aptinit: null
+
+# Training
+lr: 1.0e-3
+batch_size: 64
+epochs: 100

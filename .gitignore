@@ -13,3 +13,4 @@ wandb/
 *.npz
 *.egg-info/
 .DS_Store
+.env

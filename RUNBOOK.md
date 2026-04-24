@@ -177,6 +177,56 @@ tmux kill-session -t <session-name>
 
 ---
 
+## Phase 3 — Residual analysis
+
+Open `notebooks/02_residual_analysis.ipynb` and run all cells.
+
+Figures are saved to `results/figures/`. All four go/no-go checks should print PASS:
+- Variance vs horizon (monotone growth)
+- Σ_Q temporal structure (AR-type decay)
+- Σ_S spectral concentration (low-frequency energy)
+- Kronecker separability error (< 40%)
+
+---
+
+## Phase 4 — Prior fitting
+
+Run after GWN residuals are extracted.  Each command takes < 2 min on M-series Mac.
+
+```bash
+# Fit prior on METR-LA (GWN backbone)
+python scripts/fit_prior.py --backbone gwn --dataset metrla
+
+# Fit prior on PEMS-BAY (GWN backbone)
+python scripts/fit_prior.py --backbone gwn --dataset pemsbay
+```
+
+Expected output per run:
+- Fitted parameters printed to stdout: δ_h, α, ρ₁, ρ₂, β, σ
+- Covariance check: relative Frobenius error < 0.15 → `[PASS]`
+- Tweedie check: MSE ratio ≈ 1.0 ± 10% for τ=0.5, 1.0, 2.0 → `[PASS]`
+- `*** GO ***` printed at the end
+
+Outputs:
+```
+results/prior_params/gwn_metrla.yaml
+results/prior_params/gwn_pemsbay.yaml
+results/figures/fig_prior_samples_covariance_check_gwn_metrla.png
+results/figures/fig_prior_samples_covariance_check_gwn_pemsbay.png
+```
+
+If a check fails (`NO-GO`), the script exits with code 1.  Investigate the figure
+to identify which component is misfitting.
+
+### Optional: DCRNN backbone (after DCRNN training converges)
+
+```bash
+python scripts/fit_prior.py --backbone dcrnn --dataset metrla
+python scripts/fit_prior.py --backbone dcrnn --dataset pemsbay
+```
+
+---
+
 ## wandb offline workflow (no wifi)
 
 ```bash

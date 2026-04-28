@@ -52,17 +52,8 @@ for f in "$RAW/METR-LA.h5" "$RAW/PEMS-BAY.h5" "$RAW/adj_mx_metrla.pkl" "$RAW/adj
 done
 
 echo ""
-echo "=== Backbone repos (Phase 2) ==="
+echo "=== Backbone repo (Phase 2) ==="
 mkdir -p third_party
-
-if [ ! -d "third_party/DCRNN_PyTorch" ]; then
-    echo "  Cloning DCRNN_PyTorch ..."
-    git clone https://github.com/chnsh/DCRNN_PyTorch.git third_party/DCRNN_PyTorch
-    cd third_party/DCRNN_PyTorch && git checkout d92490b && cd ../..
-    echo "  Pinned DCRNN_PyTorch to d92490b"
-else
-    echo "  Already exists, skipping: third_party/DCRNN_PyTorch"
-fi
 
 if [ ! -d "third_party/Graph-WaveNet" ]; then
     echo "  Cloning Graph-WaveNet ..."

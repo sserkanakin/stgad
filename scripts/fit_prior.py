@@ -1,15 +1,15 @@
-"""Fit Kronecker prior parameters from training-set residuals.
+"""Fit Kronecker prior parameters from GWN training-set residuals.
 
 Usage:
-    python scripts/fit_prior.py --backbone gwn --dataset metrla
-    python scripts/fit_prior.py --backbone gwn --dataset pemsbay
+    python scripts/fit_prior.py --dataset metrla
+    python scripts/fit_prior.py --dataset pemsbay
 
 Outputs
 -------
-results/prior_params/{backbone}_{dataset}.yaml
+results/prior_params/gwn_{dataset}.yaml
     Prior parameters: delta_h, alpha, rho1, rho2, beta, epsilon_s, sigma.
 
-results/figures/fig_prior_samples_covariance_check_{backbone}_{dataset}.png
+results/figures/fig_prior_samples_covariance_check_gwn_{dataset}.png
     Six-panel diagnostic figure.
 
 Exit codes: 0 = GO (all checks pass), 1 = NO-GO (at least one check failed).
@@ -43,13 +43,15 @@ from src.diffusion.prior_fit import (
     sample_prior,
 )
 
+_BACKBONE = "gwn"
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # I/O helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _load_residuals(backbone: str, dataset: str, seed: int):
-    """Load training residuals from results/residuals/.
+def _load_residuals(dataset: str, seed: int):
+    """Load GWN training residuals from results/residuals/.
 
     Returns
     -------
@@ -58,13 +60,13 @@ def _load_residuals(backbone: str, dataset: str, seed: int):
     """
     path = (
         ROOT / "results" / "residuals"
-        / f"{backbone}_{dataset}_train_seed{seed}.npz"
+        / f"{_BACKBONE}_{dataset}_train_seed{seed}.npz"
     )
     if not path.exists():
         raise FileNotFoundError(
             f"Residuals not found: {path}\n"
             "Run: python scripts/extract_residuals.py "
-            f"--backbone {backbone} --dataset {dataset} --seed {seed}"
+            f"--dataset {dataset} --seed {seed}"
         )
     data = np.load(path)
     r    = data["residuals"].squeeze(-1).astype(np.float32)  # (N_win, 12, N)
@@ -219,7 +221,6 @@ def _tweedie_check(
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _make_figure(
-    backbone: str,
     dataset: str,
     params: dict,
     Q_H: np.ndarray,
@@ -242,7 +243,7 @@ def _make_figure(
 
     fig, axes = plt.subplots(2, 3, figsize=(15, 9))
     fig.suptitle(
-        f"Prior fitting diagnostics — {backbone.upper()} / {dataset.upper()}",
+        f"Prior fitting diagnostics — {_BACKBONE.upper()} / {dataset.upper()}",
         fontsize=13, y=0.98,
     )
 
@@ -353,11 +354,7 @@ def _to_yaml_native(obj):
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Fit Kronecker prior parameters from backbone training residuals."
-    )
-    parser.add_argument(
-        "--backbone", choices=["gwn", "dcrnn"], default="gwn",
-        help="Backbone model whose residuals to use (default: gwn)",
+        description="Fit Kronecker prior parameters from GWN training residuals."
     )
     parser.add_argument(
         "--dataset", choices=["metrla", "pemsbay"], required=True,
@@ -365,7 +362,7 @@ def main() -> int:
     )
     parser.add_argument(
         "--seed", type=int, default=0,
-        help="Backbone training seed used when extracting residuals (default: 0)",
+        help="GWN training seed used when extracting residuals (default: 0)",
     )
     parser.add_argument(
         "--epsilon_s", type=float, default=1e-2,
@@ -379,13 +376,13 @@ def main() -> int:
 
     print(f"\n{'='*60}")
     print(f"  Phase 4 — Prior fitting")
-    print(f"  backbone={args.backbone}  dataset={args.dataset}  seed={args.seed}")
+    print(f"  backbone={_BACKBONE}  dataset={args.dataset}  seed={args.seed}")
     print(f"  ε_s={args.epsilon_s}  ε_target={args.eps_target}")
     print(f"{'='*60}\n")
 
     # ── 1. Load data ──────────────────────────────────────────────────────────
     print("[1/5] Loading residuals …")
-    r, mask = _load_residuals(args.backbone, args.dataset, args.seed)
+    r, mask = _load_residuals(args.dataset, args.seed)
     print(f"      residuals: {r.shape}  mask: {mask.shape}")
     print(f"      valid fraction: {mask.mean():.3f}")
 
@@ -441,9 +438,9 @@ def main() -> int:
     out_dir = ROOT / "results" / "prior_params"
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    yaml_path = out_dir / f"{args.backbone}_{args.dataset}.yaml"
+    yaml_path = out_dir / f"{_BACKBONE}_{args.dataset}.yaml"
     yaml_data = {
-        "backbone":   args.backbone,
+        "backbone":   _BACKBONE,
         "dataset":    args.dataset,
         "seed":       args.seed,
         "epsilon_s":  float(params["epsilon_s"]),
@@ -477,10 +474,9 @@ def main() -> int:
 
     fig_path = (
         ROOT / "results" / "figures"
-        / f"fig_prior_samples_covariance_check_{args.backbone}_{args.dataset}.png"
+        / f"fig_prior_samples_covariance_check_{_BACKBONE}_{args.dataset}.png"
     )
     _make_figure(
-        backbone      = args.backbone,
         dataset       = args.dataset,
         params        = params,
         Q_H           = Q_H,

@@ -1,17 +1,17 @@
-"""Train a graph backbone (DCRNN or Graph WaveNet) and save the best checkpoint.
+"""Train the Graph WaveNet backbone and save the best checkpoint.
 
 Full training is run by the user on their Mac (see RUNBOOK.md).
 Claude Code only executes smoke-test mode (--smoke) as a wiring check.
 
 Usage:
     # Full training (user runs this):
-    python scripts/train_backbone.py --backbone dcrnn --dataset metrla --seed 0
+    python scripts/train_backbone.py --dataset metrla --seed 0
 
     # Smoke test (1 epoch, batch_size=16, wandb disabled):
-    python scripts/train_backbone.py --backbone dcrnn --dataset metrla --seed 0 --smoke
+    python scripts/train_backbone.py --dataset metrla --seed 0 --smoke
 
     # Force fresh start (deletes checkpoint and resets wandb run):
-    python scripts/train_backbone.py --backbone dcrnn --dataset metrla --seed 0 --fresh
+    python scripts/train_backbone.py --dataset metrla --seed 0 --fresh
 """
 import argparse
 import json
@@ -24,7 +24,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from src.backbones import load_backbone, _NUM_NODES
+from src.backbones import load_backbone
 from src.data.adjacency import load_adjacency
 from src.data.dataset import TrafficDataset
 from src.utils.checkpoint import (
@@ -42,11 +42,11 @@ from src.utils.wandb_setup import init_wandb
 # Target MAE values for post-training sanity check (±5%)
 # ---------------------------------------------------------------------------
 _MAE_TARGETS = {
-    ("dcrnn", "metrla"):  {3: 2.48, 6: 2.74, 12: 3.10},
-    ("dcrnn", "pemsbay"): {3: 1.38, 6: 1.74, 12: 2.07},
-    ("gwn",   "metrla"):  {3: 2.69, 6: 3.07, 12: 3.53},
-    ("gwn",   "pemsbay"): {3: 1.30, 6: 1.63, 12: 1.95},
+    "metrla":  {3: 2.69, 6: 3.07, 12: 3.53},
+    "pemsbay": {3: 1.30, 6: 1.63, 12: 1.95},
 }
+
+_BACKBONE = "gwn"
 
 
 # ---------------------------------------------------------------------------
@@ -181,8 +181,7 @@ def eval_split(
 
 def main() -> None:  # noqa: C901
     """Entry point."""
-    parser = argparse.ArgumentParser(description="Train graph backbone (DCRNN or GWN).")
-    parser.add_argument("--backbone", choices=["dcrnn", "gwn"], required=True)
+    parser = argparse.ArgumentParser(description="Train the Graph WaveNet backbone.")
     parser.add_argument("--dataset", choices=["metrla", "pemsbay"], required=True)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--epochs", type=int, default=None,
@@ -200,11 +199,11 @@ def main() -> None:  # noqa: C901
     # ------------------------------------------------------------------ #
     # Configuration
     # ------------------------------------------------------------------ #
-    backbone_cfg = load_config(f"configs/backbone/{args.backbone}.yaml")
+    backbone_cfg = load_config(f"configs/backbone/{_BACKBONE}.yaml")
     data_cfg = load_config(f"configs/data/{args.dataset}.yaml")
 
     cfg = {
-        "backbone": args.backbone,
+        "backbone": _BACKBONE,
         "dataset": args.dataset,
         "seed": args.seed,
         **backbone_cfg,
@@ -237,7 +236,7 @@ def main() -> None:  # noqa: C901
     # Checkpoint directory and run ID
     # ------------------------------------------------------------------ #
     cfg_hash = hash_config({k: v for k, v in cfg.items() if k not in ("seed",)})
-    run_id = f"{args.backbone}_{args.dataset}_seed{args.seed}_{cfg_hash}"
+    run_id = f"{_BACKBONE}_{args.dataset}_seed{args.seed}_{cfg_hash}"
     ckpt_dir = Path(f"results/checkpoints/{run_id}")
     ckpt_dir.mkdir(parents=True, exist_ok=True)
 
@@ -270,7 +269,6 @@ def main() -> None:  # noqa: C901
     mean = train_ds.mean
     std = train_ds.std
 
-    # For DCRNN, pin_memory=False because DCRNN uses CPU even on MPS machines
     pin = device.type == "cuda"
     train_loader = DataLoader(
         train_ds, batch_size=batch_size, shuffle=True,
@@ -285,23 +283,11 @@ def main() -> None:  # noqa: C901
     # Model + optimiser
     # ------------------------------------------------------------------ #
     adj_mx = load_adjacency(ds_name)
-    model = load_backbone(args.backbone, ds_name, adj_mx, device)
-
-    # Use the effective device (DCRNN may fall back to CPU)
+    model = load_backbone(_BACKBONE, ds_name, adj_mx, device)
     eff_device = getattr(model, "effective_device", device)
 
-    # DCRNN creates its gconv/fc weight parameters lazily on the first forward
-    # pass (via LayerParams.get_weights / register_parameter).  We must trigger
-    # this before constructing the optimizer, otherwise the lazy parameters
-    # will not appear in the optimizer's param groups and won't be trained.
-    _N = _NUM_NODES[ds_name]
-    with torch.no_grad():
-        _dummy = torch.zeros(1, 12, _N, 2).to(eff_device)
-        model(_dummy)
-    del _dummy
-
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    print(f"Backbone: {args.backbone}/{ds_name} | params={n_params:,} | device={eff_device}")
+    print(f"Backbone: {_BACKBONE}/{ds_name} | params={n_params:,} | device={eff_device}")
 
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
@@ -425,7 +411,7 @@ def main() -> None:  # noqa: C901
         print("\n--- Test MAE ---")
         for h, mae in sorted(test_mae.items()):
             label = f"h{h} ({h*5}min)"
-            targets = _MAE_TARGETS.get((args.backbone, ds_name), {})
+            targets = _MAE_TARGETS.get(ds_name, {})
             target = targets.get(h, None)
             flag = ""
             if target is not None:

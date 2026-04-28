@@ -1,15 +1,14 @@
-"""Extract backbone residuals (y_true_raw − y_pred_raw) and save to results/residuals/.
+"""Extract GWN residuals (y_true_raw − y_pred_raw) and save to results/residuals/.
 
-Loads the best checkpoint for a trained backbone, runs inference on train/val/test,
-inverse-transforms predictions to raw mph, computes residuals, and saves one .npz
-per split.
+Loads the best GWN checkpoint, runs inference on train/val/test, inverse-transforms
+predictions to raw mph, computes residuals, and saves one .npz per split.
 
 Usage:
-    python scripts/extract_residuals.py --backbone dcrnn --dataset metrla --seed 0
-    python scripts/extract_residuals.py --backbone gwn   --dataset pemsbay --seed 0
+    python scripts/extract_residuals.py --dataset metrla --seed 0
+    python scripts/extract_residuals.py --dataset pemsbay --seed 0
 
 Outputs (one per split):
-    results/residuals/{backbone}_{dataset}_{split}_seed{seed}.npz
+    results/residuals/gwn_{dataset}_{split}_seed{seed}.npz
         residuals  float32  (N_windows, 12, N_sensors, 1)   y_true − y_pred in mph
         y_pred     float32  (N_windows, 12, N_sensors, 1)   backbone forecast in mph
         y_true     float32  (N_windows, 12, N_sensors, 1)   ground truth in mph
@@ -23,7 +22,9 @@ import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from src.backbones import load_backbone, _NUM_NODES
+from src.backbones import load_backbone
+
+_BACKBONE = "gwn"
 from src.data.adjacency import load_adjacency
 from src.data.dataset import TrafficDataset
 from src.utils.checkpoint import load_checkpoint
@@ -81,8 +82,7 @@ def extract_one_split(
 
 def main() -> None:
     """Entry point."""
-    parser = argparse.ArgumentParser(description="Extract backbone residuals.")
-    parser.add_argument("--backbone", choices=["dcrnn", "gwn"], required=True)
+    parser = argparse.ArgumentParser(description="Extract GWN residuals.")
     parser.add_argument("--dataset", choices=["metrla", "pemsbay"], required=True)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--batch_size", type=int, default=256,
@@ -92,17 +92,17 @@ def main() -> None:
     # ------------------------------------------------------------------ #
     # Config + checkpoint path
     # ------------------------------------------------------------------ #
-    backbone_cfg = load_config(f"configs/backbone/{args.backbone}.yaml")
+    backbone_cfg = load_config(f"configs/backbone/{_BACKBONE}.yaml")
     data_cfg = load_config(f"configs/data/{args.dataset}.yaml")
     cfg = {
-        "backbone": args.backbone,
+        "backbone": _BACKBONE,
         "dataset": args.dataset,
         "seed": args.seed,
         **backbone_cfg,
         **data_cfg,
     }
     cfg_hash = hash_config({k: v for k, v in cfg.items() if k not in ("seed",)})
-    run_id = f"{args.backbone}_{args.dataset}_seed{args.seed}_{cfg_hash}"
+    run_id = f"{_BACKBONE}_{args.dataset}_seed{args.seed}_{cfg_hash}"
     ckpt_dir = Path(f"results/checkpoints/{run_id}")
     best_ckpt = ckpt_dir / "best.pt"
 
@@ -110,7 +110,7 @@ def main() -> None:
         raise FileNotFoundError(
             f"Best checkpoint not found: {best_ckpt}\n"
             f"Run training first: python scripts/train_backbone.py "
-            f"--backbone {args.backbone} --dataset {args.dataset} --seed {args.seed}"
+            f"--dataset {args.dataset} --seed {args.seed}"
         )
 
     # ------------------------------------------------------------------ #
@@ -124,15 +124,8 @@ def main() -> None:
     set_seed(args.seed)
 
     adj_mx = load_adjacency(args.dataset)
-    model = load_backbone(args.backbone, args.dataset, adj_mx, device)
+    model = load_backbone(_BACKBONE, args.dataset, adj_mx, device)
     eff_device = getattr(model, "effective_device", device)
-
-    # Trigger lazy parameter creation in DCRNN before loading state dict
-    _N = _NUM_NODES[args.dataset]
-    with torch.no_grad():
-        _dummy = torch.zeros(1, 12, _N, 2).to(eff_device)
-        model(_dummy)
-    del _dummy
 
     ckpt = load_checkpoint(best_ckpt)
     model.load_state_dict(ckpt["model_state_dict"])
@@ -176,7 +169,7 @@ def main() -> None:
             model, loader, mean, std, eff_device, split
         )
 
-        out_path = out_dir / f"{args.backbone}_{ds_name}_{split}_seed{args.seed}.npz"
+        out_path = out_dir / f"{_BACKBONE}_{ds_name}_{split}_seed{args.seed}.npz"
         np.savez_compressed(
             out_path,
             residuals=residuals,

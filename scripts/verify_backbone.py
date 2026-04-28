@@ -1,6 +1,6 @@
-"""Verify a backbone loads correctly and produces the right output shape.
+"""Verify the GWN backbone loads correctly and produces the right output shape.
 
-Runs six checks per backbone/dataset combination:
+Runs six checks per dataset:
   1. Adjacency loads successfully.
   2. load_backbone() returns a model without error.
   3. Forward pass on dummy batch: output shape is (B, 12, N, 1).
@@ -9,8 +9,8 @@ Runs six checks per backbone/dataset combination:
   6. Loss decreases monotonically across the three steps.
 
 Usage:
-    python scripts/verify_backbone.py --backbone dcrnn --dataset metrla
-    python scripts/verify_backbone.py --backbone gwn   --dataset pemsbay
+    python scripts/verify_backbone.py --dataset metrla
+    python scripts/verify_backbone.py --dataset pemsbay
 """
 import argparse
 import sys
@@ -22,6 +22,7 @@ from src.data.adjacency import load_adjacency
 from src.backbones import load_backbone
 
 _NUM_NODES = {"metrla": 207, "pemsbay": 325}
+_BACKBONE = "gwn"
 
 
 def masked_mae(pred: torch.Tensor, target: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
@@ -39,7 +40,7 @@ def masked_mae(pred: torch.Tensor, target: torch.Tensor, mask: torch.Tensor) -> 
     return err.sum() / (mask.float().sum() + 1e-8)
 
 
-def verify(backbone: str, dataset: str) -> bool:
+def verify(dataset: str) -> bool:
     """Run all verification checks.  Returns True on success, False on failure."""
     N = _NUM_NODES[dataset]
     B = 2  # small batch for speed
@@ -50,7 +51,7 @@ def verify(backbone: str, dataset: str) -> bool:
         else "cpu"
     )
     print(f"\n{'='*60}")
-    print(f"  backbone={backbone}  dataset={dataset}  requested_device={device}")
+    print(f"  backbone={_BACKBONE}  dataset={dataset}  requested_device={device}")
     print(f"{'='*60}")
 
     # ------------------------------------------------------------------ #
@@ -69,7 +70,7 @@ def verify(backbone: str, dataset: str) -> bool:
     # ------------------------------------------------------------------ #
     print("[2/6] Instantiating backbone ...", end=" ", flush=True)
     try:
-        model = load_backbone(backbone, dataset, adj_mx, device)
+        model = load_backbone(_BACKBONE, dataset, adj_mx, device)
     except Exception as e:
         print(f"FAIL\n      {e}")
         return False
@@ -136,17 +137,16 @@ def verify(backbone: str, dataset: str) -> bool:
         print(f"WARN  loss did not decrease ({losses[0]:.4f} → {losses[-1]:.4f}); "
               "may be fine for 3 steps on random data")
 
-    print(f"\n  PASS  {backbone}/{dataset}\n")
+    print(f"\n  PASS  {_BACKBONE}/{dataset}\n")
     return True
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Verify backbone wiring.")
-    parser.add_argument("--backbone", choices=["dcrnn", "gwn"], required=True)
+    parser = argparse.ArgumentParser(description="Verify GWN backbone wiring.")
     parser.add_argument("--dataset", choices=["metrla", "pemsbay"], required=True)
     args = parser.parse_args()
 
-    ok = verify(args.backbone, args.dataset)
+    ok = verify(args.dataset)
     sys.exit(0 if ok else 1)
 
 

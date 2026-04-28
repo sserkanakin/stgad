@@ -10,8 +10,8 @@
 | 1 | Backbone training (GWN) — per-horizon MAE / RMSE / MAPE for val + test, comparison to Wu 2019 | [`backbone-training/SUMMARY.md`](backbone-training/SUMMARY.md), [`metrics.json`](backbone-training/metrics.json) | done |
 | 2 | Residual diagnostics — variance vs horizon, sensor×sensor covariance, horizon×horizon correlation, regime stratification, Kronecker separability | [`exp-001-residual-diagnostics/SUMMARY.md`](exp-001-residual-diagnostics/SUMMARY.md) | done |
 | 3 | Prior construction & sanity + AR(1)-vs-two-exp comparison | [`exp-002-q-construction/SUMMARY.md`](exp-002-q-construction/SUMMARY.md), [`results_ar1_vs_2exp.json`](exp-002-q-construction/results_ar1_vs_2exp.json) | done |
-| 4 | SDE implementation (forward + reverse, oracle-score round-trip + stationary-distribution sanity) | _planned — see vault_ `a-thesis-vault/03-experiments/exp-004-sde-implementation.md` | next |
-| 5 | Structured-vs-isotropic CRPS comparison | _planned, blocked on #4_ | future |
+| 4 | SDE implementation + sanity checks | [`exp-004/SUMMARY.md`](exp-004/SUMMARY.md), [`sanity_results.json`](exp-004/sanity_results.json) | ⚠ Check 2 PASS / Check 1 FAIL (schedule undersized — see SUMMARY §3) |
+| 5 | Structured-vs-isotropic CRPS comparison | _planned, blocked on #4 schedule resolution_ | future |
 | - | Cross-experiment summary with everything embedded inline | [`RESULTS_SUMMARY.md`](RESULTS_SUMMARY.md) | done |
 
 EDA figures (weekly cycles, missingness, ACF, Dirichlet energy, Laplacian spectrum, regime comparison, etc.) live in [`eda/figures/`](eda/figures/) and are referenced from the data-and-residuals overview.

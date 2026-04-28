@@ -7,7 +7,7 @@ of the Kronecker prior:
   (b) Sum of two AR(1) processes at different timescales
   (c) Long-memory / fractional process with power-law ACF
 
-Five plots saved to results/figures/eda/:
+Five plots saved to experiments/eda/figures/:
   fig_acf_loglinear.png      — log(ACF) vs lag, AR(1) line fit
   fig_acf_loglog.png         — log(ACF) vs log(lag), power-law line fit
   fig_acf_two_ar_fit.png     — 1-AR(1) vs 2-AR(1) mixture
@@ -39,7 +39,7 @@ from statsmodels.tsa.stattools import acf as sm_acf, pacf as sm_pacf
 
 COLORS = {"metrla": "#4C72B0", "pemsbay": "#55A868"}
 LABELS = {"metrla": "METR-LA", "pemsbay": "PEMS-BAY"}
-FIG_DIR = Path("results/figures/eda")
+FIG_DIR = Path("experiments/eda/figures")
 FIG_DIR.mkdir(parents=True, exist_ok=True)
 
 MAX_LAG = 72

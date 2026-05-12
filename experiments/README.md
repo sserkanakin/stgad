@@ -10,8 +10,8 @@
 | 1 | Backbone training (GWN) — per-horizon MAE / RMSE / MAPE for val + test, comparison to Wu 2019 | [`backbone-training/SUMMARY.md`](backbone-training/SUMMARY.md), [`metrics.json`](backbone-training/metrics.json) | done |
 | 2 | Residual diagnostics — variance vs horizon, sensor×sensor covariance, horizon×horizon correlation, regime stratification, Kronecker separability | [`exp-001-residual-diagnostics/SUMMARY.md`](exp-001-residual-diagnostics/SUMMARY.md) | done |
 | 3 | Prior construction & sanity + AR(1)-vs-two-exp comparison | [`exp-002-q-construction/SUMMARY.md`](exp-002-q-construction/SUMMARY.md), [`results_ar1_vs_2exp.json`](exp-002-q-construction/results_ar1_vs_2exp.json) | done |
-| 4 | SDE implementation + sanity checks | [`exp-004/SUMMARY.md`](exp-004/SUMMARY.md), [`sanity_results.json`](exp-004/sanity_results.json) | ⚠ Check 2 PASS / Check 1 FAIL (schedule undersized — see SUMMARY §3) |
-| 5 | Structured-vs-isotropic CRPS comparison | _planned, blocked on #4 schedule resolution_ | future |
+| 4 | SDE implementation + sanity checks | [`exp-004/SUMMARY.md`](exp-004/SUMMARY.md), [`sanity_results.json`](exp-004/sanity_results.json) | ✓ Check 2 PASS / ⚠ Check 1 partial (schedule fix landed; residual rel.Frob is prior inadequacy — see SUMMARY §3) |
+| 5 | Structured-vs-isotropic CRPS comparison | _planned_ | future |
 | - | Cross-experiment summary with everything embedded inline | [`RESULTS_SUMMARY.md`](RESULTS_SUMMARY.md) | done |
 
 EDA figures (weekly cycles, missingness, ACF, Dirichlet energy, Laplacian spectrum, regime comparison, etc.) live in [`eda/figures/`](eda/figures/) and are referenced from the data-and-residuals overview.
@@ -40,19 +40,32 @@ For full per-horizon (h=1..12), val + test, MAE / RMSE / MAPE, see [`backbone-tr
 | h=12 std | 6.44 | 3.67 |
 | h=12 / h=1 growth | 1.69× | 2.48× |
 
-### Fitted Kronecker prior (`Σ_prior = Q_H ⊗ Σ_S`)
+### Fitted Kronecker prior (`Σ_prior = Q_H ⊗ Σ_S`, on per-horizon-standardised residuals)
 
 | Parameter | METR-LA | PEMS-BAY |
 |---|---:|---:|
-| α (slow-component weight) | 0.7995 | 0.5486 (irrelevant — degenerate) |
+| target_scale h=1 → h=12 (mph) | 3.83 → 6.44 | 1.48 → 3.67 |
+| α (slow-component weight) | 0.7995 | 0.6081 (irrelevant — degenerate) |
 | ρ₁ (slow decay) | 0.8321 | 0.81870 |
 | ρ₂ (fast decay) | 0.1015 | 0.81870 (= ρ₁ — collapses to AR(1)) |
-| β (spatial smoothing) | 0.0252 (weak) | 0.7839 (strong) |
-| σ (VP-SDE coefficient) | 3.138 | 3.808 |
-| Covariance check rel. Frob | 0.121 [PASS] | 0.086 [PASS] |
-| Tweedie MSE ratios (τ=0.5/1.0/2.0) | 1.000/0.999/1.000 [PASS] | 1.000/1.000/1.001 [PASS] |
+| β (spatial precision) | 0.2023 | 0.2366 |
+| ε_s | 1.0 | 1.0 |
+| σ (VP-SDE coefficient, derived) | 2.836 | 3.016 |
+| Σ_prior eigval range | [0.18, 5.54] | [0.071, 6.35] |
+| Covariance check rel. Frob | 0.122 [PASS] | 0.111 [PASS] |
+| Tweedie MSE ratios (τ=0.5/1.0/2.0) | 1.000/0.999/1.001 [PASS] | 0.999/0.999/1.000 [PASS] |
 
 Full YAMLs: [`../results/prior_params/gwn_metrla.yaml`](../results/prior_params/gwn_metrla.yaml), [`../results/prior_params/gwn_pemsbay.yaml`](../results/prior_params/gwn_pemsbay.yaml).
+
+### SDE sanity checks (exp-004)
+
+| Check | METR-LA | PEMS-BAY | verdict |
+|---|---:|---:|---|
+| Check 2 — oracle round-trip mean | 0.069 | 0.158 | ✓ strict / ✓ acceptable |
+| Check 1 — stationary rel.Frob | 0.776 | 0.107 | ⚠ prior inadequacy / ⚠ at threshold |
+| Frac of joint eigenmodes ≈ stationary at τ=1 | 99.7% | 98.6% | schedule fix complete |
+
+The METR-LA Check 1 residual is **prior-side**: a small fraction of joint eigenmodes have empirical variance up to 30× the Kronecker prior's allocation (max ratio in direct measurement: 2506×). This is structural, not an SDE bug — the Kronecker low-rank approximation cannot capture every product mode exactly. The score model in exp-003 fills the gap during training.
 
 ### AR(1) vs two-exp temporal kernel — verdict
 
@@ -89,6 +102,9 @@ python scripts/compute_test_metrics.py                     # writes backbone-tra
 python scripts/fit_prior.py            --dataset metrla
 python scripts/fit_prior.py            --dataset pemsbay
 python scripts/compare_ar1_vs_2exp.py                      # AR(1) vs two-exp comparison artifact
+
+# 4. SDE sanity checks
+python experiments/exp-004/run_sanity_checks.py
 ```
 
 Each step's outputs go to a deterministic location described in the corresponding `SUMMARY.md`.

@@ -1,2 +1,3 @@
-# Diffusion model components: forward SDE, Kronecker prior, denoiser, sampler.
-# Implemented in Phase 5. Stubs only at Phase 0.
+# Diffusion-side code: Kronecker prior fitting (prior_fit.py) and forward/reverse
+# SDE with closed-form Gaussian marginals (sde.py). Score-network training and
+# sampling live outside this package (Phase 5+).

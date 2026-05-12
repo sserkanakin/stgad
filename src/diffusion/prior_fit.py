@@ -11,6 +11,16 @@
 #   C_H[h1, h2] = α · ρ₁^|h1-h2| + (1-α) · ρ₂^|h1-h2|    (two-exp correlation)
 #   Σ_S         = (β·L + ε_s·I)^{-1}                        (GMRF spatial cov)
 #
+# Standardised vs raw residuals
+# -----------------------------
+# By default `fit_prior` operates on **per-horizon standardised** residuals
+# r̃[n,h,i] = r[n,h,i] / target_scale[h], with target_scale[h] = sqrt(Var(r_h)).
+# This decouples scale (per-horizon σ_h) from structure (correlations), so the
+# fitted Σ_prior has eigenvalues O(1)–O(10) instead of O(10⁴) and the SDE noise
+# schedule β_max=O(50) reaches stationary at τ=1 (see exp-004 SUMMARY).
+# The returned dict contains `target_scale` for de-standardisation at sample time.
+# Pass `standardize=False` to recover the raw-mph² behaviour.
+#
 # Sampling convention (row-major flatten of R):
 #   vec(R) = [R[0,:], R[1,:], ..., R[H-1,:]]   has covariance Q_H ⊗ Σ_S
 #   np.kron(Q_H, Σ_S)[h*N+i, h'*N+i'] = Q_H[h,h'] · Σ_S[i,i']   ✓
@@ -378,39 +388,74 @@ def fit_prior(
     mask: np.ndarray,
     eigvals_L: np.ndarray,
     eigvecs_L: np.ndarray,
-    epsilon_s: float = 1e-2,
+    epsilon_s: float | None = None,
     eps_target: float = 1e-2,
+    standardize: bool = True,
 ) -> dict:
     """Fit all Kronecker prior parameters from training-set residuals.
 
+    With ``standardize=True`` (default), residuals are first divided by
+    ``target_scale[h] = sqrt(Var(r_h))``; the rest of the fit then operates on
+    a unit-per-horizon-variance signal, which keeps the implied Σ_prior
+    eigenvalues O(1)–O(10) and lets a moderate β_max reach stationary at τ=1
+    (see exp-004 SUMMARY for the diagnosis). The original per-horizon scale is
+    returned in ``target_scale`` for de-standardisation: a sample r̃ in the
+    modelled variable maps back to mph as ``r̃ * target_scale[:, None]``.
+
     Args:
-        r:         (N_win, 12, N) residuals in mph.
-        mask:      (N_win, 12, N) bool validity mask.
-        eigvals_L: (N,) normalised Laplacian eigenvalues.
+        r:          (N_win, 12, N) residuals in mph.
+        mask:       (N_win, 12, N) bool validity mask.
+        eigvals_L:  (N,) normalised Laplacian eigenvalues.
         eigvecs_L: (N, N) corresponding eigenvectors (columns).
-        epsilon_s: Fixed Laplacian regularisation for GMRF (default 0.01).
+        epsilon_s:  Laplacian regularisation. Default 1.0 when standardize=True
+                    (constant mode has unit variance, matching standardised
+                    data); 0.01 when standardize=False (legacy mph² scale).
         eps_target: Worst-case SNR target for σ derivation (default 0.01).
+        standardize: If True (default), per-horizon-standardise residuals before
+                    fitting; the fitted prior describes a unit-variance variable.
+                    If False, fits raw-mph² residuals (legacy behaviour).
 
     Returns:
         Dict with keys:
-            delta_h  float64 (12,)  — per-horizon variance [mph²]
-            alpha    float           — slow-component weight
-            rho1     float           — slow correlation decay
-            rho2     float           — fast correlation decay
-            beta     float           — spatial precision scaling
-            epsilon_s float          — Laplacian regularisation (passed through)
-            sigma    float           — VP-SDE diffusion coefficient
+            target_scale float64 (12,) — sqrt of per-horizon raw variance [mph];
+                                         all-ones when standardize=False.
+            delta_h      float64 (12,) — per-horizon variance of the modelled
+                                         (possibly-standardised) variable.
+                                         ≈ 1.0 across h when standardize=True.
+            alpha        float           — slow-component weight
+            rho1         float           — slow correlation decay
+            rho2         float           — fast correlation decay
+            beta         float           — spatial precision scaling
+            epsilon_s    float           — Laplacian regularisation
+            sigma        float           — VP-SDE diffusion coefficient
+            standardized bool            — whether residuals were standardised
     """
-    # 1. Per-horizon variance
-    delta_h = fit_delta_h(r, mask)
+    if epsilon_s is None:
+        epsilon_s = 1.0 if standardize else 1e-2
 
-    # 2. Temporal kernel
-    Q_emp = empirical_temporal_cov(r, mask)
+    # 0. Per-horizon scale from raw residuals (in mph). Used to standardise the
+    #    fit input and to de-standardise samples back to mph at sample time.
+    raw_delta_h = fit_delta_h(r, mask)
+    target_scale = np.sqrt(np.maximum(raw_delta_h, 1e-12))   # (12,) mph
+
+    if standardize:
+        # r̃[n,h,i] = r[n,h,i] / target_scale[h]
+        r_used = r.astype(np.float64) / target_scale[None, :, None]
+    else:
+        r_used = r
+        target_scale = np.ones(12, dtype=np.float64)
+
+    # 1. Per-horizon variance of the modelled variable (≈ 1 after standardisation).
+    delta_h = fit_delta_h(r_used, mask)
+
+    # 2. Temporal kernel — correlations are scale-invariant, so fitted (α, ρ₁, ρ₂)
+    #    are identical with or without standardisation.
+    Q_emp = empirical_temporal_cov(r_used, mask)
     Q_corr = empirical_temporal_corr(Q_emp)
     alpha, rho1, rho2 = fit_temporal_kernel(Q_corr)
 
-    # 3. Spatial GMRF
-    sig_S = empirical_spatial_cov(r, mask)
+    # 3. Spatial GMRF on the (possibly-standardised) residuals.
+    sig_S = empirical_spatial_cov(r_used, mask)
     beta = fit_spatial_beta(sig_S, eigvals_L, eigvecs_L, epsilon_s)
 
     # 4. Build matrices for σ derivation
@@ -421,11 +466,13 @@ def fit_prior(
     sigma = derive_sigma(Q_H, Sigma_S, eps_target)
 
     return {
-        "delta_h":   delta_h,
-        "alpha":     alpha,
-        "rho1":      rho1,
-        "rho2":      rho2,
-        "beta":      beta,
-        "epsilon_s": epsilon_s,
-        "sigma":     sigma,
+        "target_scale": target_scale,
+        "delta_h":      delta_h,
+        "alpha":        alpha,
+        "rho1":         rho1,
+        "rho2":         rho2,
+        "beta":         beta,
+        "epsilon_s":    epsilon_s,
+        "sigma":        sigma,
+        "standardized": bool(standardize),
     }

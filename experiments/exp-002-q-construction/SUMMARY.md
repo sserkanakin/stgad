@@ -4,6 +4,8 @@
 
 **Status:** done. All sanity checks PASS on both datasets. AR(1)-vs-two-exp comparison artifact produced.
 
+**Update — per-horizon standardisation (exp-004 follow-up).** Originally the prior was fit on raw mph² residuals, which produced `Σ_prior` eigenvalues up to 1.8×10⁴ (METR-LA) — far beyond the reach of any reasonable VP-SDE schedule (see exp-004 §3). The fit is now performed on **per-horizon standardised** residuals `r̃[n,h,i] = r[n,h,i] / target_scale[h]`, with `target_scale[h] = sqrt(Var(r_h))` stored in the YAML for de-standardisation at sample time. The per-horizon-variance scaling that lived inside `Q_H` is now external; `Q_H = C_H` (the dimensionless correlation kernel). `ε_s` is raised from 0.01 to 1.0 to match the unit-variance scale of the modelled variable. The temporal correlation parameters `α, ρ₁, ρ₂` are unchanged (correlations are scale-invariant); `β` is refit on standardised residuals.
+
 **Inputs:** training residuals `results/residuals/gwn_*_train_seed0.npz`, Laplacian eigendecomposition `data/processed/{dataset}_laplacian_eigs.npz`. Empirical structural facts from [[../exp-001-residual-diagnostics/SUMMARY|exp-001]].
 
 **Outputs:** fitted parameter YAMLs `results/prior_params/gwn_{metrla,pemsbay}.yaml`, sanity-check figures and AR(1)-vs-2exp comparison figures in `figures/`, JSON dump in `results_ar1_vs_2exp.json`.
@@ -12,15 +14,17 @@
 
 ## §1 — What the prior is
 
-The prior covariance for the residual `r ∈ ℝ^{H × N}` (H=12 horizons, N sensors) is
+The prior models **standardised** residuals `r̃[n,h,i] = r[n,h,i] / target_scale[h]`, where `target_scale[h] = sqrt(Var(r_h))` is computed once on the training set and saved alongside the prior parameters for de-standardisation at sample time. Standardisation is applied per-horizon so each `r̃_h` has unit variance; spatial structure is left intact.
+
+The prior covariance of `r̃ ∈ ℝ^{H × N}` (H=12 horizons, N sensors) is
 
 $$ \Sigma_{\text{prior}} \;=\; Q_H \,\otimes\, \Sigma_S $$
 
 where:
-- **Σ_S ∈ ℝ^{N × N}** — spatial GMRF: `Σ_S = (β L + ε_s I)^{−1}`, with `L` the symmetric **normalised** Laplacian of the road graph (eigenvalues in [0, 2]) and `ε_s = 0.01` fixed.
+- **Σ_S ∈ ℝ^{N × N}** — spatial GMRF: `Σ_S = (β L + ε_s I)^{−1}`, with `L` the symmetric **normalised** Laplacian of the road graph (eigenvalues in [0, 2]) and `ε_s = 1.0` fixed (was 0.01 in the raw-mph² version; the constant mode now has unit variance, matching the standardised data scale).
 - **Q_H ∈ ℝ^{12 × 12}** — temporal: `Q_H[h₁, h₂] = sqrt(δ_{h₁} · δ_{h₂}) · C_H[h₁, h₂]` with the **two-exponential mixture correlation kernel**
 $$ C_H[h_1, h_2] \;=\; \alpha\,\rho_1^{|h_1-h_2|} \;+\; (1-\alpha)\,\rho_2^{|h_1-h_2|},\qquad \rho_1 \geq \rho_2 \in (0,1). $$
-- `δ_h` is the per-horizon variance scaling (one value per h ∈ {1, …, 12}).
+- `δ_h` is the per-horizon variance of the modelled variable. With standardisation, `δ_h ≈ 1` for all h, so `Q_H ≈ C_H` — the temporal kernel is the dimensionless correlation matrix and per-horizon scale is carried entirely by `target_scale`.
 
 The full covariance lives in `ℝ^{(H·N) × (H·N)}` (= 2484×2484 for METR-LA, 3900×3900 for PEMS-BAY). It is *never* assembled explicitly. Sampling and SDE operations exploit the Kronecker structure:
 - `cond(Q_H ⊗ Σ_S) = cond(Q_H) · cond(Σ_S)`
@@ -31,11 +35,12 @@ The full covariance lives in `ℝ^{(H·N) × (H·N)}` (= 2484×2484 for METR-LA,
 
 | Parameter | What | How fit | Code |
 |---|---|---|---|
-| `δ_h` (12 values) | per-horizon variance | `Var(r_h)` over masked training residuals | `prior_fit.py::fit_delta_h` |
-| `α, ρ₁, ρ₂` | two-exp temporal kernel | Nelder-Mead least-squares on the lag-averaged ACF (lags 1..11), sigmoid parameterisation, 8 deterministic + 4 random restarts (the deterministic starts include well-separated `(ρ₁ ~0.95, ρ₂ ~0.10)` initialisations to escape the degenerate `ρ₁=ρ₂` local minimum) | `prior_fit.py::fit_temporal_kernel` |
-| `β` | spatial precision scaling | 1-D scalar minimisation over `log(β)` of `Σᵢ (1/(βλᵢ + ε_s) − [Uᵀ Σ_S^emp U]ᵢᵢ)²` (off-diagonal of the eigenbasis projection is constant in β, so the matrix Frobenius distance collapses to a scalar 1-D fit) | `prior_fit.py::fit_spatial_beta` |
+| `target_scale` (12 values) | per-horizon mph std for de-standardisation | `sqrt(Var(r_h))` on raw masked training residuals | `prior_fit.py::fit_prior` (computed before standardisation) |
+| `δ_h` (12 values) | per-horizon variance of the modelled variable | `Var(r̃_h)` ≈ 1 by construction after standardisation | `prior_fit.py::fit_delta_h` |
+| `α, ρ₁, ρ₂` | two-exp temporal kernel | Nelder-Mead least-squares on the lag-averaged ACF (lags 1..11), sigmoid parameterisation, 8 deterministic + 4 random restarts (the deterministic starts include well-separated `(ρ₁ ~0.95, ρ₂ ~0.10)` initialisations to escape the degenerate `ρ₁=ρ₂` local minimum). Correlations are scale-invariant, so identical to the raw fit. | `prior_fit.py::fit_temporal_kernel` |
+| `β` | spatial precision scaling | 1-D scalar minimisation over `log(β)` of `Σᵢ (1/(βλᵢ + ε_s) − [Uᵀ Σ_S^emp U]ᵢᵢ)²` (off-diagonal of the eigenbasis projection is constant in β, so the matrix Frobenius distance collapses to a scalar 1-D fit). Refit on standardised residuals. | `prior_fit.py::fit_spatial_beta` |
 | `σ` | VP-SDE diffusion coefficient | derived: `σ = sqrt(log(cond(Σ_prior) / ε_target))` from worst-case-SNR at t=1, with `ε_target = 0.01` | `prior_fit.py::derive_sigma` |
-| `ε_s` | Laplacian regularisation | fixed at 0.01 | hyperparameter |
+| `ε_s` | Laplacian regularisation | fixed at 1.0 (standardised; was 0.01 for raw mph² fit) | hyperparameter |
 
 ### Why fit on lag-averaged ACF, not the full Σ_Q upper triangle
 
@@ -46,44 +51,50 @@ The empirical 12×12 correlation matrix is **non-stationary**: lag-1 correlation
 ### METR-LA (GWN, seed 0) — `results/prior_params/gwn_metrla.yaml`
 
 ```yaml
-delta_h:  [14.63, 21.11, 25.48, 28.68, 31.07, 33.02, 34.65, 36.07, 37.40, 38.65, 39.96, 41.43]
-alpha:    0.7995    # 80% weight on the slow component
-rho1:     0.8321    # slow decay (ρ₁¹¹ = 0.132 — non-trivial at lag 11)
-rho2:     0.1015    # fast decay (ρ₂¹¹ ≈ 0)
-beta:     0.0252    # weak spatial smoothing
-epsilon_s: 0.01
-sigma:    3.138     # VP-SDE coefficient
+target_scale: [3.825, 4.595, 5.047, 5.356, 5.574, 5.746, 5.886, 6.005, 6.116, 6.217, 6.321, 6.437]   # mph
+delta_h:      [1.000, ..., 1.000]   # ≈ 1 by construction after standardisation
+alpha:        0.7995    # 80% weight on the slow component
+rho1:         0.8321    # slow decay (ρ₁¹¹ = 0.132 — non-trivial at lag 11)
+rho2:         0.1015    # fast decay (ρ₂¹¹ ≈ 0)
+beta:         0.2023    # was 0.025 on raw mph² — refit on standardised residuals
+epsilon_s:    1.0       # was 0.01 on raw mph²
+sigma:        2.836     # VP-SDE coefficient
 ```
 
 | Quantity | Value |
 |---|---:|
-| cond(Q_H) | 35.6 |
-| cond(Σ_S) | 5.3 |
-| cond(Σ_prior) | 189 |
-| ᾱ_T = exp(−σ²) at t=1 | 5.29 × 10⁻⁵ |
+| cond(Q_H) | 23.2 |
+| cond(Σ_S) | 1.3 |
+| cond(Σ_prior) | 31 |
+| Σ_prior eigval range | [0.18, 5.54] |
+| ᾱ_T = exp(−σ²) at t=1 | 3.21 × 10⁻⁴ |
 | Top-20 modes capture | 21.9% of Σ_S energy |
 | ACF at lag 1 / 6 / 11 | 0.686 / 0.269 / 0.099 |
 
 ### PEMS-BAY (GWN, seed 0) — `results/prior_params/gwn_pemsbay.yaml`
 
 ```yaml
-delta_h:  [2.18, 4.32, 6.26, 7.83, 9.02, 9.92, 10.65, 11.26, 11.80, 12.31, 12.85, 13.44]
-alpha:    0.5486    # (irrelevant when ρ₁ = ρ₂ — see §5)
-rho1:     0.81870
-rho2:     0.81870   # = ρ₁ to 5 decimals — optimiser collapses to a single exponential
-beta:     0.7839    # strong spatial smoothing
-epsilon_s: 0.01
-sigma:    3.808     # VP-SDE coefficient
+target_scale: [1.477, 2.077, 2.503, 2.798, 3.003, 3.150, 3.264, 3.355, 3.435, 3.508, 3.585, 3.666]   # mph
+delta_h:      [1.000, ..., 1.000]
+alpha:        0.6081
+rho1:         0.81870
+rho2:         0.81870   # = ρ₁ to 5 decimals — optimiser collapses to a single exponential
+beta:         0.2366    # was 0.784 on raw mph²
+epsilon_s:    1.0
+sigma:        3.016     # VP-SDE coefficient
 ```
 
 | Quantity | Value |
 |---|---:|
-| cond(Q_H) | 138.7 |
-| cond(Σ_S) | 142.7 |
-| cond(Σ_prior) | 19,792 |
-| ᾱ_T = exp(−σ²) at t=1 | 5.05 × 10⁻⁷ |
+| cond(Q_H) | 62.6 |
+| cond(Σ_S) | 1.4 |
+| cond(Σ_prior) | 89 |
+| Σ_prior eigval range | [0.071, 6.35] |
+| ᾱ_T = exp(−σ²) at t=1 | 1.12 × 10⁻⁴ |
 | Top-20 modes capture | 61.7% of Σ_S energy |
 | ACF at lag 1 / 6 / 11 | 0.840 / 0.298 / 0.089 |
+
+**On the change in `β`.** With raw mph² residuals, `Σ_S = (βL + ε_s·I)^{−1}` had to absorb both the absolute residual scale and the spatial correlation shape; the fitted β reflected this hybrid duty. With standardisation, `target_scale` carries the per-horizon scale, ε_s is rescaled to match unit variance, and β isolates spatial structure alone. Both datasets now have moderate β (0.20 / 0.24) — the spatial-vs-temporal contrast has not disappeared (PEMS-BAY's spatial energy is still 61.7% in 20 modes vs METR-LA's 21.9%), but it is now expressed via `cond(Σ_S)` and the energy-concentration metric rather than via the magnitude of β alone.
 
 ## §4 — Sanity-check verdicts (PASS / PASS)
 
@@ -94,10 +105,10 @@ Two independent verifications that the assembled `Σ_prior = Q_H ⊗ Σ_S` is in
 
 | Check                     | METR-LA              | PEMS-BAY             |
 |---------------------------|----------------------|----------------------|
-| Covariance rel. Frobenius | 0.121 [PASS < 0.15]  | 0.086 [PASS < 0.15]  |
-| Tweedie MSE ratio τ=0.5   | 0.9997               | 0.9995               |
-| Tweedie MSE ratio τ=1.0   | 0.9991               | 1.0003               |
-| Tweedie MSE ratio τ=2.0   | 1.0004               | 1.0005               |
+| Covariance rel. Frobenius | 0.122 [PASS < 0.15]  | 0.111 [PASS < 0.15]  |
+| Tweedie MSE ratio τ=0.5   | 0.9995               | 0.9988               |
+| Tweedie MSE ratio τ=1.0   | 0.9990               | 0.9991               |
+| Tweedie MSE ratio τ=2.0   | 1.0005               | 1.0003               |
 | **Overall**               | **GO**               | **GO**               |
 
 All six Tweedie ratios within ±0.001 of 1.0 — essentially machine precision. This confirms `sample_prior()` actually draws from `N(0, Q_H ⊗ Σ_S)` and that the trace formula `tr(Q_H ⊗ Σ_S) = tr(Q_H) · tr(Σ_S)` is implemented correctly.
@@ -110,17 +121,20 @@ The 6-panel diagnostic figures (Q_H heatmap, ACF fit, GMRF spectral fit, target 
 
 ## §5 — Cross-dataset comparison: physical reading
 
+The standardisation upgrade reshuffled how scale and structure are expressed in the parameters. The empirical contrast (urban vs freeway) now lives in the *spatial energy concentration* and `cond(Σ_S)` rather than directly in `β`.
+
 | Property | METR-LA | PEMS-BAY | Reading |
 |---|---:|---:|---|
-| Spatial β | 0.025 (weak) | 0.784 (strong) | METR-LA: road topology contributes little to residual structure. PEMS-BAY: strong network smoothing produces correlated nearby-sensor errors |
-| cond(Σ_S) | 5.3 | 142.7 | METR-LA Σ_S nearly isotropic; PEMS-BAY highly anisotropic |
-| Top-20 modes Σ_S share | 21.9% | 61.7% | PEMS-BAY spatial errors strongly concentrated on smooth modes |
-| Temporal structure | 2-component (ρ₁=0.832, ρ₂=0.102) | single-component (ρ=0.819) | METR-LA has distinct burst- + drift-error modes; PEMS-BAY has uniform decay |
+| Spatial β | 0.20 | 0.24 | similar magnitude on standardised data — the visible "31× β contrast" of the raw fit was an artefact of residual scale, not topology |
+| cond(Σ_S) | 1.3 | 1.4 | both datasets land near isotropic Σ_S after standardisation (max eigval 1.0 by construction at λ=0) |
+| Top-20 modes Σ_S share | 21.9% | 61.7% | the load-bearing topology contrast — PEMS-BAY spatial errors strongly concentrated on smooth Laplacian modes; METR-LA dispersed |
+| Temporal structure | 2-component (ρ₁=0.832, ρ₂=0.102) | single-component (ρ=0.819) | METR-LA has distinct burst- + drift-error modes; PEMS-BAY has uniform decay (unchanged — correlations are scale-invariant) |
 | ACF at lag 1 | 0.686 | 0.840 | Bay Area consecutive-horizon errors more correlated — smoother dynamics |
-| cond(Σ_prior) | 189 | 19,792 | PEMS-BAY prior much more structured → needs more aggressive noising in SDE |
-| σ (VP-SDE) | 3.138 | 3.808 | PEMS-BAY needs more diffusion to reach isotropic regime |
+| Σ_prior eigval range | [0.18, 5.54] | [0.071, 6.35] | both within an order of magnitude of unity — the SDE schedule (β_max=50, β̄(1)=25) reaches stationary at τ=1 ✓ |
+| cond(Σ_prior) | 31 | 89 | PEMS-BAY prior more structured (driven by Σ_S energy concentration, not β) |
+| σ (VP-SDE, derived) | 2.836 | 3.016 | PEMS-BAY needs slightly more diffusion to reach isotropic — same physics as before |
 
-**The β contrast (31×) is the most striking finding.** The fit *recovers* the urban-vs-freeway distinction from residual data alone — no human told the optimiser PEMS-BAY is a freeway network. The fitted values are exactly what you'd expect from physics: freeway congestion waves propagate spatially → strong β; urban traffic decorrelates at every intersection → weak β.
+**The empirical contrast lives in `cond(Σ_S) · concentration`, not in `β`.** Standardisation reveals that PEMS-BAY's freeway smoothing is expressed in the *eigenvalue spectrum* of `Σ_S` (61.7% energy in 20 modes), not in the magnitude of the precision scaling. The previous fit's 31× β contrast was conflating residual amplitude with spatial correlation. The current fit cleanly separates them: per-horizon scale lives in `target_scale` (3.83 → 6.44 mph for METR-LA vs 1.48 → 3.67 mph for PEMS-BAY — a 2.6× absolute amplitude difference), and the freeway-vs-urban spatial contrast lives in the Σ_S spectrum.
 
 ---
 

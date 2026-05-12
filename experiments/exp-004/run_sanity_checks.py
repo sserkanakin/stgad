@@ -4,7 +4,8 @@ Two checks per dataset (METR-LA, PEMS-BAY) using the fitted prior parameters
 from exp-002:
 
   Check 1 — Stationary distribution (forward at τ=1).
-      Sample 5000 r_0 from training residuals, push through forward_sample(τ=1),
+      Sample 5000 r_0 from training residuals (per-horizon standardised by the
+      target_scale stored in the prior YAML), push through forward_sample(τ=1),
       compute empirical covariance on a 20-sensor subset, compare to
       Σ_prior = Q_H ⊗ Σ_S (restricted to the same subset).
       Pass: rel.Frob < 0.10.
@@ -48,9 +49,14 @@ from src.diffusion.sde import (
 
 
 # ── Settings (per the spec) ──────────────────────────────────────────────────
-
+#
+# β_max is sized so β̄(1) = β_min + 0.5·(β_max − β_min) is many multiples of
+# the largest Σ_prior eigenvalue: with the standardised prior (exp-002 v2),
+# max(s) ≲ 10, so β_max = 50 → β̄(1) ≈ 25, β̄/max(s) ≳ 2.5, exp(-2.5) ≈ 0.08.
+# When the legacy raw-mph² prior is in use, max(s) is O(10⁴) and no realistic
+# β_max would reach stationary at τ=1 — see exp-004 SUMMARY §3.
 BETA_MIN = 0.01
-BETA_MAX = 10.0
+BETA_MAX = 50.0
 N_REVERSE_STEPS = 100
 N_STAT_SAMPLES = 5000
 N_OR_SAMPLES = 32
@@ -83,21 +89,35 @@ def load_setup(dataset: str) -> dict:
 
     eig = eigendecompose_prior(Q_H, Sigma_S)
 
+    # target_scale[h] (mph) — sqrt of per-horizon variance of the raw residual.
+    # Used to standardise r_train so the SDE acts in the same units as the prior.
+    # Older YAMLs without this field are treated as unstandardised (target_scale = 1).
+    target_scale = np.array(
+        params.get("target_scale", np.ones(Q_H.shape[0])),
+        dtype=np.float64,
+    )
+
     return {
         "dataset": dataset,
         "Q_H": Q_H,
         "Sigma_S": Sigma_S,
         "eig": eig,
         "params": params,
+        "target_scale": target_scale,
     }
 
 
-def load_residuals(dataset: str) -> tuple[np.ndarray, np.ndarray]:
-    """Load training residuals (raw mph) and validity mask."""
+def load_residuals(dataset: str, target_scale: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Load training residuals and standardise to the modelled-variable scale.
+
+    The prior (Q_H ⊗ Σ_S) was fit on residuals divided by ``target_scale[h]``,
+    so we apply the same per-horizon division here before any SDE operation.
+    """
     path = ROOT / "results" / "residuals" / f"gwn_{dataset}_train_seed0.npz"
     data = np.load(path)
     r = data["residuals"].squeeze(-1).astype(np.float64)         # (N_win, 12, N)
     mask = data["mask"].squeeze(-1)                               # (N_win, 12, N)
+    r = r / target_scale[None, :, None]                          # standardise
     return r, mask
 
 
@@ -286,7 +306,10 @@ def main() -> int:
     for ds in DATASETS:
         print(f"\n{'─' * 78}\n  {ds.upper()}\n{'─' * 78}")
         setup = load_setup(ds)
-        r_train, _mask = load_residuals(ds)
+        r_train, _mask = load_residuals(ds, setup["target_scale"])
+        print(f"  target_scale (mph): {np.array2string(setup['target_scale'], precision=2)}")
+        print(f"  r_train (standardised) shape: {r_train.shape}  "
+              f"per-h std: [{r_train.std(axis=(0,2)).min():.3f}, {r_train.std(axis=(0,2)).max():.3f}]")
 
         # Diagnostic: prior eigenvalue range (in the joint eigenbasis)
         s = setup["eig"]["s"]

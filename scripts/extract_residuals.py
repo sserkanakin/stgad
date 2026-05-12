@@ -150,17 +150,6 @@ def main() -> None:
     for split in ("train", "val", "test"):
         print(f"\nExtracting {split} split ...")
         ds = TrafficDataset(f"data/processed/{ds_name}_{split}.npz", scaler_path)
-        # Use training-set scaler for all splits (already baked into TrafficDataset
-        # when loaded with the same scaler_path — but mean/std attributes are only
-        # reliable from train_ds, so we override here)
-        ds.mean = mean
-        ds.std = std
-        # Re-apply normalisation with the training-set scaler
-        x_speed = ds.x[..., 0].numpy() * ds.mean + ds.std  # undo DS normalisation
-        # Actually, TrafficDataset already normalised x[..., 0] with scaler_path's
-        # mean/std — which for val/test is the same file, so no override needed.
-        # The mean/std attributes are just aliases; DataLoader returns pre-normalised x.
-
         loader = DataLoader(
             ds, batch_size=args.batch_size, shuffle=False, num_workers=0
         )

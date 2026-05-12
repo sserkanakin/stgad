@@ -267,14 +267,3 @@ def reverse_oracle(r_tau_init: np.ndarray, r_0: np.ndarray,
 
         r = r - drift * delta_tau + noise
     return r
-
-
-# Back-compat alias for the original stub (older imports may reference this).
-class StructuredSDE:
-    """Deprecated stub. Use the module-level functions instead."""
-
-    def __init__(self, *_, **__) -> None:  # pragma: no cover - deprecated
-        raise NotImplementedError(
-            "StructuredSDE class stub is deprecated; call module-level "
-            "functions in src.diffusion.sde directly."
-        )

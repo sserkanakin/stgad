@@ -251,7 +251,7 @@ def _make_figure(
     ax = axes[0, 0]
     im = ax.imshow(Q_H, aspect="auto", cmap="viridis")
     fig.colorbar(im, ax=ax, fraction=0.046)
-    ax.set_title("Q_H — temporal covariance (mph²)")
+    ax.set_title("Q_H — temporal covariance (modelled variable)")
     ax.set_xlabel("horizon")
     ax.set_ylabel("horizon")
     ax.set_xticks(range(0, 12, 2))
@@ -282,7 +282,7 @@ def _make_figure(
     ax.plot(range(n_modes), gmrf_diag[:n_modes], "x-", ms=3, label=f"GMRF fit (β={beta:.2f})", alpha=0.8)
     ax.set_title("Spatial spectral fit (first 80 modes)")
     ax.set_xlabel("Laplacian eigenvalue index")
-    ax.set_ylabel("spectral energy (mph²)")
+    ax.set_ylabel("spectral energy (modelled var)")
     ax.legend(fontsize=7)
     ax.grid(True, alpha=0.3)
 
@@ -365,19 +365,24 @@ def main() -> int:
         help="GWN training seed used when extracting residuals (default: 0)",
     )
     parser.add_argument(
-        "--epsilon_s", type=float, default=1e-2,
-        help="Laplacian regularisation ε_s (default: 0.01)",
+        "--epsilon_s", type=float, default=None,
+        help="Laplacian regularisation ε_s (default: 1.0 when standardised, 0.01 raw).",
     )
     parser.add_argument(
         "--eps_target", type=float, default=1e-2,
         help="Worst-case SNR target for σ derivation (default: 0.01)",
     )
+    parser.add_argument(
+        "--no-standardize", action="store_true",
+        help="Disable per-horizon standardisation (fit on raw mph² residuals).",
+    )
     args = parser.parse_args()
+    standardize = not args.no_standardize
 
     print(f"\n{'='*60}")
     print(f"  Phase 4 — Prior fitting")
     print(f"  backbone={_BACKBONE}  dataset={args.dataset}  seed={args.seed}")
-    print(f"  ε_s={args.epsilon_s}  ε_target={args.eps_target}")
+    print(f"  standardize={standardize}  ε_s={args.epsilon_s}  ε_target={args.eps_target}")
     print(f"{'='*60}\n")
 
     # ── 1. Load data ──────────────────────────────────────────────────────────
@@ -396,9 +401,11 @@ def main() -> int:
         r, mask, eigvals_L, eigvecs_L,
         epsilon_s=args.epsilon_s,
         eps_target=args.eps_target,
+        standardize=standardize,
     )
 
-    print(f"\n  δ_h (mph²): {np.array2string(params['delta_h'], precision=2, suppress_small=True)}")
+    print(f"\n  target_scale (mph): {np.array2string(params['target_scale'], precision=3, suppress_small=True)}")
+    print(f"  δ_h (modelled var): {np.array2string(params['delta_h'], precision=3, suppress_small=True)}")
     print(f"  α  = {params['alpha']:.4f}   (slow-component weight)")
     print(f"  ρ₁ = {params['rho1']:.4f}   (slow decay)")
     print(f"  ρ₂ = {params['rho2']:.4f}   (fast decay)")
@@ -440,13 +447,17 @@ def main() -> int:
 
     yaml_path = out_dir / f"{_BACKBONE}_{args.dataset}.yaml"
     yaml_data = {
-        "backbone":   _BACKBONE,
-        "dataset":    args.dataset,
-        "seed":       args.seed,
-        "epsilon_s":  float(params["epsilon_s"]),
-        "eps_target": float(args.eps_target),
-        # Per-horizon variance (12 values)
-        "delta_h": [float(v) for v in params["delta_h"]],
+        "backbone":     _BACKBONE,
+        "dataset":      args.dataset,
+        "seed":         args.seed,
+        "standardized": bool(params["standardized"]),
+        "epsilon_s":    float(params["epsilon_s"]),
+        "eps_target":   float(args.eps_target),
+        # Per-horizon de-standardisation factor (mph) — multiply standardised
+        # samples by this to recover raw-mph residuals.
+        "target_scale": [float(v) for v in params["target_scale"]],
+        # Per-horizon variance of the modelled variable (≈ 1.0 when standardised).
+        "delta_h":      [float(v) for v in params["delta_h"]],
         # Temporal kernel
         "alpha":  float(params["alpha"]),
         "rho1":   float(params["rho1"]),
@@ -468,8 +479,14 @@ def main() -> int:
     print(f"  YAML saved: {yaml_path}")
 
     # ── Figure ────────────────────────────────────────────────────────────────
-    sig_S_emp = empirical_spatial_cov(r, mask)
-    Q_emp     = empirical_temporal_cov(r, mask)
+    # Use the same standardisation as the fit so empirical/fit panels are on
+    # the same scale.
+    if standardize:
+        r_for_fig = r.astype(np.float64) / params["target_scale"][None, :, None]
+    else:
+        r_for_fig = r
+    sig_S_emp = empirical_spatial_cov(r_for_fig, mask)
+    Q_emp     = empirical_temporal_cov(r_for_fig, mask)
     Q_corr    = empirical_temporal_corr(Q_emp)
 
     fig_path = (

@@ -1,6 +1,0 @@
-name: ablation_single_exp
-prior: kronecker_single_exp   # AR(1) only — no mixture; ablation against full two-exponential
-diffusion_epochs: 200
-batch_size: 64
-n_samples_eval: 100
-seeds: [0, 1, 2]

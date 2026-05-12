@@ -1,6 +1,0 @@
-name: ablation_iso
-prior: iso
-diffusion_epochs: 200
-batch_size: 64
-n_samples_eval: 100
-seeds: [0, 1, 2]

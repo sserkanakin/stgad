@@ -15,3 +15,6 @@ wandb/
 .DS_Store
 .env
 a-thesis-vault/
+# DAIC user-local config
+scripts/daic/env.sh
+logs/

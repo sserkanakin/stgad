@@ -57,12 +57,31 @@ if torch.cuda.is_available():
 PY
 
 mkdir -p "${DAIC_DATA_DIR}"/{raw,processed,checkpoints,residuals,prior_params,wandb}
+mkdir -p "${DAIC_PROJECT_DIR}/logs"
+
+# Symlink artefact dirs into the project tree (idempotent).
+cd "${DAIC_PROJECT_DIR}"
+mkdir -p data results
+ln -sfn "${DAIC_DATA_DIR}/raw"          data/raw
+ln -sfn "${DAIC_DATA_DIR}/processed"    data/processed
+ln -sfn "${DAIC_DATA_DIR}/checkpoints"  results/checkpoints
+ln -sfn "${DAIC_DATA_DIR}/residuals"    results/residuals
+ln -sfn "${DAIC_DATA_DIR}/prior_params" results/prior_params
+
+echo
+echo "[bonus] wandb login (one-time; only needed for live dashboards):"
+if python -c "import wandb, sys; sys.exit(0 if wandb.api.api_key else 1)" 2>/dev/null; then
+  echo "      already logged in — skipping"
+else
+  echo "      Run \`wandb login\` now and paste your API key from"
+  echo "      https://wandb.ai/authorize  (skip if WANDB_MODE=offline)."
+fi
+
 echo
 echo "Setup complete."
-echo "Data directory tree: ${DAIC_DATA_DIR}"
+echo "Project:   ${DAIC_PROJECT_DIR}"
+echo "Data:      ${DAIC_DATA_DIR}"
+echo "Venv:      ${DAIC_VENV}"
 echo
-echo "Add this to your ~/.bash_profile (or your sbatch scripts source it):"
-echo
-echo "    module use /opt/insy/modulefiles"
-echo "    module load ${DAIC_CUDA_MODULE} ${DAIC_CUDNN_MODULE}"
-echo "    source ${DAIC_VENV}/bin/activate"
+echo "Next:  bash scripts/daic/verify_setup.sh         # pre-flight"
+echo "Then:  sbatch scripts/daic/submit_smoke.sbatch   # 5-min GPU sanity"

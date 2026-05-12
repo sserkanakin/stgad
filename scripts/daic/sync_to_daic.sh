@@ -22,14 +22,31 @@ fi
 CODE=true
 DATA=true
 RESULTS=false
+PUSH_RESIDUALS=true
+PUSH_PRIORS=true
+
+# Default mode is "hybrid": push raw + processed + checkpoints, omit
+# residuals + prior_params so they get rebuilt on the cluster (faster
+# end-to-end pipeline validation than retraining the backbone).
+HYBRID=false
+
 for arg in "$@"; do
   case "$arg" in
     --code-only)         DATA=false ;;
     --data-only)         CODE=false ;;
     --include-results)   RESULTS=true ;;
+    --hybrid)            HYBRID=true; PUSH_RESIDUALS=false; PUSH_PRIORS=false ;;
+    --no-residuals)      PUSH_RESIDUALS=false ;;
+    --no-priors)         PUSH_PRIORS=false ;;
     *) echo "Unknown flag: $arg" >&2; exit 2 ;;
   esac
 done
+
+if $HYBRID; then
+  echo "  [hybrid] residuals and prior_params will NOT be pushed —"
+  echo "           rebuild them on DAIC with submit_extract_residuals.sbatch"
+  echo "           and submit_fit_prior.sbatch after sync completes."
+fi
 
 REMOTE="${DAIC_NETID}@login.daic.tudelft.nl"
 RSYNC_BASE=(rsync --progress -avz --no-perms)
@@ -62,10 +79,10 @@ if $DATA; then
   if [ -d results/checkpoints ]; then
     "${RSYNC_BASE[@]}" results/checkpoints/ "${REMOTE}:${DAIC_DATA_DIR}/checkpoints/"
   fi
-  if [ -d results/residuals ]; then
+  if $PUSH_RESIDUALS && [ -d results/residuals ]; then
     "${RSYNC_BASE[@]}" results/residuals/ "${REMOTE}:${DAIC_DATA_DIR}/residuals/"
   fi
-  if [ -d results/prior_params ]; then
+  if $PUSH_PRIORS && [ -d results/prior_params ]; then
     "${RSYNC_BASE[@]}" results/prior_params/ "${REMOTE}:${DAIC_DATA_DIR}/prior_params/"
   fi
 fi

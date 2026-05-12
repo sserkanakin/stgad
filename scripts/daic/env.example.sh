@@ -40,6 +40,9 @@ export DAIC_QOS_LONG="long"       # ≤ 7d jobs
 # which is fine for our score net but not for the backbone batch sizes.
 export DAIC_GPU_TYPE="a40"
 
-# wandb. Set offline if you don't want network egress from compute nodes.
+# wandb. WANDB_API_KEY can live in .env at the repo root (gitignored) or in
+# ~/.netrc via `wandb login` (setup_env.sh prompts for this). Online mode
+# gives live loss curves / GPU util in the wandb dashboard during the run.
 export WANDB_DIR="${DAIC_DATA_DIR}/wandb"
-export WANDB_MODE="offline"   # flip to "online" once you've kinit'd
+export WANDB_MODE="online"      # "offline" if compute nodes are firewalled
+export WANDB_PROJECT="thesis-diffusion"

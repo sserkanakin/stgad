@@ -11,8 +11,9 @@ set -euo pipefail
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")"/../.. && pwd)"
 cd "${PROJECT_DIR}"
 
-if [ -z "${DAIC_VENV:-}" ]; then
-  echo "FAIL: env.sh not sourced. Run: source scripts/daic/env.sh" >&2
+if [ -z "${DAIC_CONDA_ENV:-}" ]; then
+  echo "FAIL: env.sh not sourced or out of date (DAIC_CONDA_ENV unset)." >&2
+  echo "      Regenerate from env.example.sh and edit your NetID + DATA_DIR." >&2
   exit 1
 fi
 
@@ -26,7 +27,7 @@ fail() { echo -e "  ${FAIL} $1"; PASS=false; }
 
 echo
 echo "── env vars ────────────────────────────────────────────────────"
-for v in DAIC_NETID DAIC_PROJECT_DIR DAIC_DATA_DIR DAIC_VENV DAIC_CUDA_MODULE DAIC_GPU_TYPE; do
+for v in DAIC_NETID DAIC_PROJECT_DIR DAIC_DATA_DIR DAIC_CONDA_ENV DAIC_CUDA_MODULE DAIC_GPU_TYPE; do
   if [ -n "${!v:-}" ] && [ "${!v}" != "CHANGE_ME" ]; then
     ok "${v}=${!v}"
   else
@@ -52,14 +53,16 @@ if [ -n "${DAIC_CUDNN_MODULE:-}" ]; then
 fi
 
 echo
-echo "── venv ────────────────────────────────────────────────────────"
-if [ -d "${DAIC_VENV}" ] && [ -f "${DAIC_VENV}/bin/activate" ]; then
-  # shellcheck source=/dev/null
-  source "${DAIC_VENV}/bin/activate"
-  ok "venv activates: $(which python)"
+echo "── conda env ───────────────────────────────────────────────────"
+module load miniconda/3 2>/dev/null || true
+# shellcheck source=/dev/null
+source "$(conda info --base)/etc/profile.d/conda.sh"
+if conda env list 2>/dev/null | awk '{print $1}' | grep -qx "${DAIC_CONDA_ENV}"; then
+  conda activate "${DAIC_CONDA_ENV}"
+  ok "conda env '${DAIC_CONDA_ENV}' activated: $(which python)"
   ok "python: $(python --version 2>&1)"
 else
-  fail "venv missing at ${DAIC_VENV} — run setup_env.sh"
+  fail "conda env '${DAIC_CONDA_ENV}' not found — run setup_env.sh"
   exit 1
 fi
 

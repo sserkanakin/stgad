@@ -19,9 +19,12 @@ export DAIC_PROJECT_DIR="$HOME/research-tud"
 # If you want everything in one place, set it equal to DAIC_PROJECT_DIR.
 export DAIC_DATA_DIR="/tudelft.net/staff-umbrella/CHANGE_ME_GROUP/${DAIC_NETID:-USER}/research-tud-data"
 
-# Python venv location. Conda envs in $HOME can blow quotas; we use a
-# plain venv on the project filesystem. The setup script creates this.
-export DAIC_VENV="${DAIC_PROJECT_DIR}/.venv"
+# Conda env name. DAIC's miniconda module ships Python 3.9 which is too
+# old for several of our deps (pandas 2.3, wandb 0.26, etc.). The setup
+# script creates a Python 3.11 conda env with this name and activates it
+# from every sbatch via _common.sh.
+export DAIC_CONDA_ENV="thesis-diffusion"
+export DAIC_PYTHON_VERSION="3.11"
 
 # CUDA / cuDNN module versions. CUDA 12.1 is the most recent on DAIC and
 # pairs with PyTorch's cu121 wheels.

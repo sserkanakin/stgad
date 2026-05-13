@@ -30,8 +30,12 @@ if [ -n "${DAIC_CUDNN_MODULE:-}" ]; then
   module load "${DAIC_CUDNN_MODULE}" 2>/dev/null || echo \
     "  [warn] could not load ${DAIC_CUDNN_MODULE}; relying on PyTorch's bundled cuDNN"
 fi
+module load miniconda/3
+
+# Activate the project conda env (created by setup_env.sh).
 # shellcheck source=/dev/null
-source "${DAIC_VENV}/bin/activate"
+source "$(conda info --base)/etc/profile.d/conda.sh"
+conda activate "${DAIC_CONDA_ENV}"
 
 cd "${PROJECT_DIR}"
 

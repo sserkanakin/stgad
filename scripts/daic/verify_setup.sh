@@ -37,10 +37,18 @@ done
 echo
 echo "── modules ─────────────────────────────────────────────────────"
 module use /opt/insy/modulefiles 2>/dev/null || true
-if module load "${DAIC_CUDA_MODULE}" "${DAIC_CUDNN_MODULE}" 2>/dev/null; then
-  ok "loaded ${DAIC_CUDA_MODULE} + ${DAIC_CUDNN_MODULE}"
+if module load "${DAIC_CUDA_MODULE}" 2>/dev/null; then
+  ok "loaded ${DAIC_CUDA_MODULE}"
 else
-  fail "could not load CUDA/cuDNN modules"
+  fail "could not load ${DAIC_CUDA_MODULE} (run \`module avail cuda\` to list)"
+fi
+# cuDNN is optional — PyTorch wheels bundle it.
+if [ -n "${DAIC_CUDNN_MODULE:-}" ]; then
+  if module load "${DAIC_CUDNN_MODULE}" 2>/dev/null; then
+    ok "loaded ${DAIC_CUDNN_MODULE} (optional)"
+  else
+    warn "${DAIC_CUDNN_MODULE} not loadable — PyTorch's bundled cuDNN will be used"
+  fi
 fi
 
 echo

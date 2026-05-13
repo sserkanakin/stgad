@@ -19,7 +19,12 @@ fi
 
 echo "[1/5] Loading modules ..."
 module use /opt/insy/modulefiles
-module load "${DAIC_CUDA_MODULE}" "${DAIC_CUDNN_MODULE}"
+module load "${DAIC_CUDA_MODULE}"
+# cuDNN is bundled in PyTorch's cu121 wheels; load only if version exists.
+if [ -n "${DAIC_CUDNN_MODULE:-}" ]; then
+  module load "${DAIC_CUDNN_MODULE}" 2>/dev/null || echo \
+    "      [warn] ${DAIC_CUDNN_MODULE} not found; PyTorch ships its own cuDNN"
+fi
 module load miniconda/3
 echo "      python3: $(which python3) ($(python3 --version))"
 

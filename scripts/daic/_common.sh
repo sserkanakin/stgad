@@ -23,7 +23,13 @@ fi
 source "${ENV_FILE}"
 
 module use /opt/insy/modulefiles
-module load "${DAIC_CUDA_MODULE}" "${DAIC_CUDNN_MODULE}"
+module load "${DAIC_CUDA_MODULE}"
+# cuDNN is bundled in PyTorch's cu121 wheels, so the system module isn't
+# required. Load it only if env.sh pinned a version that exists.
+if [ -n "${DAIC_CUDNN_MODULE:-}" ]; then
+  module load "${DAIC_CUDNN_MODULE}" 2>/dev/null || echo \
+    "  [warn] could not load ${DAIC_CUDNN_MODULE}; relying on PyTorch's bundled cuDNN"
+fi
 # shellcheck source=/dev/null
 source "${DAIC_VENV}/bin/activate"
 

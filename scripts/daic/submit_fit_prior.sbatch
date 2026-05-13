@@ -19,6 +19,6 @@ source "${PROJECT_DIR}/scripts/daic/_common.sh"
 : "${DATASET:?Set DATASET=metrla or DATASET=pemsbay}"
 SEED="${SEED:-0}"
 
-srun python scripts/fit_prior.py \
+srun "${DAIC_PYTHON}" scripts/fit_prior.py \
     --dataset "${DATASET}" \
     --seed "${SEED}"

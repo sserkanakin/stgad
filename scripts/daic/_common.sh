@@ -41,6 +41,11 @@ module load miniconda/3
 source "$(conda info --base)/etc/profile.d/conda.sh"
 conda activate "${HOME}/.conda/envs/${DAIC_CONDA_ENV}"
 
+# Absolute python path. srun on DAIC's Slurm strips PATH, so `srun python`
+# fails with "No such file or directory". sbatch scripts use $DAIC_PYTHON
+# explicitly instead.
+export DAIC_PYTHON="$(which python)"
+
 # Pip cache stays on the data dir (large; /winhome handles read-mostly).
 export PIP_CACHE_DIR="${DAIC_DATA_DIR}/.cache/pip"
 

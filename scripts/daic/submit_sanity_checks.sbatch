@@ -17,4 +17,4 @@ mkdir -p logs
 export PROJECT_DIR="${SLURM_SUBMIT_DIR:-$PWD}"
 source "${PROJECT_DIR}/scripts/daic/_common.sh"
 
-srun python experiments/exp-004/run_sanity_checks.py
+srun "${DAIC_PYTHON}" experiments/exp-004/run_sanity_checks.py

@@ -23,4 +23,4 @@ source "${PROJECT_DIR}/scripts/daic/_common.sh"
 
 : "${DATASET:=metrla}"
 
-srun python scripts/daic/smoke_test.py --dataset "${DATASET}"
+srun "${DAIC_PYTHON}" scripts/daic/smoke_test.py --dataset "${DATASET}"

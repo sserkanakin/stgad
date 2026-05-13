@@ -24,7 +24,7 @@ source "${PROJECT_DIR}/scripts/daic/_common.sh"
 EPOCHS="${EPOCHS:-100}"
 
 echo "Training GWN on ${DATASET} (seed ${SEED}, ${EPOCHS} epochs)"
-srun python scripts/train_backbone.py \
+srun "${DAIC_PYTHON}" scripts/train_backbone.py \
     --dataset "${DATASET}" \
     --seed "${SEED}" \
     --epochs "${EPOCHS}"

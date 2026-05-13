@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import platform
 import time
 from pathlib import Path
 
@@ -289,6 +290,10 @@ def main() -> None:
         "beta_min": args.beta_min,
         "beta_max": args.beta_max,
         "tau_eps": args.tau_eps,
+        # Hash on platform so the same code+config produces different
+        # run_ids on Mac (Darwin) vs DAIC (Linux). Lets us launch the
+        # same training on both without wandb / checkpoint-dir collisions.
+        "platform": platform.system().lower(),
     }
     cfg_hash = hash_config(cfg)
     run_id = f"dsm_{args.prior}_{args.dataset}_seed{args.seed}_{cfg_hash}"

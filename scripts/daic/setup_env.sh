@@ -40,6 +40,8 @@ module load miniconda/3
 
 # Initialise conda for `conda activate` inside this script. Without this,
 # only `conda` commands work, not the env-activation machinery.
+# conda.sh references $PS1, which is unset under `set -u`. Define empty.
+: "${PS1:=}"
 source "$(conda info --base)/etc/profile.d/conda.sh"
 
 # Storage split (DAIC: 8 GB Linux home quota, plenty of room on /winhome

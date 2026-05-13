@@ -55,6 +55,9 @@ fi
 echo
 echo "── conda env ───────────────────────────────────────────────────"
 module load miniconda/3 2>/dev/null || true
+# conda.sh references $PS1, which is unset in non-interactive shells
+# under `set -u`. Define it as empty to silence the unbound-variable error.
+: "${PS1:=}"
 # shellcheck source=/dev/null
 source "$(conda info --base)/etc/profile.d/conda.sh"
 DAIC_CONDA_PATH="${HOME}/.conda/envs/${DAIC_CONDA_ENV}"

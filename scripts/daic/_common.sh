@@ -35,6 +35,8 @@ module load miniconda/3
 # Activate the project conda env. The env lives at a fixed path under
 # $HOME/.conda/envs/<name> (NFS home — required for pip's rename ops to
 # work). Activate by full prefix path.
+# conda.sh references $PS1, which is unset under `set -u` in sbatch jobs.
+: "${PS1:=}"
 # shellcheck source=/dev/null
 source "$(conda info --base)/etc/profile.d/conda.sh"
 conda activate "${HOME}/.conda/envs/${DAIC_CONDA_ENV}"

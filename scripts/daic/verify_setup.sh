@@ -57,12 +57,13 @@ echo "── conda env ───────────────────
 module load miniconda/3 2>/dev/null || true
 # shellcheck source=/dev/null
 source "$(conda info --base)/etc/profile.d/conda.sh"
-if conda env list 2>/dev/null | awk '{print $1}' | grep -qx "${DAIC_CONDA_ENV}"; then
-  conda activate "${DAIC_CONDA_ENV}"
-  ok "conda env '${DAIC_CONDA_ENV}' activated: $(which python)"
-  ok "python: $(python --version 2>&1)"
+DAIC_CONDA_PATH="${HOME}/.conda/envs/${DAIC_CONDA_ENV}"
+if [ -x "${DAIC_CONDA_PATH}/bin/python" ]; then
+  conda activate "${DAIC_CONDA_PATH}"
+  ok "conda env activated: ${DAIC_CONDA_PATH}"
+  ok "python: $(python --version 2>&1)  ($(which python))"
 else
-  fail "conda env '${DAIC_CONDA_ENV}' not found — run setup_env.sh"
+  fail "conda env not found at ${DAIC_CONDA_PATH} — run setup_env.sh"
   exit 1
 fi
 

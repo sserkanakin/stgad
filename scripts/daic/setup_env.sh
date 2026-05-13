@@ -42,28 +42,34 @@ module load miniconda/3
 # only `conda` commands work, not the env-activation machinery.
 source "$(conda info --base)/etc/profile.d/conda.sh"
 
-# Redirect conda + pip storage into ${DAIC_DATA_DIR}. On DAIC the Linux
-# home quota is 8 GB and a torch-CUDA env easily blows past that. The
-# data dir typically lives on /winhome or staff-umbrella with plenty of
-# room. `--prepend` puts our path first so new envs land there by default.
-mkdir -p "${DAIC_DATA_DIR}/.conda/envs" \
+# Storage split (DAIC: 8 GB Linux home quota, plenty of room on /winhome
+# or staff-umbrella):
+#   - conda ENV itself: $HOME/.conda/envs/<name> (NFS, full POSIX —
+#     pip's rename operations fail on /winhome's SMB-backed mount).
+#   - conda pkg cache  : ${DAIC_DATA_DIR}/.conda/pkgs (read-mostly, fine
+#     on /winhome).
+#   - pip wheel cache  : ${DAIC_DATA_DIR}/.cache/pip (same).
+# Net home usage after install: ~3.7 GB env. Fits 8 GB quota.
+DAIC_CONDA_PATH="${HOME}/.conda/envs/${DAIC_CONDA_ENV}"
+mkdir -p "${HOME}/.conda/envs" \
          "${DAIC_DATA_DIR}/.conda/pkgs" \
          "${DAIC_DATA_DIR}/.cache/pip"
-conda config --prepend envs_dirs "${DAIC_DATA_DIR}/.conda/envs" 2>/dev/null || true
+# Pkg cache on data dir (idempotent; ignores if already in .condarc).
 conda config --prepend pkgs_dirs "${DAIC_DATA_DIR}/.conda/pkgs" 2>/dev/null || true
+# Clean any prior envs_dirs entry pointing at /winhome from earlier runs.
+conda config --remove envs_dirs "${DAIC_DATA_DIR}/.conda/envs" 2>/dev/null || true
 export PIP_CACHE_DIR="${DAIC_DATA_DIR}/.cache/pip"
 
-echo "[2/5] Creating conda env '${DAIC_CONDA_ENV}' (python ${PYVER}) ..."
-echo "      env dir:  ${DAIC_DATA_DIR}/.conda/envs"
-echo "      pkgs dir: ${DAIC_DATA_DIR}/.conda/pkgs"
-echo "      pip cache: ${PIP_CACHE_DIR}"
-if conda env list 2>/dev/null | awk '{print $1}' | grep -qx "${DAIC_CONDA_ENV}"; then
+echo "[2/5] Creating conda env at ${DAIC_CONDA_PATH} (python ${PYVER}) ..."
+echo "      pkgs cache: ${DAIC_DATA_DIR}/.conda/pkgs"
+echo "      pip cache:  ${PIP_CACHE_DIR}"
+if [ -d "${DAIC_CONDA_PATH}" ] && [ -x "${DAIC_CONDA_PATH}/bin/python" ]; then
   echo "      env already exists — reusing"
 else
-  conda create -n "${DAIC_CONDA_ENV}" "python=${PYVER}" pip -y
+  conda create --prefix "${DAIC_CONDA_PATH}" "python=${PYVER}" pip -y
 fi
 
-conda activate "${DAIC_CONDA_ENV}"
+conda activate "${DAIC_CONDA_PATH}"
 echo "      python: $(which python) ($(python --version))"
 python -m pip install --upgrade pip setuptools wheel
 
@@ -108,10 +114,10 @@ echo
 echo "Setup complete."
 echo "Project:    ${DAIC_PROJECT_DIR}"
 echo "Data:       ${DAIC_DATA_DIR}"
-echo "Conda env:  ${DAIC_CONDA_ENV}  (python ${PYVER})"
+echo "Conda env:  ${DAIC_CONDA_PATH}  (python ${PYVER})"
 echo
 echo "To use this env interactively on the login node:"
-echo "    module load miniconda/3 && conda activate ${DAIC_CONDA_ENV}"
+echo "    module load miniconda/3 && conda activate ${DAIC_CONDA_PATH}"
 echo
 echo "Next:  bash scripts/daic/verify_setup.sh         # pre-flight"
 echo "Then:  sbatch scripts/daic/submit_smoke.sbatch   # 5-min GPU sanity"

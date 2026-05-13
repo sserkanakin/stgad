@@ -32,10 +32,15 @@ if [ -n "${DAIC_CUDNN_MODULE:-}" ]; then
 fi
 module load miniconda/3
 
-# Activate the project conda env (created by setup_env.sh).
+# Activate the project conda env (created by setup_env.sh). The env may
+# live under ${DAIC_DATA_DIR}/.conda/envs (not $HOME) — that's recorded
+# in ~/.condarc by setup_env.sh, so `conda activate` by name just works.
 # shellcheck source=/dev/null
 source "$(conda info --base)/etc/profile.d/conda.sh"
 conda activate "${DAIC_CONDA_ENV}"
+
+# Pip cache (only matters if a job pip-installs something at runtime).
+export PIP_CACHE_DIR="${DAIC_DATA_DIR}/.cache/pip"
 
 cd "${PROJECT_DIR}"
 

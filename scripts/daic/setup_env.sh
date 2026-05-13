@@ -42,7 +42,21 @@ module load miniconda/3
 # only `conda` commands work, not the env-activation machinery.
 source "$(conda info --base)/etc/profile.d/conda.sh"
 
+# Redirect conda + pip storage into ${DAIC_DATA_DIR}. On DAIC the Linux
+# home quota is 8 GB and a torch-CUDA env easily blows past that. The
+# data dir typically lives on /winhome or staff-umbrella with plenty of
+# room. `--prepend` puts our path first so new envs land there by default.
+mkdir -p "${DAIC_DATA_DIR}/.conda/envs" \
+         "${DAIC_DATA_DIR}/.conda/pkgs" \
+         "${DAIC_DATA_DIR}/.cache/pip"
+conda config --prepend envs_dirs "${DAIC_DATA_DIR}/.conda/envs" 2>/dev/null || true
+conda config --prepend pkgs_dirs "${DAIC_DATA_DIR}/.conda/pkgs" 2>/dev/null || true
+export PIP_CACHE_DIR="${DAIC_DATA_DIR}/.cache/pip"
+
 echo "[2/5] Creating conda env '${DAIC_CONDA_ENV}' (python ${PYVER}) ..."
+echo "      env dir:  ${DAIC_DATA_DIR}/.conda/envs"
+echo "      pkgs dir: ${DAIC_DATA_DIR}/.conda/pkgs"
+echo "      pip cache: ${PIP_CACHE_DIR}"
 if conda env list 2>/dev/null | awk '{print $1}' | grep -qx "${DAIC_CONDA_ENV}"; then
   echo "      env already exists — reusing"
 else

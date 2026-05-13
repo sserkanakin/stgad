@@ -74,12 +74,11 @@ echo "      python: $(which python) ($(python --version))"
 python -m pip install --upgrade pip setuptools wheel
 
 echo "[3/5] Installing C-heavy deps from conda-forge ..."
-# pytables, numexpr, h5py don't have manylinux2014 wheels on PyPI for
-# our platform (CentOS 7 / glibc 2.17). conda-forge builds for older
-# glibc and works. Doing these via conda before pip means pip sees them
-# already satisfied and skips compiling from source.
-conda install -c conda-forge -y \
-    numexpr pytables h5py
+# h5py and similar C-heavy extensions don't always have manylinux2014
+# wheels on PyPI for our platform (CentOS 7 / glibc 2.17). conda-forge
+# builds for older glibc. Doing these via conda before pip means pip
+# sees them already satisfied and skips compiling from source.
+conda install -c conda-forge -y h5py
 
 echo "[4/5] Installing PyTorch with CUDA 12.1 wheels ..."
 pip install --prefer-binary --index-url https://download.pytorch.org/whl/cu121 \

@@ -18,10 +18,19 @@ dependencies = [
     "tqdm",
     "matplotlib",
     "einops",
-    "tables",
 ]
 
 [project.optional-dependencies]
+# pytables (PyPI name "tables") is only used by scripts/preprocess.py and
+# scripts/diagnose_temporal_acf.py to read pandas-HDFStore .h5 files. Both
+# scripts run once on a developer machine to produce .npz files; everything
+# downstream uses the .npz files. Optional install via:
+#   pip install -e ".[hdf]"
+# On DAIC we don't need this — extract `pd.read_hdf` reads happen locally.
+hdf = [
+    "tables",
+]
+
 dev = [
     "pytest",
     "jupyter",

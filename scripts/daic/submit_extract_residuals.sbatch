@@ -8,6 +8,8 @@
 #SBATCH --mem=16G
 #SBATCH --output=logs/slurm-%x-%j.out
 #SBATCH --error=logs/slurm-%x-%j.err
+#SBATCH --mail-user=sserkanakin@icloud.com
+#SBATCH --mail-type=END,FAIL
 #
 # Run inference with the best checkpoint and dump train/val/test residuals.
 # Submit:

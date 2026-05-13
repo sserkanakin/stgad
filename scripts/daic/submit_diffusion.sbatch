@@ -8,6 +8,8 @@
 #SBATCH --mem=32G
 #SBATCH --output=logs/slurm-%x-%j.out
 #SBATCH --error=logs/slurm-%x-%j.err
+#SBATCH --mail-user=sserkanakin@icloud.com
+#SBATCH --mail-type=END,FAIL
 #
 # exp-003 score-network training. PLACEHOLDER — script
 # scripts/train_diffusion.py is written in step §14.4 of the PLAN.

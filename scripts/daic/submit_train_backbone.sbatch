@@ -8,6 +8,8 @@
 #SBATCH --mem=24G
 #SBATCH --output=logs/slurm-%x-%j.out
 #SBATCH --error=logs/slurm-%x-%j.err
+#SBATCH --mail-user=sserkanakin@icloud.com
+#SBATCH --mail-type=END,FAIL
 #
 # Train the GWN backbone on one dataset / seed. Submit with:
 #   sbatch --export=DATASET=metrla,SEED=0 scripts/daic/submit_train_backbone.sbatch

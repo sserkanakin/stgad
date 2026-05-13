@@ -7,6 +7,8 @@
 #SBATCH --mem=16G
 #SBATCH --output=logs/slurm-%x-%j.out
 #SBATCH --error=logs/slurm-%x-%j.err
+#SBATCH --mail-user=sserkanakin@icloud.com
+#SBATCH --mail-type=END,FAIL
 #
 # CPU-only: fit the Kronecker prior (NumPy + LAPACK; no GPU needed). Submit:
 #   sbatch --export=DATASET=metrla scripts/daic/submit_fit_prior.sbatch

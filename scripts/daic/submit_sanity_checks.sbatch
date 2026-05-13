@@ -7,6 +7,8 @@
 #SBATCH --mem=32G
 #SBATCH --output=logs/slurm-%x-%j.out
 #SBATCH --error=logs/slurm-%x-%j.err
+#SBATCH --mail-user=sserkanakin@icloud.com
+#SBATCH --mail-type=END,FAIL
 #
 # CPU-only: re-run exp-004 sanity checks (Check 1 stationary + Check 2 oracle
 # round-trip). NumPy/float64 throughout — no GPU. Submit:

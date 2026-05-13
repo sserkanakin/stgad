@@ -8,6 +8,8 @@
 #SBATCH --mem=8G
 #SBATCH --output=logs/slurm-%x-%j.out
 #SBATCH --error=logs/slurm-%x-%j.err
+#SBATCH --mail-user=sserkanakin@icloud.com
+#SBATCH --mail-type=END,FAIL
 #
 # GPU smoke test — 5 minutes on an A40. Confirms CUDA works, project
 # imports succeed, residuals + prior yaml load, the SDE forward marginal

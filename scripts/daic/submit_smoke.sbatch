@@ -18,7 +18,8 @@
 
 set -euo pipefail
 mkdir -p logs
-source "$(dirname "$0")/_common.sh"
+export PROJECT_DIR="${SLURM_SUBMIT_DIR:-$PWD}"
+source "${PROJECT_DIR}/scripts/daic/_common.sh"
 
 : "${DATASET:=metrla}"
 

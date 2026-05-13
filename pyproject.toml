@@ -10,7 +10,7 @@ dependencies = [
     "torch>=2.2",
     "numpy",
     "scipy",
-    "pandas",
+    "pandas<2.3",  # 2.3+ dropped Python 3.9 wheels; DAIC's default python is 3.9
     "h5py",
     "pyyaml",
     "wandb",

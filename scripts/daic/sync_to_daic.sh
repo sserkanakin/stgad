@@ -1,16 +1,23 @@
 #!/bin/bash
-# Push code + raw + processed data + checkpoints to DAIC. Run from your
-# local machine, repo root.
+# Push data files (NOT code) to DAIC. Run from your local machine, repo root.
 #
-# Defaults: code → $DAIC_PROJECT_DIR, large artefacts → $DAIC_DATA_DIR.
-# Override via flags:
-#   --code-only          # skip data (raw/processed/checkpoints/residuals)
-#   --data-only          # skip code
-#   --include-results    # also push results/ (figures, jsons) — usually pull, not push
+# Code travels via git push / git pull on DAIC. This helper only pushes the
+# large binary artefacts that aren't in git: raw .h5 + adjacency pickles,
+# processed .npz + scalers, trained backbone checkpoints, and (optionally)
+# extracted residuals or fitted prior YAMLs.
 #
-# Requires env.sh sourced *locally* (it just supplies DAIC_NETID + paths):
+# Defaults (most common workflow): pushes raw + processed + checkpoints.
+# Residuals + prior_params are rebuilt on DAIC by sbatch jobs, so they're
+# skipped by default. Use --all to push them too.
+#
 #   source scripts/daic/env.sh
-#   bash scripts/daic/sync_to_daic.sh
+#   bash scripts/daic/sync_to_daic.sh                 # raw + processed + checkpoints
+#   bash scripts/daic/sync_to_daic.sh --all           # also push residuals + priors
+#   bash scripts/daic/sync_to_daic.sh --raw           # just raw .h5
+#   bash scripts/daic/sync_to_daic.sh --processed     # just processed .npz
+#   bash scripts/daic/sync_to_daic.sh --checkpoints   # just backbone ckpts
+#   bash scripts/daic/sync_to_daic.sh --residuals     # just extracted residuals
+#   bash scripts/daic/sync_to_daic.sh --priors        # just fitted prior YAMLs
 
 set -euo pipefail
 
@@ -19,88 +26,61 @@ if [ -z "${DAIC_NETID:-}" ]; then
   exit 1
 fi
 
-CODE=true
-DATA=true
-RESULTS=false
-PUSH_RESIDUALS=true
-PUSH_PRIORS=true
+# Default: push raw + processed + checkpoints. Residuals + priors off.
+PUSH_RAW=true
+PUSH_PROCESSED=true
+PUSH_CKPTS=true
+PUSH_RESIDUALS=false
+PUSH_PRIORS=false
 
-# Default mode is "hybrid": push raw + processed + checkpoints, omit
-# residuals + prior_params so they get rebuilt on the cluster (faster
-# end-to-end pipeline validation than retraining the backbone).
-HYBRID=false
-
-for arg in "$@"; do
-  case "$arg" in
-    --code-only)         DATA=false ;;
-    --data-only)         CODE=false ;;
-    --include-results)   RESULTS=true ;;
-    --hybrid)            HYBRID=true; PUSH_RESIDUALS=false; PUSH_PRIORS=false ;;
-    --no-residuals)      PUSH_RESIDUALS=false ;;
-    --no-priors)         PUSH_PRIORS=false ;;
-    *) echo "Unknown flag: $arg" >&2; exit 2 ;;
-  esac
-done
-
-if $HYBRID; then
-  echo "  [hybrid] residuals and prior_params will NOT be pushed —"
-  echo "           rebuild them on DAIC with submit_extract_residuals.sbatch"
-  echo "           and submit_fit_prior.sbatch after sync completes."
+if [ "${1:-}" = "--all" ]; then
+  PUSH_RESIDUALS=true
+  PUSH_PRIORS=true
+elif [ -n "${1:-}" ]; then
+  # Specific-target mode: turn everything off, then enable only the named one(s).
+  PUSH_RAW=false; PUSH_PROCESSED=false; PUSH_CKPTS=false
+  for arg in "$@"; do
+    case "$arg" in
+      --raw)         PUSH_RAW=true ;;
+      --processed)   PUSH_PROCESSED=true ;;
+      --checkpoints) PUSH_CKPTS=true ;;
+      --residuals)   PUSH_RESIDUALS=true ;;
+      --priors)      PUSH_PRIORS=true ;;
+      *) echo "Unknown flag: $arg" >&2
+         echo "Use one of: --all --raw --processed --checkpoints --residuals --priors" >&2
+         exit 2 ;;
+    esac
+  done
 fi
 
 REMOTE="${DAIC_NETID}@login.daic.tudelft.nl"
-RSYNC_BASE=(rsync --progress -avz --no-perms)
+RSYNC_BASE=(rsync --progress -avz --no-perms \
+            -e 'ssh -o ServerAliveInterval=30 -o ServerAliveCountMax=10')
 
-if $CODE; then
-  echo "→ Pushing code to ${REMOTE}:${DAIC_PROJECT_DIR} ..."
-  # Excludes match .gitignore; we explicitly DO want pyproject + scripts.
-  "${RSYNC_BASE[@]}" \
-    --exclude='.git/' \
-    --exclude='.venv/' \
-    --exclude='__pycache__/' \
-    --exclude='*.pyc' \
-    --exclude='wandb/' \
-    --exclude='a-thesis-vault/' \
-    --exclude='data/' \
-    --exclude='results/' \
-    --exclude='*.npz' --exclude='*.h5' --exclude='*.pt' --exclude='*.pkl' \
-    ./ "${REMOTE}:${DAIC_PROJECT_DIR}/"
+echo "→ Code: NOT pushed (use git push / git pull instead)."
+echo
+
+if $PUSH_RAW && [ -d data/raw ]; then
+  echo "→ data/raw → ${REMOTE}:${DAIC_DATA_DIR}/raw"
+  "${RSYNC_BASE[@]}" data/raw/ "${REMOTE}:${DAIC_DATA_DIR}/raw/"
 fi
-
-if $DATA; then
-  echo "→ Pushing data to ${REMOTE}:${DAIC_DATA_DIR} ..."
-  # raw is small enough to push every time; processed npz is bigger.
-  if [ -d data/raw ]; then
-    "${RSYNC_BASE[@]}" data/raw/ "${REMOTE}:${DAIC_DATA_DIR}/raw/"
-  fi
-  if [ -d data/processed ]; then
-    "${RSYNC_BASE[@]}" data/processed/ "${REMOTE}:${DAIC_DATA_DIR}/processed/"
-  fi
-  if [ -d results/checkpoints ]; then
-    "${RSYNC_BASE[@]}" results/checkpoints/ "${REMOTE}:${DAIC_DATA_DIR}/checkpoints/"
-  fi
-  if $PUSH_RESIDUALS && [ -d results/residuals ]; then
-    "${RSYNC_BASE[@]}" results/residuals/ "${REMOTE}:${DAIC_DATA_DIR}/residuals/"
-  fi
-  if $PUSH_PRIORS && [ -d results/prior_params ]; then
-    "${RSYNC_BASE[@]}" results/prior_params/ "${REMOTE}:${DAIC_DATA_DIR}/prior_params/"
-  fi
+if $PUSH_PROCESSED && [ -d data/processed ]; then
+  echo "→ data/processed → ${REMOTE}:${DAIC_DATA_DIR}/processed"
+  "${RSYNC_BASE[@]}" data/processed/ "${REMOTE}:${DAIC_DATA_DIR}/processed/"
 fi
-
-if $RESULTS; then
-  echo "→ Pushing results/ tree (figures + jsons) ..."
-  "${RSYNC_BASE[@]}" \
-    --exclude='checkpoints/' --exclude='residuals/' --exclude='prior_params/' \
-    results/ "${REMOTE}:${DAIC_DATA_DIR}/results/"
+if $PUSH_CKPTS && [ -d results/checkpoints ]; then
+  echo "→ results/checkpoints → ${REMOTE}:${DAIC_DATA_DIR}/checkpoints"
+  "${RSYNC_BASE[@]}" results/checkpoints/ "${REMOTE}:${DAIC_DATA_DIR}/checkpoints/"
+fi
+if $PUSH_RESIDUALS && [ -d results/residuals ]; then
+  echo "→ results/residuals → ${REMOTE}:${DAIC_DATA_DIR}/residuals"
+  "${RSYNC_BASE[@]}" results/residuals/ "${REMOTE}:${DAIC_DATA_DIR}/residuals/"
+fi
+if $PUSH_PRIORS && [ -d results/prior_params ]; then
+  echo "→ results/prior_params → ${REMOTE}:${DAIC_DATA_DIR}/prior_params"
+  "${RSYNC_BASE[@]}" results/prior_params/ "${REMOTE}:${DAIC_DATA_DIR}/prior_params/"
 fi
 
 echo
-echo "Sync complete."
-echo
-echo "On DAIC, symlink the data dir into the project tree so scripts find it:"
-echo "    cd ${DAIC_PROJECT_DIR}"
-echo "    ln -sfn ${DAIC_DATA_DIR}/raw          data/raw"
-echo "    ln -sfn ${DAIC_DATA_DIR}/processed    data/processed"
-echo "    ln -sfn ${DAIC_DATA_DIR}/checkpoints  results/checkpoints"
-echo "    ln -sfn ${DAIC_DATA_DIR}/residuals    results/residuals"
-echo "    ln -sfn ${DAIC_DATA_DIR}/prior_params results/prior_params"
+echo "Data sync complete."
+echo "Reminder: code goes via git. On DAIC:  cd ~/research-tud && git pull"

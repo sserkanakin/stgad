@@ -1,11 +1,11 @@
 #!/bin/bash
 #SBATCH --job-name=gwn-train
 #SBATCH --partition=general
-#SBATCH --qos=medium
-#SBATCH --time=12:00:00
+#SBATCH --qos=short
+#SBATCH --time=04:00:00
 #SBATCH --gres=gpu:a40:1
 #SBATCH --cpus-per-task=4
-#SBATCH --mem=24G
+#SBATCH --mem=16G
 #SBATCH --output=logs/slurm-%x-%j.out
 #SBATCH --error=logs/slurm-%x-%j.err
 #SBATCH --mail-user=sserkanakin@icloud.com

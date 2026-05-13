@@ -2,10 +2,10 @@
 #SBATCH --job-name=daic-smoke
 #SBATCH --partition=general
 #SBATCH --qos=short
-#SBATCH --time=00:10:00
+#SBATCH --time=00:05:00
 #SBATCH --gres=gpu:a40:1
 #SBATCH --cpus-per-task=2
-#SBATCH --mem=8G
+#SBATCH --mem=4G
 #SBATCH --output=logs/slurm-%x-%j.out
 #SBATCH --error=logs/slurm-%x-%j.err
 #SBATCH --mail-user=sserkanakin@icloud.com

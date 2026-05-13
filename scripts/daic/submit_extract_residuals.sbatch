@@ -2,10 +2,10 @@
 #SBATCH --job-name=gwn-extract
 #SBATCH --partition=general
 #SBATCH --qos=short
-#SBATCH --time=01:00:00
+#SBATCH --time=00:15:00
 #SBATCH --gres=gpu:a40:1
-#SBATCH --cpus-per-task=4
-#SBATCH --mem=16G
+#SBATCH --cpus-per-task=2
+#SBATCH --mem=8G
 #SBATCH --output=logs/slurm-%x-%j.out
 #SBATCH --error=logs/slurm-%x-%j.err
 #SBATCH --mail-user=sserkanakin@icloud.com

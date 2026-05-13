@@ -1,11 +1,11 @@
 #!/bin/bash
 #SBATCH --job-name=exp003-dsm
 #SBATCH --partition=general
-#SBATCH --qos=medium
-#SBATCH --time=24:00:00
+#SBATCH --qos=short
+#SBATCH --time=03:00:00
 #SBATCH --gres=gpu:a40:1
-#SBATCH --cpus-per-task=4
-#SBATCH --mem=32G
+#SBATCH --cpus-per-task=2
+#SBATCH --mem=12G
 #SBATCH --output=logs/slurm-%x-%j.out
 #SBATCH --error=logs/slurm-%x-%j.err
 #SBATCH --mail-user=sserkanakin@icloud.com

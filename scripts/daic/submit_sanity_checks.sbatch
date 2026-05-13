@@ -2,9 +2,9 @@
 #SBATCH --job-name=sde-sanity
 #SBATCH --partition=general
 #SBATCH --qos=short
-#SBATCH --time=01:00:00
-#SBATCH --cpus-per-task=8
-#SBATCH --mem=32G
+#SBATCH --time=00:30:00
+#SBATCH --cpus-per-task=2
+#SBATCH --mem=8G
 #SBATCH --output=logs/slurm-%x-%j.out
 #SBATCH --error=logs/slurm-%x-%j.err
 #SBATCH --mail-user=sserkanakin@icloud.com

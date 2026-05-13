@@ -2,9 +2,9 @@
 #SBATCH --job-name=fit-prior
 #SBATCH --partition=general
 #SBATCH --qos=short
-#SBATCH --time=00:30:00
-#SBATCH --cpus-per-task=4
-#SBATCH --mem=16G
+#SBATCH --time=00:10:00
+#SBATCH --cpus-per-task=2
+#SBATCH --mem=4G
 #SBATCH --output=logs/slurm-%x-%j.out
 #SBATCH --error=logs/slurm-%x-%j.err
 #SBATCH --mail-user=sserkanakin@icloud.com

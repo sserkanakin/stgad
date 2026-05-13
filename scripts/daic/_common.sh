@@ -52,7 +52,7 @@ mkdir -p data results
 [ -e data/processed    ] || ln -sfn "${DAIC_DATA_DIR}/processed"    data/processed
 [ -e results/checkpoints  ] || ln -sfn "${DAIC_DATA_DIR}/checkpoints"  results/checkpoints
 [ -e results/residuals    ] || ln -sfn "${DAIC_DATA_DIR}/residuals"    results/residuals
-[ -e results/prior_params ] || ln -sfn "${DAIC_DATA_DIR}/prior_params" results/prior_params
+# results/prior_params stays in git (small YAMLs); do not symlink it.
 
 # Diagnostics so the slurm log starts with reproducibility info.
 echo "─── job env ─────────────────────────────────────────────────────"

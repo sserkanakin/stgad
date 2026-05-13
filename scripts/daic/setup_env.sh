@@ -112,7 +112,10 @@ ln -sfn "${DAIC_DATA_DIR}/raw"          data/raw
 ln -sfn "${DAIC_DATA_DIR}/processed"    data/processed
 ln -sfn "${DAIC_DATA_DIR}/checkpoints"  results/checkpoints
 ln -sfn "${DAIC_DATA_DIR}/residuals"    results/residuals
-ln -sfn "${DAIC_DATA_DIR}/prior_params" results/prior_params
+# NOTE: results/prior_params is intentionally NOT symlinked. It's small
+# (~1 KB per YAML), tracked in git, and is the canonical fit artefact.
+# fit_prior.sbatch writes here; commit + push afterwards to keep the
+# repo's prior YAMLs in sync with what was fit on the cluster.
 
 echo
 echo "[bonus] wandb login (one-time; only needed for live dashboards):"

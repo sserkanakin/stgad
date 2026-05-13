@@ -95,7 +95,8 @@ PY
 
 echo
 echo "── data symlinks ───────────────────────────────────────────────"
-for sub in data/raw data/processed results/checkpoints results/residuals results/prior_params; do
+# prior_params is tracked in git (small YAMLs), not symlinked.
+for sub in data/raw data/processed results/checkpoints results/residuals; do
   if [ -L "$sub" ] || [ -d "$sub" ]; then
     target="$(readlink -f "$sub" 2>/dev/null || echo "$sub")"
     ok "$sub → $target"

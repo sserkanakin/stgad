@@ -125,16 +125,22 @@ def _forward_decay_var(
     """Per-mode decay and variance at time τ in the joint eigenbasis.
 
     Returns:
-        decay (H, N) = exp(-½ β̄(τ) / s)
-        var   (H, N) = s · (1 - exp(-β̄(τ) / s))
+        decay = exp(-½ β̄(τ) / s)
+        var   = s · (1 - exp(-β̄(τ) / s))
+
+    Shape rules:
+      - τ a Python float / 0-d tensor → decay, var shape ``(H, N)``
+      - τ a 1-d tensor ``(B,)``        → decay, var shape ``(B, H, N)``
+        (per-batch τ values broadcast against the per-mode ``s`` grid)
 
     The variance uses ``-s · expm1(-ratio)`` for numerical stability when
     β̄/s is small (mode not yet near stationarity).
     """
     bb = beta_bar(tau, beta_min, beta_max)
-    # If tau is a tensor with batch dims, bb broadcasts; result shape may
-    # acquire leading batch dims. For the simple scalar/0-d case bb is
-    # scalar and the result is (H, N).
+    # If bb is a 1-d tensor (per-batch τ), reshape to (B, 1, 1) so it
+    # broadcasts against eig["s"] of shape (H, N). Scalar bb is left alone.
+    if torch.is_tensor(bb) and bb.dim() >= 1:
+        bb = bb.view(*bb.shape, *([1] * eig["s"].dim()))
     ratio = bb / eig["s"]
     decay = torch.exp(-0.5 * ratio)
     var = -eig["s"] * torch.expm1(-ratio)

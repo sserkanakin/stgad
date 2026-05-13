@@ -42,7 +42,7 @@ if [ ! -f scripts/train_diffusion.py ]; then
   exit 1
 fi
 
-srun "${DAIC_PYTHON}" scripts/train_diffusion.py \
+srun --export=ALL "${DAIC_PYTHON}" scripts/train_diffusion.py \
     --dataset "${DATASET}" \
     --seed "${SEED}" \
     --prior "${PRIOR}" \

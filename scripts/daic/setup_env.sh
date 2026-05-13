@@ -74,11 +74,16 @@ echo "      python: $(which python) ($(python --version))"
 python -m pip install --upgrade pip setuptools wheel
 
 echo "[3/5] Installing PyTorch with CUDA 12.1 wheels ..."
-pip install --index-url https://download.pytorch.org/whl/cu121 \
+pip install --prefer-binary --index-url https://download.pytorch.org/whl/cu121 \
     "torch>=2.2,<2.7"
 
 echo "[4/5] Installing the project (editable) and its deps ..."
-pip install -e ".[dev]"
+# --prefer-binary: pick the latest version *with a wheel for this platform*
+# rather than the absolute latest. DAIC's compute nodes are CentOS 7
+# (glibc 2.17, GCC 4.8.5); recent numpy/pandas/scipy releases have moved
+# to manylinux_2_28 wheels (glibc 2.28+), and without --prefer-binary
+# pip falls back to source builds and fails on the old toolchain.
+pip install --prefer-binary -e ".[dev]"
 
 echo "[5/5] Sanity check ..."
 python - <<'PY'

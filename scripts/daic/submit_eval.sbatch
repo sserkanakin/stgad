@@ -1,8 +1,8 @@
 #!/bin/bash
 #SBATCH --job-name=dsm-eval
 #SBATCH --partition=general
-#SBATCH --qos=short
-#SBATCH --time=02:00:00
+#SBATCH --qos=medium
+#SBATCH --time=08:00:00
 #SBATCH --gres=gpu:a40:1
 #SBATCH --cpus-per-task=2
 #SBATCH --mem=16G

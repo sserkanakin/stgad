@@ -33,6 +33,7 @@ source "${PROJECT_DIR}/scripts/daic/_common.sh"
 : "${RUN_ID:?Set RUN_ID=<checkpoint folder name> via --export}"
 N_SAMPLES="${N_SAMPLES:-50}"
 N_STEPS="${N_STEPS:-200}"
+OUT_DIR="${OUT_DIR:-experiments/exp-003-score-network}"
 
 # Derive a readable job name from RUN_ID so squeue shows what's running.
 # Pattern: dsm_<prior>_<dataset>_seed<S>_<hash>  →  eval-<dataset>-<prior>
@@ -40,8 +41,9 @@ PRIOR_SHORT=$(echo "${RUN_ID}" | awk -F_ '{print $2}')
 DS_SHORT=$(echo "${RUN_ID}" | awk -F_ '{print $3}')
 scontrol update job="${SLURM_JOB_ID}" JobName="eval-${DS_SHORT}-${PRIOR_SHORT}" 2>/dev/null || true
 
-echo "Evaluating ${RUN_ID}  (K=${N_SAMPLES}, steps=${N_STEPS})"
+echo "Evaluating ${RUN_ID}  (K=${N_SAMPLES}, steps=${N_STEPS})  →  ${OUT_DIR}"
 srun --export=ALL "${DAIC_PYTHON}" scripts/eval_diffusion.py \
     --run_id "${RUN_ID}" \
     --n_samples "${N_SAMPLES}" \
-    --n_steps "${N_STEPS}"
+    --n_steps "${N_STEPS}" \
+    --out_dir "${OUT_DIR}"

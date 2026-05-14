@@ -5,6 +5,26 @@ import os
 from pathlib import Path
 
 
+def _has_wandb_credentials() -> bool:
+    """Return True if any credential source (env var or ~/.netrc) is set up.
+
+    `wandb login` writes the API key to ``~/.netrc``; that's a perfectly
+    valid credential source. We previously fell back to offline whenever
+    ``WANDB_API_KEY`` was unset, which incorrectly demoted runs to offline
+    on machines where the user had run ``wandb login`` (e.g. DAIC).
+    """
+    if os.environ.get("WANDB_API_KEY"):
+        return True
+    netrc_path = Path.home() / ".netrc"
+    if netrc_path.exists():
+        try:
+            content = netrc_path.read_text()
+            return "api.wandb.ai" in content or "wandb.ai" in content
+        except OSError:
+            return False
+    return False
+
+
 def _load_dotenv() -> None:
     """Load .env from the repo root into os.environ if WANDB_API_KEY is not set.
 
@@ -58,7 +78,9 @@ def init_wandb(cfg: dict, run_id: str, resume: str = "allow"):
     _load_dotenv()
 
     mode = os.environ.get("WANDB_MODE", "online")
-    if mode == "online" and not os.environ.get("WANDB_API_KEY"):
+    if mode == "online" and not _has_wandb_credentials():
+        # No env-var key AND no ~/.netrc credential — fall back to offline so
+        # the run still records to disk. User can `wandb sync` later.
         mode = "offline"
 
     run = wandb.init(

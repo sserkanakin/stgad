@@ -37,6 +37,9 @@ source "${PROJECT_DIR}/scripts/daic/_common.sh"
 : "${PRIOR:=structured}"   # structured | isotropic
 EPOCHS="${EPOCHS:-100}"
 
+# Rename for readability in squeue.
+scontrol update job="${SLURM_JOB_ID}" JobName="dsm-${DATASET}-${PRIOR}-s${SEED}" 2>/dev/null || true
+
 echo "Training score net: dataset=${DATASET} seed=${SEED} prior=${PRIOR} epochs=${EPOCHS}"
 
 if [ ! -f scripts/train_diffusion.py ]; then

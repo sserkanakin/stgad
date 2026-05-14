@@ -25,6 +25,9 @@ source "${PROJECT_DIR}/scripts/daic/_common.sh"
 : "${SEED:?Set SEED=<int> via --export}"
 EPOCHS="${EPOCHS:-100}"
 
+# Rename for readability in squeue.
+scontrol update job="${SLURM_JOB_ID}" JobName="gwn-${DATASET}-s${SEED}" 2>/dev/null || true
+
 echo "Training GWN on ${DATASET} (seed ${SEED}, ${EPOCHS} epochs)"
 srun --export=ALL "${DAIC_PYTHON}" scripts/train_backbone.py \
     --dataset "${DATASET}" \

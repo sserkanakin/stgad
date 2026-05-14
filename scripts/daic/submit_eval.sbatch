@@ -34,6 +34,12 @@ source "${PROJECT_DIR}/scripts/daic/_common.sh"
 N_SAMPLES="${N_SAMPLES:-50}"
 N_STEPS="${N_STEPS:-200}"
 
+# Derive a readable job name from RUN_ID so squeue shows what's running.
+# Pattern: dsm_<prior>_<dataset>_seed<S>_<hash>  →  eval-<dataset>-<prior>
+PRIOR_SHORT=$(echo "${RUN_ID}" | awk -F_ '{print $2}')
+DS_SHORT=$(echo "${RUN_ID}" | awk -F_ '{print $3}')
+scontrol update job="${SLURM_JOB_ID}" JobName="eval-${DS_SHORT}-${PRIOR_SHORT}" 2>/dev/null || true
+
 echo "Evaluating ${RUN_ID}  (K=${N_SAMPLES}, steps=${N_STEPS})"
 srun --export=ALL "${DAIC_PYTHON}" scripts/eval_diffusion.py \
     --run_id "${RUN_ID}" \

@@ -21,6 +21,8 @@ source "${PROJECT_DIR}/scripts/daic/_common.sh"
 : "${DATASET:?Set DATASET=metrla or DATASET=pemsbay}"
 SEED="${SEED:-0}"
 
+scontrol update job="${SLURM_JOB_ID}" JobName="fit-${DATASET}" 2>/dev/null || true
+
 srun --export=ALL "${DAIC_PYTHON}" scripts/fit_prior.py \
     --dataset "${DATASET}" \
     --seed "${SEED}"

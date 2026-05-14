@@ -23,6 +23,8 @@ source "${PROJECT_DIR}/scripts/daic/_common.sh"
 : "${DATASET:?Set DATASET=metrla or DATASET=pemsbay}"
 : "${SEED:?Set SEED=<int>}"
 
+scontrol update job="${SLURM_JOB_ID}" JobName="extr-${DATASET}-s${SEED}" 2>/dev/null || true
+
 srun --export=ALL "${DAIC_PYTHON}" scripts/extract_residuals.py \
     --dataset "${DATASET}" \
     --seed "${SEED}"

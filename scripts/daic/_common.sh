@@ -49,6 +49,10 @@ export DAIC_PYTHON="$(which python)"
 # Pip cache stays on the data dir (large; /winhome handles read-mostly).
 export PIP_CACHE_DIR="${DAIC_DATA_DIR}/.cache/pip"
 
+# Unbuffered Python stdout so progress prints appear in the slurm log in
+# real time instead of waiting for the 4 KB block buffer to fill.
+export PYTHONUNBUFFERED=1
+
 cd "${PROJECT_DIR}"
 
 # Symlink large artefact directories on first run (idempotent).

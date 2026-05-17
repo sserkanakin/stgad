@@ -21,7 +21,7 @@ import torch.nn.functional as F
 from src.data.adjacency import load_adjacency
 from src.backbones import load_backbone
 
-_NUM_NODES = {"metrla": 207, "pemsbay": 325}
+_NUM_NODES = {"metrla": 207, "pemsbay": 325, "pems08f": 170}
 _BACKBONE = "gwn"
 
 
@@ -143,7 +143,7 @@ def verify(dataset: str) -> bool:
 
 def main():
     parser = argparse.ArgumentParser(description="Verify GWN backbone wiring.")
-    parser.add_argument("--dataset", choices=["metrla", "pemsbay"], required=True)
+    parser.add_argument("--dataset", choices=["metrla", "pemsbay", "pems08f"], required=True)
     args = parser.parse_args()
 
     ok = verify(args.dataset)

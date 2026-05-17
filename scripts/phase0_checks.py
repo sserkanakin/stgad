@@ -53,7 +53,7 @@ from src.utils.config import load_config
 from src.utils.seed import set_seed
 from torch.utils.data import DataLoader
 
-_NUM_NODES = {"metrla": 207, "pemsbay": 325}
+_NUM_NODES = {"metrla": 207, "pemsbay": 325, "pems08f": 170}
 _NUM_HORIZONS = 12
 _BACKBONE = "gwn"
 
@@ -198,7 +198,7 @@ def check_normalised_crps(dataset: str, run_id: str) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--dataset", default="metrla",
-                        choices=["metrla", "pemsbay"])
+                        choices=["metrla", "pemsbay", "pems08f"])
     parser.add_argument("--run-id", default=None,
                         help="Existing trained checkpoint folder name. "
                              "If omitted, Stage B is skipped.")

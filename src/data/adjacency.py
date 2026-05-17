@@ -1,44 +1,91 @@
-# Adjacency loading and Laplacian computation for METR-LA and PEMS-BAY.
-# pkl files are Python-2 pickles — must use encoding='latin1' in Python 3.
-# Format: 3-tuple (sensor_ids_list, sensor_id_to_index_dict, adj_mx_array).
+# Adjacency loading and Laplacian computation.
+#
+# METR-LA / PEMS-BAY ship the DCRNN .pkl format — Python-2 pickle, 3-tuple
+#   (sensor_ids_list, sensor_id_to_index_dict, adj_mx_array). Loaded with
+#   encoding='latin1' on Python 3.
+#
+# PEMS08F (STSGCN) ships a .csv edge list with columns from,to,cost. Sensor
+#   indices are 0..N-1 contiguous; we build a binary symmetric adjacency
+#   matrix (1 where an edge exists, 0 elsewhere).
+import csv
 import pickle
 from pathlib import Path
 import numpy as np
 
 _ADJ_PATHS = {
-    "metrla": "data/raw/adj_mx_metrla.pkl",
+    "metrla":  "data/raw/adj_mx_metrla.pkl",
     "pemsbay": "data/raw/adj_mx_pemsbay.pkl",
+    "pems08f": "data/raw/pems08/PEMS08.csv",
+}
+
+_NUM_NODES = {
+    "metrla":  207,
+    "pemsbay": 325,
+    "pems08f": 170,
 }
 
 
-def load_adjacency(dataset: str) -> np.ndarray:
-    """Load the pre-computed adjacency matrix from ``data/raw/``.
+def _load_adjacency_pkl(path: Path) -> np.ndarray:
+    """DCRNN .pkl: (sensor_ids, id_to_index, adj_mx). Returns adj_mx float32."""
+    with open(path, "rb") as f:
+        _, _, adj_mx = pickle.load(f, encoding="latin1")
+    return adj_mx.astype(np.float32)
 
-    The pkl stores a 3-tuple: (sensor_ids, id_to_index, adj_mx).
-    adj_mx is float32, shape (N, N), values in [0, 1].
-    Edges with weight < 0.1 are zeroed (normalized_k=0.1 Gaussian kernel).
+
+def _load_adjacency_csv(path: Path, num_nodes: int) -> np.ndarray:
+    """STSGCN edge list .csv (columns from,to,cost) → binary symmetric A.
+
+    Sensor ids are contiguous 0..num_nodes-1. Edge weight from the CSV is
+    discarded; we use binary connectivity (A[i,j]=1 iff (i,j) appears).
+    Symmetrised so A = A.T.
+    """
+    A = np.zeros((num_nodes, num_nodes), dtype=np.float32)
+    with open(path, "r") as f:
+        reader = csv.reader(f)
+        next(reader, None)  # header
+        for row in reader:
+            if len(row) < 2:
+                continue
+            i, j = int(row[0]), int(row[1])
+            A[i, j] = 1.0
+            A[j, i] = 1.0
+    return A
+
+
+def load_adjacency(dataset: str) -> np.ndarray:
+    """Load the adjacency matrix for the given dataset from ``data/raw/``.
+
+    Dispatches by file extension: .pkl (DCRNN format, METR-LA / PEMS-BAY)
+    or .csv (STSGCN edge list, PEMS08F).
 
     Args:
-        dataset: ``"metrla"`` (N=207) or ``"pemsbay"`` (N=325).
+        dataset: ``"metrla"`` (N=207), ``"pemsbay"`` (N=325), or
+                 ``"pems08f"`` (N=170).
 
     Returns:
         float32 ndarray of shape (N, N).
 
     Raises:
         ValueError: unknown dataset name.
-        FileNotFoundError: pkl not present in ``data/raw/``.
+        FileNotFoundError: source file not present in ``data/raw/``.
     """
     if dataset not in _ADJ_PATHS:
-        raise ValueError(f"Unknown dataset '{dataset}'. Choose 'metrla' or 'pemsbay'.")
+        raise ValueError(
+            f"Unknown dataset '{dataset}'. Choose from {list(_ADJ_PATHS)}."
+        )
     path = Path(_ADJ_PATHS[dataset])
     if not path.exists():
         raise FileNotFoundError(
             f"Adjacency file not found: {path}\n"
-            "Run  bash scripts/download_data.sh  first."
+            "Run  bash scripts/download_data.sh  (METR-LA / PEMS-BAY) or "
+            "download PEMS08 from STFGNN (PEMS08F)."
         )
-    with open(path, "rb") as f:
-        _, _, adj_mx = pickle.load(f, encoding="latin1")
-    return adj_mx.astype(np.float32)
+
+    if path.suffix == ".pkl":
+        return _load_adjacency_pkl(path)
+    if path.suffix == ".csv":
+        return _load_adjacency_csv(path, _NUM_NODES[dataset])
+    raise ValueError(f"Unsupported adjacency format: {path.suffix}")
 
 
 def compute_normalized_laplacian(adj: np.ndarray) -> np.ndarray:

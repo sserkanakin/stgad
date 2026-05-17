@@ -21,6 +21,7 @@ import sys
 from pathlib import Path
 
 import numpy as np
+import torch
 import yaml
 
 # ── matplotlib must be imported before any fork (no display on headless machines)
@@ -41,6 +42,13 @@ from src.diffusion.prior_fit import (
     fit_prior,
     lag_averaged_acf,
     sample_prior,
+)
+from src.diffusion.sde import eigendecompose_prior
+from src.diffusion.sde_torch import (
+    beta_bar as torch_beta_bar,
+    eig_to_torch,
+    forward_sample as torch_forward_sample,
+    to_spectral as torch_to_spectral,
 )
 
 _BACKBONE = "gwn"
@@ -149,70 +157,105 @@ def _covariance_check(
     }
 
 
-def _tweedie_check(
+def _vp_forward_marginal_check(
     Q_H: np.ndarray,
     Sigma_S: np.ndarray,
     taus: list[float] | None = None,
     n_samples: int = 2000,
+    beta_min: float = 0.01,
+    beta_max: float = 50.0,
     seed: int = 99,
+    mean_threshold: float = 0.05,
+    max_threshold: float = 0.20,
 ) -> dict:
-    """VE-SDE Tweedie marginal check.
+    """VP-SDE forward marginal check — exercises the actual `forward_sample`.
 
-    For the VE-SDE forward process::
+    Training uses the VP-SDE forward marginal implemented in
+    ``src.diffusion.sde_torch.forward_sample``::
 
-        x_τ = x_0 + τ · ε_struct,   x_0, ε_struct ~ N(0, Σ_prior) independently.
+        r_τ | r_0 ~ N(decay[i,j] · r_0_tilde[i,j],  s[i,j]·(1 − exp(−β̄(τ)/s[i,j])))
 
-    Because signal and noise share the *same* covariance Σ_prior, the
-    Bayes-optimal denoiser is::
+    in the joint Q_H ⊗ Σ_S eigenbasis, where ``decay = exp(−½·β̄/s)``.
 
-        x̂_0 = x_τ / (1 + τ²).
+    This check generates ``r_0 ~ N(0, Σ_prior)`` via ``sample_prior``, calls
+    the torch ``forward_sample`` (the same routine training uses), rotates
+    the result into the joint eigenbasis, removes the analytic mean, and
+    compares the empirical per-mode variance to the analytic conditional
+    variance. Done at multiple τ to catch bugs that show up only at small
+    or large noise levels.
 
-    Its expected MSE per element equals::
+    Replaces the prior VE-SDE Tweedie check, which verified a different SDE.
 
-        MSE_theory = τ²/(1 + τ²) · tr(Σ_prior) / (H · N)
-                   = τ²/(1 + τ²) · tr(Q_H) · tr(Σ_S) / (H · N)
+    Args:
+        Q_H, Sigma_S: fitted Kronecker prior matrices.
+        taus: list of τ values in (0, 1]. Default [0.1, 0.5, 1.0].
+        n_samples: number of r_0 draws per τ.
+        beta_min, beta_max: VP-SDE schedule. Defaults match the locked
+            sde-sanity values (β_max=50 reaches stationary at τ=1).
+        seed: RNG seed for the r_0 draw + the torch forward-sample noise.
+        mean_threshold, max_threshold: PASS criteria on relative error
+            (mean across modes / worst-case mode at each τ).
 
-    [using tr(A ⊗ B) = tr(A) · tr(B)].
-
-    PASS criterion: |mse_ratio − 1| < 0.10 for all τ.
-
-    Returns
-    -------
-    dict with keys
-        taus       : list[float]
-        mse_ratios : list[float]  — empirical / theoretical
-        pass       : bool
+    Returns:
+        dict with keys
+            taus         : list[float]
+            mean_rel_err : list[float] — average across H·N modes per τ
+            max_rel_err  : list[float] — worst mode per τ
+            pass         : bool — all τ pass both mean + max thresholds
+            beta_min, beta_max, mean_threshold, max_threshold (echoes)
     """
     if taus is None:
-        taus = [0.5, 1.0, 2.0]
+        taus = [0.1, 0.5, 1.0]
+
+    # Build the joint eigendecomposition (the same one training uses) and
+    # convert to torch float64 for diagnostic precision.
+    eig_np = eigendecompose_prior(Q_H, Sigma_S)
+    eig_t = eig_to_torch(eig_np, device="cpu", dtype=torch.float64)
 
     rng = np.random.default_rng(seed)
-    H   = Q_H.shape[0]
-    N   = Sigma_S.shape[0]
+    r_0_np = sample_prior(Q_H, Sigma_S, n_samples, rng=rng)        # (n, H, N) float64
+    r_0 = torch.from_numpy(r_0_np)                                  # already float64
+    r_0_tilde = torch_to_spectral(r_0, eig_t["U_T"], eig_t["U_S"])  # (n, H, N)
 
-    # tr(Q_H ⊗ Σ_S) = tr(Q_H) · tr(Σ_S)
-    tr_prior   = float(np.trace(Q_H)) * float(np.trace(Sigma_S))
-    n_elements = H * N
+    # Torch RNG seeded for forward_sample's ε noise.
+    g = torch.Generator(device="cpu").manual_seed(seed)
 
-    mse_ratios = []
+    mean_rel_err: list[float] = []
+    max_rel_err: list[float] = []
+
     for tau in taus:
-        x0  = sample_prior(Q_H, Sigma_S, n_samples, rng=rng)  # (n, H, N)
-        eps = sample_prior(Q_H, Sigma_S, n_samples, rng=rng)  # (n, H, N)
-        x_tau  = x0 + tau * eps
+        # Conditional mean + variance per mode in the joint eigenbasis.
+        bb = torch_beta_bar(torch.tensor(tau, dtype=torch.float64),
+                            beta_min, beta_max)
+        ratio = bb / eig_t["s"]                                     # (H, N)
+        decay = torch.exp(-0.5 * ratio)                             # (H, N)
+        var_analytic = -eig_t["s"] * torch.expm1(-ratio)            # (H, N)
 
-        x0_hat = x_tau / (1.0 + tau ** 2)            # Tweedie denoiser
+        # Run the actual training forward_sample, then rotate r_τ to eigenbasis.
+        r_tau = torch_forward_sample(r_0, tau, eig_t, beta_min, beta_max,
+                                     generator=g)
+        r_tau_tilde = torch_to_spectral(r_tau, eig_t["U_T"], eig_t["U_S"])
 
-        empirical_mse    = float(np.mean((x0 - x0_hat) ** 2))
-        theoretical_mse  = (tau ** 2 / (1.0 + tau ** 2)) * tr_prior / n_elements
+        # Per-mode conditional residual; empirical variance across the n draws.
+        u = r_tau_tilde - decay * r_0_tilde                         # (n, H, N)
+        var_empirical = u.var(dim=0, unbiased=True)                 # (H, N)
 
-        mse_ratios.append(float(empirical_mse / max(theoretical_mse, 1e-30)))
+        rel = (var_empirical - var_analytic).abs() / var_analytic.clamp(min=1e-12)
+        mean_rel_err.append(float(rel.mean()))
+        max_rel_err.append(float(rel.max()))
 
-    all_pass = all(abs(r - 1.0) < 0.10 for r in mse_ratios)
+    all_pass = all(m < mean_threshold for m in mean_rel_err) and \
+               all(x < max_threshold for x in max_rel_err)
 
     return {
-        "taus":       taus,
-        "mse_ratios": mse_ratios,
-        "pass":       all_pass,
+        "taus":           taus,
+        "mean_rel_err":   mean_rel_err,
+        "max_rel_err":    max_rel_err,
+        "pass":           all_pass,
+        "beta_min":       beta_min,
+        "beta_max":       beta_max,
+        "mean_threshold": mean_threshold,
+        "max_threshold":  max_threshold,
     }
 
 
@@ -224,13 +267,12 @@ def _make_figure(
     dataset: str,
     params: dict,
     Q_H: np.ndarray,
-    Sigma_S: np.ndarray,
     eigvals_L: np.ndarray,
     eigvecs_L: np.ndarray,
     sig_S_emp: np.ndarray,
     Q_corr: np.ndarray,
     cov_result: dict,
-    tweedie_result: dict,
+    vp_result: dict,
     out_path: Path,
 ) -> None:
     """Save 6-panel diagnostic figure to *out_path*."""
@@ -307,22 +349,30 @@ def _make_figure(
     ax.set_xlabel("h·n index")
     ax.set_ylabel("h·n index")
 
-    # ── Panel 6: Tweedie MSE ratio ────────────────────────────────────────────
+    # ── Panel 6: VP-SDE forward marginal — per-mode variance match ────────────
     ax = axes[1, 2]
-    taus   = tweedie_result["taus"]
-    ratios = tweedie_result["mse_ratios"]
-    colors = ["green" if abs(r - 1.0) < 0.10 else "red" for r in ratios]
-    ax.bar([str(τ) for τ in taus], ratios, color=colors, alpha=0.7)
-    ax.axhline(1.0, color="black",  lw=1.5, ls="--", label="ideal ratio = 1.0")
-    ax.axhline(0.9, color="orange", lw=0.8, ls=":",  label="±10% band")
-    ax.axhline(1.1, color="orange", lw=0.8, ls=":")
-    tweedie_pass = "PASS" if tweedie_result["pass"] else "FAIL"
-    ax.set_title(f"Tweedie MSE ratio — [{tweedie_pass}]")
-    ax.set_xlabel("noise level τ")
-    ax.set_ylabel("empirical / theoretical MSE")
-    ax.legend(fontsize=7)
-    ax.set_ylim(0.5, 1.5)
-    ax.grid(True, alpha=0.3)
+    taus    = vp_result["taus"]
+    mean_re = vp_result["mean_rel_err"]
+    max_re  = vp_result["max_rel_err"]
+    mean_th = vp_result["mean_threshold"]
+    max_th  = vp_result["max_threshold"]
+    x = np.arange(len(taus))
+    w = 0.38
+    mean_colors = ["green" if m < mean_th else "red" for m in mean_re]
+    max_colors  = ["green" if m < max_th  else "red" for m in max_re]
+    ax.bar(x - w / 2, mean_re, width=w, color=mean_colors, alpha=0.75, label="mean rel err")
+    ax.bar(x + w / 2, max_re,  width=w, color=max_colors,  alpha=0.45, label="max rel err")
+    ax.axhline(mean_th, color="black", lw=0.8, ls="--",
+               label=f"mean threshold = {mean_th:.2f}")
+    ax.axhline(max_th,  color="grey",  lw=0.8, ls=":",
+               label=f"max threshold = {max_th:.2f}")
+    ax.set_xticks(x)
+    ax.set_xticklabels([f"τ={τ:.2g}" for τ in taus])
+    vp_pass = "PASS" if vp_result["pass"] else "FAIL"
+    ax.set_title(f"VP-SDE forward marginal — per-mode var [{vp_pass}]")
+    ax.set_ylabel("rel err |emp - analytic| / analytic")
+    ax.legend(fontsize=7, loc="upper left")
+    ax.grid(True, alpha=0.3, axis="y")
 
     plt.tight_layout()
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -357,7 +407,7 @@ def main() -> int:
         description="Fit Kronecker prior parameters from GWN training residuals."
     )
     parser.add_argument(
-        "--dataset", choices=["metrla", "pemsbay"], required=True,
+        "--dataset", choices=["metrla", "pemsbay", "pems08f"], required=True,
         help="Dataset to fit prior for",
     )
     parser.add_argument(
@@ -432,12 +482,21 @@ def main() -> int:
     cov_str = "PASS" if cov_result["pass"] else "FAIL"
     print(f"       relative Frobenius error = {cov_result['rel_frob']:.4f}  [{cov_str}]")
 
-    print("  (b) Tweedie MSE check (τ = 0.5, 1.0, 2.0; 5000 samples) …")
-    tweedie_result = _tweedie_check(Q_H, Sigma_S, taus=[0.5, 1.0, 2.0], n_samples=5000)
-    for tau, ratio in zip(tweedie_result["taus"], tweedie_result["mse_ratios"]):
-        flag = "PASS" if abs(ratio - 1.0) < 0.10 else "FAIL"
-        print(f"       τ={tau:.1f}: mse_ratio = {ratio:.4f}  [{flag}]")
-    tweedie_str = "PASS" if tweedie_result["pass"] else "FAIL"
+    print("  (b) VP-SDE forward marginal check (τ = 0.1, 0.5, 1.0; 2000 samples) …")
+    vp_result = _vp_forward_marginal_check(
+        Q_H, Sigma_S,
+        taus=[0.1, 0.5, 1.0], n_samples=2000,
+        beta_min=0.01, beta_max=50.0,
+    )
+    for tau, mean_re, max_re in zip(
+        vp_result["taus"], vp_result["mean_rel_err"], vp_result["max_rel_err"]
+    ):
+        mean_ok = mean_re < vp_result["mean_threshold"]
+        max_ok  = max_re  < vp_result["max_threshold"]
+        flag = "PASS" if (mean_ok and max_ok) else "FAIL"
+        print(f"       τ={tau:.2g}: mean rel err = {mean_re:.4f}   "
+              f"max rel err = {max_re:.4f}  [{flag}]")
+    vp_str = "PASS" if vp_result["pass"] else "FAIL"
 
     # ── 5. Save results ───────────────────────────────────────────────────────
     print("\n[5/5] Saving results …")
@@ -470,8 +529,14 @@ def main() -> int:
         "checks": {
             "covariance_rel_frob": float(cov_result["rel_frob"]),
             "covariance_pass":     bool(cov_result["pass"]),
-            "tweedie_mse_ratios":  [float(r) for r in tweedie_result["mse_ratios"]],
-            "tweedie_pass":        bool(tweedie_result["pass"]),
+            # VP-SDE forward marginal: per-mode variance match against
+            # `forward_sample` (the routine training uses).
+            "vp_marginal_taus":         [float(t) for t in vp_result["taus"]],
+            "vp_marginal_mean_rel_err": [float(r) for r in vp_result["mean_rel_err"]],
+            "vp_marginal_max_rel_err":  [float(r) for r in vp_result["max_rel_err"]],
+            "vp_marginal_beta_min":     float(vp_result["beta_min"]),
+            "vp_marginal_beta_max":     float(vp_result["beta_max"]),
+            "vp_marginal_pass":         bool(vp_result["pass"]),
         },
     }
     with open(yaml_path, "w") as f:
@@ -497,23 +562,22 @@ def main() -> int:
         dataset       = args.dataset,
         params        = params,
         Q_H           = Q_H,
-        Sigma_S       = Sigma_S,
         eigvals_L     = eigvals_L,
         eigvecs_L     = eigvecs_L,
         sig_S_emp     = sig_S_emp,
         Q_corr        = Q_corr,
         cov_result    = cov_result,
-        tweedie_result= tweedie_result,
+        vp_result     = vp_result,
         out_path      = fig_path,
     )
 
     # ── Summary ───────────────────────────────────────────────────────────────
-    all_pass = cov_result["pass"] and tweedie_result["pass"]
+    all_pass = cov_result["pass"] and vp_result["pass"]
     go_str   = "GO" if all_pass else "NO-GO"
 
     print(f"\n{'='*60}")
-    print(f"  Covariance check  : {cov_str}")
-    print(f"  Tweedie check     : {tweedie_str}")
+    print(f"  Covariance check       : {cov_str}")
+    print(f"  VP forward-marginal    : {vp_str}")
     print(f"\n  *** {go_str} ***")
     print(f"{'='*60}\n")
 

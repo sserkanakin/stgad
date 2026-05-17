@@ -5,24 +5,28 @@ import numpy as np
 import pandas as pd
 
 
-def split_timestamps(T: int) -> tuple[int, int]:
+def split_timestamps(
+    T: int,
+    train_frac: float = 0.7,
+    test_frac: float = 0.2,
+) -> tuple[int, int]:
     """Return (n_train, n_val_end) split boundary indices.
 
-    Matches DCRNN exactly:
-        n_test  = round(T * 0.2)
-        n_train = round(T * 0.7)
-        n_val   = T - n_test - n_train
+    Defaults match the DCRNN protocol (70/10/20 train/val/test). PEMS08F
+    follows the STSGCN protocol (60/20/20) — pass train_frac=0.6, test_frac=0.2.
 
     Slices: train=[0, n_train), val=[n_train, n_val_end), test=[n_val_end, T)
 
     Args:
         T: Total number of timestamps.
+        train_frac: Fraction of T allocated to training.
+        test_frac:  Fraction of T allocated to test (val = 1 - train - test).
 
     Returns:
         Tuple ``(n_train, n_val_end)``.
     """
-    n_test = round(T * 0.2)
-    n_train = round(T * 0.7)
+    n_test = round(T * test_frac)
+    n_train = round(T * train_frac)
     n_val_end = T - n_test
     return n_train, n_val_end
 

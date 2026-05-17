@@ -41,7 +41,7 @@ from src.diffusion.sde_torch import eig_to_torch
 from src.eval.probabilistic import crps_ensemble, pinball_loss, pit_values
 from src.utils.config import load_config
 
-_NUM_NODES = {"metrla": 207, "pemsbay": 325}
+_NUM_NODES = {"metrla": 207, "pemsbay": 325, "pems08f": 170}
 _NUM_HORIZONS = 12
 _BACKBONE = "gwn"
 _QUANTILES = (0.1, 0.5, 0.9)

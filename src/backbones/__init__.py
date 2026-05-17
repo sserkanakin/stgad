@@ -14,7 +14,7 @@ import torch.nn as nn
 _THIRD_PARTY = Path(__file__).resolve().parents[2] / "third_party"
 
 # Per-dataset node counts
-_NUM_NODES = {"metrla": 207, "pemsbay": 325}
+_NUM_NODES = {"metrla": 207, "pemsbay": 325, "pems08f": 170}
 
 # Graph WaveNet model kwargs
 _GWN_BASE = {
@@ -161,8 +161,11 @@ def load_backbone(
 
     Args:
         name: Must be ``"gwn"``. Kept as a parameter for call-site clarity.
-        dataset: ``"metrla"`` or ``"pemsbay"``.
+        dataset: ``"metrla"``, ``"pemsbay"``, or ``"pems08f"``.
         adj_mx: N×N float32 adjacency matrix from ``adjacency.load_adjacency``.
+            Note: GWN is instantiated with ``supports=None`` and learns its
+            own adaptive adjacency, so this argument is currently unused by
+            the model. Kept for interface stability / future use.
         device: Requested torch device.
 
     Returns:
@@ -177,7 +180,9 @@ def load_backbone(
 
     if name != "gwn":
         raise ValueError(f"Unknown backbone '{name}'. Only 'gwn' is supported.")
-    if dataset not in ("metrla", "pemsbay"):
-        raise ValueError(f"Unknown dataset '{dataset}'. Choose 'metrla' or 'pemsbay'.")
+    if dataset not in _NUM_NODES:
+        raise ValueError(
+            f"Unknown dataset '{dataset}'. Choose from {sorted(_NUM_NODES)}."
+        )
 
     return _load_gwn(dataset, adj_mx, device)

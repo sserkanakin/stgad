@@ -44,7 +44,7 @@ from src.utils.config import hash_config, load_config
 from src.utils.seed import set_seed
 from src.utils.wandb_setup import init_wandb
 
-_NUM_NODES = {"metrla": 207, "pemsbay": 325}
+_NUM_NODES = {"metrla": 207, "pemsbay": 325, "pems08f": 170}
 _NUM_HORIZONS = 12
 _BACKBONE = "gwn"
 
@@ -252,7 +252,7 @@ def val_epoch(
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    p.add_argument("--dataset", choices=["metrla", "pemsbay"], required=True)
+    p.add_argument("--dataset", choices=["metrla", "pemsbay", "pems08f"], required=True)
     p.add_argument("--seed", type=int, default=0,
                    help="Seed for residuals (must match the one used by extract_residuals).")
     p.add_argument("--prior", choices=["structured", "isotropic"], default="structured")

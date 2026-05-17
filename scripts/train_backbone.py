@@ -182,7 +182,7 @@ def eval_split(
 def main() -> None:  # noqa: C901
     """Entry point."""
     parser = argparse.ArgumentParser(description="Train the Graph WaveNet backbone.")
-    parser.add_argument("--dataset", choices=["metrla", "pemsbay"], required=True)
+    parser.add_argument("--dataset", choices=["metrla", "pemsbay", "pems08f"], required=True)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--epochs", type=int, default=None,
                         help="Override epoch count from backbone config.")

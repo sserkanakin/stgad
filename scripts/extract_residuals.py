@@ -83,7 +83,7 @@ def extract_one_split(
 def main() -> None:
     """Entry point."""
     parser = argparse.ArgumentParser(description="Extract GWN residuals.")
-    parser.add_argument("--dataset", choices=["metrla", "pemsbay"], required=True)
+    parser.add_argument("--dataset", choices=["metrla", "pemsbay", "pems08f"], required=True)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--batch_size", type=int, default=256,
                         help="Inference batch size (larger = faster).")

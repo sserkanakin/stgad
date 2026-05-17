@@ -1,17 +1,17 @@
 #!/bin/bash
-#SBATCH --job-name=exp003-dsm
+#SBATCH --job-name=dsm-train
 #SBATCH --partition=general
 #SBATCH --qos=short
 #SBATCH --time=03:00:00
 #SBATCH --gres=gpu:a40:1
 #SBATCH --cpus-per-task=2
 #SBATCH --mem=12G
-#SBATCH --output=logs/slurm-%x-%j.out
-#SBATCH --error=logs/slurm-%x-%j.err
+#SBATCH --output=logs/train-diffusion/%x-%j.out
+#SBATCH --error=logs/train-diffusion/%x-%j.err
 #SBATCH --mail-user=sserkanakin@icloud.com
 #SBATCH --mail-type=END,FAIL
 #
-# exp-003 score-network training. PLACEHOLDER — script
+# score-network score-network training. PLACEHOLDER — script
 # scripts/train_diffusion.py is written in step §14.4 of the PLAN.
 #
 # Submit one variant:
@@ -28,7 +28,7 @@
 #   done
 
 set -euo pipefail
-mkdir -p logs
+mkdir -p logs/train-diffusion
 export PROJECT_DIR="${SLURM_SUBMIT_DIR:-$PWD}"
 source "${PROJECT_DIR}/scripts/daic/_common.sh"
 
@@ -43,7 +43,7 @@ scontrol update job="${SLURM_JOB_ID}" JobName="dsm-${DATASET}-${PRIOR}-s${SEED}"
 echo "Training score net: dataset=${DATASET} seed=${SEED} prior=${PRIOR} epochs=${EPOCHS}"
 
 if [ ! -f scripts/train_diffusion.py ]; then
-  echo "ERROR: scripts/train_diffusion.py not present yet — exp-003 step §14.4 pending." >&2
+  echo "ERROR: scripts/train_diffusion.py not present yet — score-network step §14.4 pending." >&2
   exit 1
 fi
 

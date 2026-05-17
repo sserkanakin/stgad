@@ -3,7 +3,7 @@
 Small synthetic Q_H and Σ_S matrices (H=4, N=5) so we can compare against the
 explicit Kronecker construction with `np.kron`. These tests catch sign errors,
 basis-rotation inconsistency, and β̄ integral mistakes — the three failure modes
-the user flagged for exp-004.
+the user flagged for sde-sanity.
 """
 from __future__ import annotations
 

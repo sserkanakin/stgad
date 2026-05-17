@@ -12,7 +12,7 @@ Master's thesis project. A deterministic Graph WaveNet (GWN) backbone produces p
 | [`DIVERGENCES.md`](DIVERGENCES.md) | Where we deviate from standard score-based diffusion practice and why. |
 | [`CODE_OVERVIEW.md`](CODE_OVERVIEW.md) | Module-by-module tour of every Python file. |
 | [`experiments/README.md`](experiments/README.md) | Per-phase experiment index. Each has its own `SUMMARY.md` with figures and numbers. |
-| [`experiments/exp-003-score-network/PLAN.md`](experiments/exp-003-score-network/PLAN.md) | Score-net design + training plan. |
+| [`experiments/score-network/PLAN.md`](experiments/score-network/PLAN.md) | Score-net design + training plan. |
 | [`scripts/daic/README.md`](scripts/daic/README.md) | Running on TU Delft DAIC GPU cluster. |
 
 ---
@@ -51,7 +51,7 @@ python scripts/fit_prior.py --dataset metrla
 python scripts/fit_prior.py --dataset pemsbay
 
 # 4. Validate the SDE machinery
-python experiments/exp-004/run_sanity_checks.py
+python experiments/sde-sanity/run_sanity_checks.py
 
 # 5. Train the score network for residual diffusion
 python scripts/train_diffusion.py --dataset metrla  --seed 0 --prior structured
@@ -68,16 +68,16 @@ For DAIC, the same pipeline runs under Slurm — see [`scripts/daic/README.md`](
 
 ---
 
-## Status (exp-003 in progress)
+## Status (score-network in progress)
 
 | Phase | What | Status |
 |---|---|---|
 | 0–2 | Preprocessing, EDA, backbone training | done |
-| exp-001 | Residual diagnostics | done |
-| exp-002 | Prior fit (Kronecker, standardised, two-exp temporal kernel) | done |
-| exp-004 | SDE forward + reverse + sanity checks | done |
-| **exp-003** §14.1–§14.5 | Score net + DSM training + sampler + CRPS evaluator | done |
-| **exp-003** evaluation | 4-run sweep on DAIC + CRPS/PIT/pinball comparison | running |
+| residual-diagnostics | Residual diagnostics | done |
+| prior-construction | Prior fit (Kronecker, standardised, two-exp temporal kernel) | done |
+| sde-sanity | SDE forward + reverse + sanity checks | done |
+| **score-network** §14.1–§14.5 | Score net + DSM training + sampler + CRPS evaluator | done |
+| **score-network** evaluation | 4-run sweep on DAIC + CRPS/PIT/pinball comparison | running |
 
 ---
 

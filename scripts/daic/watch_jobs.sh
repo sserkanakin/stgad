@@ -45,16 +45,16 @@ print_snapshot() {
   echo
   echo "── newest slurm log ────────────────────────────────────────────"
   ssh -o ConnectTimeout=5 "${REMOTE}" \
-      "ls -1t ${LOGS_DIR}/slurm-*.out 2>/dev/null | head -3" \
+      "ls -1t ${LOGS_DIR}/*/*.out 2>/dev/null | head -3" \
     || echo "  (no logs found)"
 }
 
 tail_log() {
   local newest_arg=""
   if [ -n "${JOB_ID}" ]; then
-    newest_arg="${LOGS_DIR}/slurm-*-${JOB_ID}.out"
+    newest_arg="${LOGS_DIR}/*/*-${JOB_ID}.out"
   else
-    newest_arg="\$(ls -1t ${LOGS_DIR}/slurm-*.out | head -1)"
+    newest_arg="\$(ls -1t ${LOGS_DIR}/*/*.out | head -1)"
   fi
   # shellcheck disable=SC2029
   ssh "${REMOTE}" "tail -F ${newest_arg}"

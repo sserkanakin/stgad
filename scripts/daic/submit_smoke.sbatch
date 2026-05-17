@@ -6,8 +6,8 @@
 #SBATCH --gres=gpu:a40:1
 #SBATCH --cpus-per-task=2
 #SBATCH --mem=4G
-#SBATCH --output=logs/slurm-%x-%j.out
-#SBATCH --error=logs/slurm-%x-%j.err
+#SBATCH --output=logs/smoke/%x-%j.out
+#SBATCH --error=logs/smoke/%x-%j.err
 #SBATCH --mail-user=sserkanakin@icloud.com
 #SBATCH --mail-type=END,FAIL
 #
@@ -19,7 +19,7 @@
 #   sbatch --export=DATASET=metrla scripts/daic/submit_smoke.sbatch
 
 set -euo pipefail
-mkdir -p logs
+mkdir -p logs/smoke
 export PROJECT_DIR="${SLURM_SUBMIT_DIR:-$PWD}"
 source "${PROJECT_DIR}/scripts/daic/_common.sh"
 

@@ -90,7 +90,7 @@ We use `β_min=0.01`, `β_max=50`. The integrated quantity `β̄(τ)` controls *
 
 For our priors, max `s ≈ 5-6`. `β̄(1)/max(s) ≈ 4-5`, so `exp(-β̄/s) ≈ 0.01` — meaning 99% of modes have reached stationarity at τ=1.
 
-Why β_max=50 specifically: chosen so that `β̄(1) > max(s)` *after* the prior was standardised (max(s) was 6.4k in raw mph; 5.5 after standardisation). This is documented in exp-004 — the original `β_max=10` was 1000× too small and the SDE didn't reach stationarity at τ=1.
+Why β_max=50 specifically: chosen so that `β̄(1) > max(s)` *after* the prior was standardised (max(s) was 6.4k in raw mph; 5.5 after standardisation). This is documented in sde-sanity — the original `β_max=10` was 1000× too small and the SDE didn't reach stationarity at τ=1.
 
 ### 4.2 Closed-form forward marginal
 
@@ -156,25 +156,25 @@ $$
 
 where `δ_h = Var(R_h)` is the per-horizon residual variance.
 
-**Why two exponentials, not AR(1)?** We initially planned a single AR(1), but the empirical autocorrelation showed two clearly separated timescales — a fast decay (~5 min) and a slower decay (~30 min). Single AR(1) RMSE was 0.043 against the empirical ACF; two-exp dropped it to 0.003 on METR-LA. Whole story in `experiments/exp-002-q-construction/SUMMARY.md`.
+**Why two exponentials, not AR(1)?** We initially planned a single AR(1), but the empirical autocorrelation showed two clearly separated timescales — a fast decay (~5 min) and a slower decay (~30 min). Single AR(1) RMSE was 0.043 against the empirical ACF; two-exp dropped it to 0.003 on METR-LA. Whole story in `experiments/prior-construction/SUMMARY.md`.
 
 **Why δ_h scaling?** Without it, `Q_H` is a pure correlation matrix and the diagonal is `1`. With `δ_h`, the diagonal is the per-horizon variance — encoding that residual magnitude grows with the forecast horizon (variance at h=12 is ~2.5× that at h=1, because longer-horizon forecasts are harder).
 
 ### 5.3 The standardisation upgrade
 
-After exp-004 showed the original `β_max=10` was too small for raw-mph residuals, we standardised the residual per horizon:
+After sde-sanity showed the original `β_max=10` was too small for raw-mph residuals, we standardised the residual per horizon:
 
 $$
 \tilde r_h = r_h \,/\, \text{target\_scale}[h], \qquad \text{target\_scale}[h] = \sqrt{\text{Var}(r_h)}
 $$
 
-With standardised residuals, `δ_h ≈ 1` for all h, `Q_H ≈ C_H`, and `Σ_prior` eigenvalues drop from `~10⁴` to `~10`. The schedule `β_max=50` then reaches stationarity at τ=1 in 99%+ of modes. Documented in `experiments/exp-004/SUMMARY.md` §3.
+With standardised residuals, `δ_h ≈ 1` for all h, `Q_H ≈ C_H`, and `Σ_prior` eigenvalues drop from `~10⁴` to `~10`. The schedule `β_max=50` then reaches stationarity at τ=1 in 99%+ of modes. Documented in `experiments/sde-sanity/SUMMARY.md` §3.
 
 At inference time, the score net outputs a standardised residual `r̂₀_std`; we de-standardise via `r̂₀_mph = r̂₀_std × target_scale[h]` and add to the backbone forecast.
 
 ### 5.4 Limitations of Kronecker structure
 
-The Kronecker form **forces** the covariance to factorise into "temporal × spatial." Real residual covariance has cross-coupling that doesn't factorise cleanly. We measured this in exp-004 §3:
+The Kronecker form **forces** the covariance to factorise into "temporal × spatial." Real residual covariance has cross-coupling that doesn't factorise cleanly. We measured this in sde-sanity §3:
 
 | Dataset | % of joint eigenmodes within ±10% of empirical | Worst-mode ratio (emp/prior) |
 |---|---:|---:|
@@ -232,7 +232,7 @@ for k = 0 .. n_steps:
 
 We stop at `τ_eps = 10⁻³` (not τ=0) because `Σ_τ → 0` as τ → 0 and the score `1/var` blows up. At τ_eps, `β̄(τ_eps) ≈ 10⁻⁵`, so the residual gap between `μ_{τ_eps}(r_0)` and `r_0` is well below 1% in every eigenmode — effectively done.
 
-**100 steps** is the exp-004 default for sanity checks. For final inference we use **200 steps**, giving better numerical accuracy in the reverse Euler step.
+**100 steps** is the sde-sanity default for sanity checks. For final inference we use **200 steps**, giving better numerical accuracy in the reverse Euler step.
 
 ### 6.3 Stationary initialisation
 
@@ -439,11 +439,11 @@ Pinball is minimised in expectation by the true q-th quantile, so it's a quantil
 | GWN-as-score-net | UNet; transformer; small CNN | Familiar architecture; spatial+temporal structure built-in; reuses backbone style. |
 | FiLM conditioning | Concat; cross-attention; AdaLN | Cheap (~128 params/block); standard in diffusion UNets; plays well with conv. |
 | K=50 inference samples | K=20 (faster, noisier); K=200 (slower) | Trade-off between MC error and wall-clock; CRPS converges around K=50 for our scale. |
-| 200 reverse steps | 100 (too noisy); 500+ (overkill) | exp-004 showed 100 marginal on PEMS-BAY; 200 gives PASS-strict on both. |
+| 200 reverse steps | 100 (too noisy); 500+ (overkill) | sde-sanity showed 100 marginal on PEMS-BAY; 200 gives PASS-strict on both. |
 
 ---
 
-## 12. Current results (as of exp-003 in progress)
+## 12. Current results (as of score-network in progress)
 
 **Backbone (Phase 3)** — deterministic GWN, matches Wu et al. 2019:
 
@@ -452,16 +452,16 @@ Pinball is minimised in expectation by the true q-th quantile, so it's a quantil
 | METR-LA  | 2.7-2.8 | 3.1-3.2 | 3.5-3.6 | 2.69 / 3.07 / 3.53 |
 | PEMS-BAY | 1.3 | 1.6 | 1.95 | 1.30 / 1.63 / 1.95 |
 
-**exp-002 — Prior fit** (standardised, two-exp temporal):
+**prior-construction — Prior fit** (standardised, two-exp temporal):
 - METR-LA: `α=0.80, ρ₁=0.83, ρ₂=0.10, β=0.20, ε_s=1.0`. Frobenius covariance check 0.12 (PASS).
 - PEMS-BAY: `α=0.99, ρ₁=ρ₂=0.819` (degenerate; collapses to AR(1)). Frobenius 0.09.
 
-**exp-004 — SDE sanity** (standardised prior, β_max=50):
+**sde-sanity — SDE sanity** (standardised prior, β_max=50):
 - Check 1 (stationary covariance match): rel.Frob 0.78 METR-LA (prior inadequacy on a few modes — see §5.4), 0.107 PEMS-BAY (just outside the 0.10 strict threshold).
 - Check 2 (oracle round-trip): rel.recovery mean 0.069 METR-LA (PASS-strict), 0.158 PEMS-BAY (PASS-acceptable).
 - **The SDE machinery is verified correct.** The Check 1 partial fail is a known property of the Kronecker low-rank prior, not a bug.
 
-**exp-003 — Score net training** (4 runs on DAIC, 1 on Mac):
+**score-network — Score net training** (4 runs on DAIC, 1 on Mac):
 
 | Dataset | Structured DSM val loss | Isotropic DSM val loss | Best |
 |---|---:|---:|---|
@@ -496,7 +496,7 @@ Suggestive but inconclusive on its own. The DSM loss is computed in different ei
 |---|---|
 | Run CRPS evaluation on the 4 trained DAIC checkpoints | running |
 | Compare structured vs isotropic CRPS / PIT / pinball | pending eval output |
-| Write `experiments/exp-003-score-network/SUMMARY.md` with results + figures | next |
+| Write `experiments/score-network/SUMMARY.md` with results + figures | next |
 | Multi-seed extension (5 seeds × 2 priors × 2 datasets) | optional, if results warrant |
 | LaTeX writeup | final |
 

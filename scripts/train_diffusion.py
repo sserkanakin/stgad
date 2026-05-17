@@ -1,4 +1,4 @@
-"""Train the score network for residual diffusion (exp-003 §14.4).
+"""Train the score network for residual diffusion (score-network §14.4).
 
 Wires together:
   - prior YAML (results/prior_params/gwn_{dataset}.yaml)
@@ -240,7 +240,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--num_blocks", type=int, default=4)
     p.add_argument("--tau_embed_dim", type=int, default=128)
 
-    # Diffusion schedule (locked from exp-004)
+    # Diffusion schedule (locked from sde-sanity)
     p.add_argument("--beta_min", type=float, default=0.01)
     p.add_argument("--beta_max", type=float, default=50.0)
     p.add_argument("--tau_eps", type=float, default=1e-3)

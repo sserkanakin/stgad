@@ -5,18 +5,18 @@
 #SBATCH --time=00:30:00
 #SBATCH --cpus-per-task=2
 #SBATCH --mem=8G
-#SBATCH --output=logs/slurm-%x-%j.out
-#SBATCH --error=logs/slurm-%x-%j.err
+#SBATCH --output=logs/sde-sanity/%x-%j.out
+#SBATCH --error=logs/sde-sanity/%x-%j.err
 #SBATCH --mail-user=sserkanakin@icloud.com
 #SBATCH --mail-type=END,FAIL
 #
-# CPU-only: re-run exp-004 sanity checks (Check 1 stationary + Check 2 oracle
+# CPU-only: re-run sde-sanity sanity checks (Check 1 stationary + Check 2 oracle
 # round-trip). NumPy/float64 throughout — no GPU. Submit:
 #   sbatch scripts/daic/submit_sanity_checks.sbatch
 
 set -euo pipefail
-mkdir -p logs
+mkdir -p logs/sde-sanity
 export PROJECT_DIR="${SLURM_SUBMIT_DIR:-$PWD}"
 source "${PROJECT_DIR}/scripts/daic/_common.sh"
 
-srun --export=ALL "${DAIC_PYTHON}" experiments/exp-004/run_sanity_checks.py
+srun --export=ALL "${DAIC_PYTHON}" experiments/sde-sanity/run_sanity_checks.py

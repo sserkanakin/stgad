@@ -78,7 +78,7 @@ Across the three reported horizons (h=3, 6, 12) on the test set:
 - **METR-LA:** MAE within +1.4% to +4.4% of Wu 2019. RMSE within −0.5% to +6.2%. MAPE within +5.9% to +10.4%.
 - **PEMS-BAY:** MAE within ±1.6%. RMSE within ±2.5%. MAPE within ±2.9%.
 
-These deltas are well inside the typical seed-to-seed variation for single-seed reproductions of GWN. **The trained backbones are reproductions of the published model. The residuals they produce can be taken as faithful representations of GWN's irreducible forecast error**, which is what the prior fit ([[../exp-002-q-construction/SUMMARY|exp-002]]) is built on.
+These deltas are well inside the typical seed-to-seed variation for single-seed reproductions of GWN. **The trained backbones are reproductions of the published model. The residuals they produce can be taken as faithful representations of GWN's irreducible forecast error**, which is what the prior fit ([[../prior-construction/SUMMARY|prior-construction]]) is built on.
 
 ## Reproduction
 

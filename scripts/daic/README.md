@@ -117,7 +117,7 @@ sbatch --export=DATASET=pemsbay,SEED=0 scripts/daic/submit_extract_residuals.sba
 sbatch --export=DATASET=metrla  scripts/daic/submit_fit_prior.sbatch
 sbatch --export=DATASET=pemsbay scripts/daic/submit_fit_prior.sbatch
 
-# exp-004 SDE sanity checks (CPU only, ~10 min)
+# sde-sanity SDE sanity checks (CPU only, ~10 min)
 sbatch scripts/daic/submit_sanity_checks.sbatch
 ```
 
@@ -128,25 +128,32 @@ sbatch --export=DATASET=metrla,SEED=0  scripts/daic/submit_train_backbone.sbatch
 sbatch --export=DATASET=pemsbay,SEED=0 scripts/daic/submit_train_backbone.sbatch
 ```
 
-### 3.2  exp-003 score network
+### 3.2  Score network
 
 After PLAN §14.4 lands `scripts/train_diffusion.py`:
 
 ```bash
-# Single run
-sbatch --export=DATASET=metrla,SEED=0,PRIOR=structured \
+# Single run — pass --job-name so the log filename encodes dataset/prior/seed
+sbatch --job-name="dsm-metrla-structured-s0" \
+       --export=DATASET=metrla,SEED=0,PRIOR=structured \
        scripts/daic/submit_diffusion.sbatch
 
 # Full 20-job sweep (5 seeds × 2 priors × 2 datasets)
 for ds in metrla pemsbay; do
   for prior in structured isotropic; do
     for seed in 0 1 2 3 4; do
-      sbatch --export=DATASET=$ds,SEED=$seed,PRIOR=$prior \
+      sbatch --job-name="dsm-${ds}-${prior}-s${seed}" \
+             --export=DATASET=$ds,SEED=$seed,PRIOR=$prior \
              scripts/daic/submit_diffusion.sbatch
     done
   done
 done
 ```
+
+The `--job-name` override sets `%x` in the log filename, so you get
+`logs/train-diffusion/dsm-metrla-structured-s0-12345.out` instead of the
+generic `dsm-train-12345.out`. Without an override, the static
+`#SBATCH --job-name` inside each template is used as the fallback.
 
 ---
 
@@ -174,7 +181,7 @@ after a crash resumes the same run (same URL, same loss curves).
 squeue --me                                            # your queue
 squeue --me -t RUNNING -o "%i %T %M %j %R"             # running with elapsed
 sacct -j <jobid> --format=JobID,Elapsed,MaxRSS,State   # post-mortem
-tail -F logs/slurm-exp003-dsm-<jobid>.out              # live log
+tail -F logs/train-diffusion/dsm-*-<jobid>.out         # live log
 scancel <jobid>                                        # kill
 sinteractive --cpus-per-task=2 --mem=8G --gres=gpu:a40:1 --time=01:00:00
 ```
@@ -206,8 +213,8 @@ SUMMARY.md updates and figures back regardless of flags.
 | `submit_train_backbone.sbatch` | 3 | GWN training. A40, medium, 12h. |
 | `submit_extract_residuals.sbatch` | 3 | Inference + residual dump. A40, short, 1h. |
 | `submit_fit_prior.sbatch` | 3 | Prior fit. CPU, short. |
-| `submit_sanity_checks.sbatch` | 3 | exp-004 sanity. CPU, short. |
-| `submit_diffusion.sbatch` | 3 | exp-003 score net. A40, medium, 24h. |
+| `submit_sanity_checks.sbatch` | 3 | sde-sanity sanity. CPU, short. |
+| `submit_diffusion.sbatch` | 3 | score-network score net. A40, medium, 24h. |
 | `watch_jobs.sh` | 4 | Local live monitor. squeue + wandb + tail. |
 | `sync_from_daic.sh` | 4 | rsync DAIC → Mac. |
 
@@ -228,7 +235,7 @@ QoS levels on the `general` partition:
 |---|---|---|
 | `interactive` | 1 h | `sinteractive` only — do not `sbatch` with this |
 | `short` | 4 h | residual extraction, prior fit, sanity checks, smoke |
-| `medium` | 1.5 d | backbone training, single exp-003 run |
+| `medium` | 1.5 d | backbone training, single score-network run |
 | `long` | 7 d | only if needed; lowest priority |
 
 CPUs are always allocated in multiples of 2; project default is

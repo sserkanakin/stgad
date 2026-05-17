@@ -1,6 +1,6 @@
 # Data & residuals — overview
 
-A one-page snapshot of what the input datasets look like, what the masked residuals from the trained GWN backbone look like, and where to find each artifact. For analytical depth on the residual *structure* (variance vs horizon, spatial covariance, horizon correlation, regime stratification) see [[exp-001-residual-diagnostics/SUMMARY]]. For the model that produced the residuals see [[backbone-training/SUMMARY]].
+A one-page snapshot of what the input datasets look like, what the masked residuals from the trained GWN backbone look like, and where to find each artifact. For analytical depth on the residual *structure* (variance vs horizon, spatial covariance, horizon correlation, regime stratification) see [[residual-diagnostics/SUMMARY]]. For the model that produced the residuals see [[backbone-training/SUMMARY]].
 
 ---
 
@@ -62,7 +62,7 @@ The mask convention is `mask = (raw_speed != 0.0)`, computed *before* normalisat
 
 **Raw speed ACF**: both datasets show strong, slowly-decaying autocorrelation (ACF > 0.8 at lag 12, > 0.5 at lag 72). This reflects the dominant diurnal cycle (rush hours recur daily). It's not a useful proxy for residual structure because the backbone is trained to predict the diurnal mean.
 
-**De-meaned ACF** (after subtracting per-sensor per-time-of-day mean): decays much faster. At lag 12 (60 min, the full prediction horizon), the de-meaned ACF is ~0.3–0.4 on METR-LA and ~0.2–0.3 on PEMS-BAY. This is the proxy for what residual structure should look like, and it's what motivates a low-order temporal model (initially AR(1), upgraded to two-exponential mixture; see [[exp-002-q-construction/SUMMARY|exp-002]]).
+**De-meaned ACF** (after subtracting per-sensor per-time-of-day mean): decays much faster. At lag 12 (60 min, the full prediction horizon), the de-meaned ACF is ~0.3–0.4 on METR-LA and ~0.2–0.3 on PEMS-BAY. This is the proxy for what residual structure should look like, and it's what motivates a low-order temporal model (initially AR(1), upgraded to two-exponential mixture; see [[prior-construction/SUMMARY|prior-construction]]).
 
 ---
 
@@ -100,7 +100,7 @@ This is the input to all downstream prior work. Residuals are computed as `r = y
 - **METR-LA residuals are roughly 2× larger than PEMS-BAY residuals at every horizon**, consistent with LA's mixed urban-arterial network being noisier than Bay Area freeway traffic.
 - The h=12 / h=1 growth ratio is steeper on PEMS-BAY (2.48×) than on METR-LA (1.69×) in *relative* terms — likely because PEMS-BAY's baseline residual at h=1 is very small (~2.5% of mean speed) so any longer-horizon error compounds harder in proportional terms.
 
-For the full structural analysis (sensor×sensor covariance, horizon×horizon correlation, regime stratification, Kronecker separability) see [[exp-001-residual-diagnostics/SUMMARY|exp-001]].
+For the full structural analysis (sensor×sensor covariance, horizon×horizon correlation, regime stratification, Kronecker separability) see [[residual-diagnostics/SUMMARY|residual-diagnostics]].
 
 ---
 
@@ -118,8 +118,8 @@ For the full structural analysis (sensor×sensor covariance, horizon×horizon co
 | Residuals (raw mph, masked) | `results/residuals/gwn_{dataset}_{split}_seed0.npz` |
 | Fitted prior parameters | `results/prior_params/gwn_{dataset}.yaml` |
 | EDA figures | `experiments/eda/figures/` |
-| Diagnostic figures | `experiments/exp-001-residual-diagnostics/figures/` |
-| Prior-check figures | `experiments/exp-002-q-construction/figures/` |
+| Diagnostic figures | `experiments/residual-diagnostics/figures/` |
+| Prior-check figures | `experiments/prior-construction/figures/` |
 | Backbone metrics (MAE/RMSE/MAPE per horizon, val + test) | `experiments/backbone-training/metrics.json` |
 
 ## Reproduction
@@ -130,7 +130,7 @@ python scripts/preprocess.py --dataset metrla              # build sliding windo
 python scripts/preprocess.py --dataset pemsbay
 python scripts/diagnose_temporal_acf.py                    # produces the EDA ACF figures
 # Backbone training, residual extraction, prior fit — see backbone-training/SUMMARY.md
-#                                                       and exp-002-q-construction/SUMMARY.md
+#                                                       and prior-construction/SUMMARY.md
 ```
 
 The interactive notebook `notebooks/01_data_eda.ipynb` produced the original EDA figures shown above; the figures are now in `experiments/eda/figures/` rather than the path the notebook references (`results/figures/eda/`). The notebook is left unchanged for archival purposes — re-running it would recreate the figures in the old location.

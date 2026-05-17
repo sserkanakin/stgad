@@ -1,4 +1,4 @@
-"""Evaluate a trained diffusion checkpoint on test residuals (exp-003 §14.5).
+"""Evaluate a trained diffusion checkpoint on test residuals (score-network §14.5).
 
 Pipeline:
   1. Load best.pt for a given run_id from results/checkpoints/.
@@ -7,7 +7,7 @@ Pipeline:
   4. De-standardise (multiply by target_scale[h]) and add the backbone
      y_pred to produce samples in raw mph.
   5. Compute per-horizon CRPS / PIT / pinball aggregates against y_true.
-  6. Write metrics to experiments/exp-003-score-network/eval_<run_id>.json
+  6. Write metrics to experiments/score-network/eval_<run_id>.json
      and produce per-horizon CRPS bar + PIT histogram figures.
 
 Usage:
@@ -149,7 +149,7 @@ def parse_args() -> argparse.Namespace:
                    help="If set, only evaluate the first M test windows.")
     p.add_argument("--sample_seed", type=int, default=42,
                    help="Seed for the reverse-SDE noise.")
-    p.add_argument("--out_dir", default="experiments/exp-003-score-network")
+    p.add_argument("--out_dir", default="experiments/score-network")
     return p.parse_args()
 
 

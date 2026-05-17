@@ -1,7 +1,7 @@
-"""exp-004 sanity checks for the structured-prior SDE.
+"""sde-sanity sanity checks for the structured-prior SDE.
 
 Two checks per dataset (METR-LA, PEMS-BAY) using the fitted prior parameters
-from exp-002:
+from prior-construction:
 
   Check 1 — Stationary distribution (forward at τ=1).
       Sample 5000 r_0 from training residuals (per-horizon standardised by the
@@ -17,10 +17,10 @@ from exp-002:
 
 CPU + NumPy throughout (float64). Sizes are modest (≤ 5000 × 12 × 325 ≈ 156 MB);
 LAPACK on CPU is faster than GPU at these sizes and gives full precision. PyTorch
-+ MPS is reserved for the network-training experiment (exp-003).
++ MPS is reserved for the network-training experiment (score-network).
 
 Usage:
-    python experiments/exp-004/run_sanity_checks.py
+    python experiments/sde-sanity/run_sanity_checks.py
 """
 from __future__ import annotations
 
@@ -51,10 +51,10 @@ from src.diffusion.sde import (
 # ── Settings (per the spec) ──────────────────────────────────────────────────
 #
 # β_max is sized so β̄(1) = β_min + 0.5·(β_max − β_min) is many multiples of
-# the largest Σ_prior eigenvalue: with the standardised prior (exp-002 v2),
+# the largest Σ_prior eigenvalue: with the standardised prior (prior-construction v2),
 # max(s) ≲ 10, so β_max = 50 → β̄(1) ≈ 25, β̄/max(s) ≳ 2.5, exp(-2.5) ≈ 0.08.
 # When the legacy raw-mph² prior is in use, max(s) is O(10⁴) and no realistic
-# β_max would reach stationary at τ=1 — see exp-004 SUMMARY §3.
+# β_max would reach stationary at τ=1 — see sde-sanity SUMMARY §3.
 BETA_MIN = 0.01
 BETA_MAX = 50.0
 N_REVERSE_STEPS = 100
@@ -66,7 +66,7 @@ TAU_EPS = 1e-3                   # stop reverse SDE here to avoid Σ_τ → 0
 
 DATASETS = ["metrla", "pemsbay"]
 
-OUT_DIR = ROOT / "experiments" / "exp-004"
+OUT_DIR = ROOT / "experiments" / "sde-sanity"
 FIG_DIR = OUT_DIR / "figures"
 
 
@@ -262,7 +262,7 @@ def make_covariance_figure(c1_plot: dict, c1_summary: dict,
         ax.set_xlabel("h·n index")
         ax.set_ylabel("h·n index")
 
-    fig.suptitle(f"exp-004 Check 1 — stationary covariance — {dataset.upper()}",
+    fig.suptitle(f"sde-sanity Check 1 — stationary covariance — {dataset.upper()}",
                  fontsize=13, y=1.02)
     fig.tight_layout()
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -274,7 +274,7 @@ def make_covariance_figure(c1_plot: dict, c1_summary: dict,
 
 def main() -> int:
     print("=" * 78)
-    print("exp-004 — structured-SDE sanity checks")
+    print("sde-sanity — structured-SDE sanity checks")
     print("=" * 78)
     print(f"  schedule:  β_min={BETA_MIN}  β_max={BETA_MAX}  "
           f"⇒  β̄(1) = {beta_bar(1.0, BETA_MIN, BETA_MAX):.4f}")
@@ -282,7 +282,7 @@ def main() -> int:
           f"compare empirical Σ to Σ_prior on a {SUBSET_SIZE}-sensor subset")
     print(f"  Check 2:   oracle round-trip on {N_OR_SAMPLES} r_0, "
           f"{N_REVERSE_STEPS} Euler-Maruyama steps from τ=1 to τ_eps={TAU_EPS}")
-    print(f"  device:    CPU + NumPy (float64); MPS reserved for exp-003")
+    print(f"  device:    CPU + NumPy (float64); MPS reserved for score-network")
     print(f"  seed:      {SEED}")
 
     rng = np.random.default_rng(SEED)

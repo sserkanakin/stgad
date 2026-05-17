@@ -9,7 +9,7 @@ Outputs
 results/prior_params/gwn_{dataset}.yaml
     Prior parameters: delta_h, alpha, rho1, rho2, beta, epsilon_s, sigma.
 
-experiments/exp-002-q-construction/figures/fig_prior_samples_covariance_check_gwn_{dataset}.png
+experiments/prior-construction/figures/fig_prior_samples_covariance_check_gwn_{dataset}.png
     Six-panel diagnostic figure.
 
 Exit codes: 0 = GO (all checks pass), 1 = NO-GO (at least one check failed).
@@ -490,7 +490,7 @@ def main() -> int:
     Q_corr    = empirical_temporal_corr(Q_emp)
 
     fig_path = (
-        ROOT / "experiments" / "exp-002-q-construction" / "figures"
+        ROOT / "experiments" / "prior-construction" / "figures"
         / f"fig_prior_samples_covariance_check_{_BACKBONE}_{args.dataset}.png"
     )
     _make_figure(

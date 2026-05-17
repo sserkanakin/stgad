@@ -5,8 +5,8 @@
 #SBATCH --time=00:10:00
 #SBATCH --cpus-per-task=2
 #SBATCH --mem=4G
-#SBATCH --output=logs/slurm-%x-%j.out
-#SBATCH --error=logs/slurm-%x-%j.err
+#SBATCH --output=logs/fit-prior/%x-%j.out
+#SBATCH --error=logs/fit-prior/%x-%j.err
 #SBATCH --mail-user=sserkanakin@icloud.com
 #SBATCH --mail-type=END,FAIL
 #
@@ -14,7 +14,7 @@
 #   sbatch --export=DATASET=metrla scripts/daic/submit_fit_prior.sbatch
 
 set -euo pipefail
-mkdir -p logs
+mkdir -p logs/fit-prior
 export PROJECT_DIR="${SLURM_SUBMIT_DIR:-$PWD}"
 source "${PROJECT_DIR}/scripts/daic/_common.sh"
 

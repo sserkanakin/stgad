@@ -6,8 +6,8 @@
 #SBATCH --gres=gpu:a40:1
 #SBATCH --cpus-per-task=2
 #SBATCH --mem=16G
-#SBATCH --output=logs/slurm-%x-%j.out
-#SBATCH --error=logs/slurm-%x-%j.err
+#SBATCH --output=logs/eval-diffusion/%x-%j.out
+#SBATCH --error=logs/eval-diffusion/%x-%j.err
 #SBATCH --mail-user=sserkanakin@icloud.com
 #SBATCH --mail-type=END,FAIL
 #
@@ -26,14 +26,14 @@
 #   done
 
 set -euo pipefail
-mkdir -p logs
+mkdir -p logs/eval-diffusion
 export PROJECT_DIR="${SLURM_SUBMIT_DIR:-$PWD}"
 source "${PROJECT_DIR}/scripts/daic/_common.sh"
 
 : "${RUN_ID:?Set RUN_ID=<checkpoint folder name> via --export}"
 N_SAMPLES="${N_SAMPLES:-50}"
 N_STEPS="${N_STEPS:-200}"
-OUT_DIR="${OUT_DIR:-experiments/exp-003-score-network}"
+OUT_DIR="${OUT_DIR:-experiments/score-network}"
 
 # Derive a readable job name from RUN_ID so squeue shows what's running.
 # Pattern: dsm_<prior>_<dataset>_seed<S>_<hash>  →  eval-<dataset>-<prior>

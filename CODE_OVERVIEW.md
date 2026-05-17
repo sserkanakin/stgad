@@ -63,7 +63,7 @@ results/checkpoints/dsm_{prior}_{ds}_seed0_<hash>/best.pt
          │
          │ scripts/eval_diffusion.py
          ▼
-experiments/exp-003-score-network/eval_<run_id>.json
+experiments/score-network/eval_<run_id>.json
                                                        ← per-horizon CRPS/PIT/pinball
 ```
 
@@ -94,7 +94,7 @@ experiments/exp-003-score-network/eval_<run_id>.json
 | File | Responsibility |
 |---|---|
 | `prior_fit.py` | Fit `Q_H` (two-exponential temporal kernel + per-horizon `δ_h`) and `Σ_S` (graph-Laplacian GMRF with `β, ε_s`). Both fit by Nelder-Mead / scipy.optimize on the standardised residuals. Produces the canonical `results/prior_params/gwn_{ds}.yaml`. |
-| `sde.py` | NumPy / float64 / CPU forward + reverse SDE. β schedule, eigendecompose_prior, `to_spectral`/`from_spectral`, apply_Q, forward_sample, sample_stationary, oracle_score, reverse_oracle. Used by `experiments/exp-004/run_sanity_checks.py`. |
+| `sde.py` | NumPy / float64 / CPU forward + reverse SDE. β schedule, eigendecompose_prior, `to_spectral`/`from_spectral`, apply_Q, forward_sample, sample_stationary, oracle_score, reverse_oracle. Used by `experiments/sde-sanity/run_sanity_checks.py`. |
 | `sde_torch.py` | PyTorch adapter. Same API as `sde.py` but tensor-native and differentiable. `eig_to_torch` bridges NumPy → torch. forward_sample handles per-batch τ via broadcasting. Used by training + inference. |
 | `score_net.py` | `ScoreNet` — GWN-style score network. Components: `SinusoidalEmbedding` (DDPM-style τ encoding), `FiLM` (per-channel affine modulation, identity init), `GraphConv` (single-support K=1), `ScoreNetBlock` (gated TCN + GCN + FiLM + GroupNorm + residual), `ScoreNet` (4 blocks, ~232k params at default config). |
 | `dsm.py` | `sample_tau` (log-uniform), `dsm_x0_loss` (eigenbasis-weighted MSE or plain uniform MSE), `per_mode_squared_error` for diagnostics. |
@@ -132,9 +132,9 @@ experiments/exp-003-score-network/eval_<run_id>.json
 | `fit_prior.py` | Fits Q_H (two-exp temporal) + Σ_S (graph-Laplacian GMRF) on training residuals. Produces standardised YAML with `target_scale`. | ~2 min (CPU) |
 | `train_diffusion.py` | Trains the score network. Composes DiffusionDataset + eig + adjacency + ScoreNet + DSM loss + wandb. Supports `--prior {structured,isotropic}`, `--weighting {eigenbasis,uniform}`, `--smoke`. | ~30 min METR-LA, ~60 min PEMS-BAY |
 | `eval_diffusion.py` | Loads a trained checkpoint, runs reverse-SDE sampling on test residuals, computes per-horizon CRPS / PIT / pinball, writes JSON. | ~30-90 min depending on K and N |
-| `compute_test_metrics.py` | Computes backbone test-set MAE/RMSE/MAPE from extracted residuals. Used by exp-001. | ~30 s |
-| `compare_ar1_vs_2exp.py` | Diagnostic: AR(1) vs two-exp temporal kernel fit comparison. Used by exp-002. | ~1 min |
-| `diagnose_temporal_acf.py` | Diagnostic: empirical autocorrelation + fitted curves. Used by exp-002. | ~30 s |
+| `compute_test_metrics.py` | Computes backbone test-set MAE/RMSE/MAPE from extracted residuals. Used by residual-diagnostics. | ~30 s |
+| `compare_ar1_vs_2exp.py` | Diagnostic: AR(1) vs two-exp temporal kernel fit comparison. Used by prior-construction. | ~1 min |
+| `diagnose_temporal_acf.py` | Diagnostic: empirical autocorrelation + fitted curves. Used by prior-construction. | ~30 s |
 | `verify_backbone.py` | Diagnostic: sanity-check a trained backbone produces sensible numbers. | ~30 s |
 
 ---
@@ -166,7 +166,7 @@ See [`scripts/daic/README.md`](scripts/daic/README.md) for the full runbook. Qui
 | `test_sde_torch.py` | PyTorch SDE: same fixtures, bit-for-bit comparison with NumPy version (float64), shape + autograd checks (float32). |
 | `test_dsm.py` | sample_tau distribution properties, DSM loss zero/positive/finite/differentiable, eigenbasis vs uniform weighting, end-to-end integration through a ScoreNet. |
 | `test_score_net.py` | SinusoidalEmbedding, FiLM identity init + learning, GraphConv with/without adj, ScoreNetBlock shape + residual, full ScoreNet + autograd + param count. |
-| `test_sampling.py` | reverse_learned shape + autograd, oracle round-trip (mirror of exp-004 Check 2 in torch), sample_per_window stacks K trajectories. |
+| `test_sampling.py` | reverse_learned shape + autograd, oracle round-trip (mirror of sde-sanity Check 2 in torch), sample_per_window stacks K trajectories. |
 | `test_probabilistic.py` | CRPS = 0 at perfect prediction, matches Gaussian analytic value, PIT uniform on calibrated ensembles, pinball zero at perfect quantile, all reject bad inputs. |
 
 Run: `pytest tests/ -q`. Local time: ~8 s.

@@ -6,8 +6,8 @@
 #SBATCH --gres=gpu:a40:1
 #SBATCH --cpus-per-task=2
 #SBATCH --mem=8G
-#SBATCH --output=logs/slurm-%x-%j.out
-#SBATCH --error=logs/slurm-%x-%j.err
+#SBATCH --output=logs/extract-residuals/%x-%j.out
+#SBATCH --error=logs/extract-residuals/%x-%j.err
 #SBATCH --mail-user=sserkanakin@icloud.com
 #SBATCH --mail-type=END,FAIL
 #
@@ -16,7 +16,7 @@
 #   sbatch --export=DATASET=metrla,SEED=0 scripts/daic/submit_extract_residuals.sbatch
 
 set -euo pipefail
-mkdir -p logs
+mkdir -p logs/extract-residuals
 export PROJECT_DIR="${SLURM_SUBMIT_DIR:-$PWD}"
 source "${PROJECT_DIR}/scripts/daic/_common.sh"
 

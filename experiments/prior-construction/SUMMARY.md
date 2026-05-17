@@ -1,12 +1,12 @@
-# exp-002 — Q construction, prior fit, AR(1)-vs-two-exp justification
+# prior-construction — Q construction, prior fit, AR(1)-vs-two-exp justification
 
 **Goal.** Construct the Kronecker prior covariance `Σ_prior = Q_H ⊗ Σ_S` from the data and graph; fit its parameters from training residuals; verify the implied prior reproduces the empirical residual structure; document the AR(1) → two-exponential temporal-kernel upgrade with reproducible numerical evidence.
 
 **Status:** done. All sanity checks PASS on both datasets. AR(1)-vs-two-exp comparison artifact produced.
 
-**Update — per-horizon standardisation (exp-004 follow-up).** Originally the prior was fit on raw mph² residuals, which produced `Σ_prior` eigenvalues up to 1.8×10⁴ (METR-LA) — far beyond the reach of any reasonable VP-SDE schedule (see exp-004 §3). The fit is now performed on **per-horizon standardised** residuals `r̃[n,h,i] = r[n,h,i] / target_scale[h]`, with `target_scale[h] = sqrt(Var(r_h))` stored in the YAML for de-standardisation at sample time. The per-horizon-variance scaling that lived inside `Q_H` is now external; `Q_H = C_H` (the dimensionless correlation kernel). `ε_s` is raised from 0.01 to 1.0 to match the unit-variance scale of the modelled variable. The temporal correlation parameters `α, ρ₁, ρ₂` are unchanged (correlations are scale-invariant); `β` is refit on standardised residuals.
+**Update — per-horizon standardisation (sde-sanity follow-up).** Originally the prior was fit on raw mph² residuals, which produced `Σ_prior` eigenvalues up to 1.8×10⁴ (METR-LA) — far beyond the reach of any reasonable VP-SDE schedule (see sde-sanity §3). The fit is now performed on **per-horizon standardised** residuals `r̃[n,h,i] = r[n,h,i] / target_scale[h]`, with `target_scale[h] = sqrt(Var(r_h))` stored in the YAML for de-standardisation at sample time. The per-horizon-variance scaling that lived inside `Q_H` is now external; `Q_H = C_H` (the dimensionless correlation kernel). `ε_s` is raised from 0.01 to 1.0 to match the unit-variance scale of the modelled variable. The temporal correlation parameters `α, ρ₁, ρ₂` are unchanged (correlations are scale-invariant); `β` is refit on standardised residuals.
 
-**Inputs:** training residuals `results/residuals/gwn_*_train_seed0.npz`, Laplacian eigendecomposition `data/processed/{dataset}_laplacian_eigs.npz`. Empirical structural facts from [[../exp-001-residual-diagnostics/SUMMARY|exp-001]].
+**Inputs:** training residuals `results/residuals/gwn_*_train_seed0.npz`, Laplacian eigendecomposition `data/processed/{dataset}_laplacian_eigs.npz`. Empirical structural facts from [[../residual-diagnostics/SUMMARY|residual-diagnostics]].
 
 **Outputs:** fitted parameter YAMLs `results/prior_params/gwn_{metrla,pemsbay}.yaml`, sanity-check figures and AR(1)-vs-2exp comparison figures in `figures/`, JSON dump in `results_ar1_vs_2exp.json`.
 
@@ -207,7 +207,7 @@ python scripts/fit_prior.py --dataset pemsbay
 python scripts/compare_ar1_vs_2exp.py
 ```
 
-`fit_prior.py` writes `results/prior_params/gwn_{dataset}.yaml` and the diagnostic figure into `experiments/exp-002-q-construction/figures/fig_prior_samples_covariance_check_gwn_{dataset}.png`. `compare_ar1_vs_2exp.py` writes the lag-curve and implied-R figures (PNG + PDF) and `results_ar1_vs_2exp.json` here.
+`fit_prior.py` writes `results/prior_params/gwn_{dataset}.yaml` and the diagnostic figure into `experiments/prior-construction/figures/fig_prior_samples_covariance_check_gwn_{dataset}.png`. `compare_ar1_vs_2exp.py` writes the lag-curve and implied-R figures (PNG + PDF) and `results_ar1_vs_2exp.json` here.
 
 ## Files
 

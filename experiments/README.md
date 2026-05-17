@@ -8,9 +8,9 @@
 |---|---|---|---|
 | 0 | Data & residuals — dataset shapes, missingness, scaler values, residual scale + bias, key EDA figures | [`data-and-residuals-overview.md`](data-and-residuals-overview.md) | done |
 | 1 | Backbone training (GWN) — per-horizon MAE / RMSE / MAPE for val + test, comparison to Wu 2019 | [`backbone-training/SUMMARY.md`](backbone-training/SUMMARY.md), [`metrics.json`](backbone-training/metrics.json) | done |
-| 2 | Residual diagnostics — variance vs horizon, sensor×sensor covariance, horizon×horizon correlation, regime stratification, Kronecker separability | [`exp-001-residual-diagnostics/SUMMARY.md`](exp-001-residual-diagnostics/SUMMARY.md) | done |
-| 3 | Prior construction & sanity + AR(1)-vs-two-exp comparison | [`exp-002-q-construction/SUMMARY.md`](exp-002-q-construction/SUMMARY.md), [`results_ar1_vs_2exp.json`](exp-002-q-construction/results_ar1_vs_2exp.json) | done |
-| 4 | SDE implementation + sanity checks | [`exp-004/SUMMARY.md`](exp-004/SUMMARY.md), [`sanity_results.json`](exp-004/sanity_results.json) | ✓ Check 2 PASS / ⚠ Check 1 partial (schedule fix landed; residual rel.Frob is prior inadequacy — see SUMMARY §3) |
+| 2 | Residual diagnostics — variance vs horizon, sensor×sensor covariance, horizon×horizon correlation, regime stratification, Kronecker separability | [`residual-diagnostics/SUMMARY.md`](residual-diagnostics/SUMMARY.md) | done |
+| 3 | Prior construction & sanity + AR(1)-vs-two-exp comparison | [`prior-construction/SUMMARY.md`](prior-construction/SUMMARY.md), [`results_ar1_vs_2exp.json`](prior-construction/results_ar1_vs_2exp.json) | done |
+| 4 | SDE implementation + sanity checks | [`sde-sanity/SUMMARY.md`](sde-sanity/SUMMARY.md), [`sanity_results.json`](sde-sanity/sanity_results.json) | ✓ Check 2 PASS / ⚠ Check 1 partial (schedule fix landed; residual rel.Frob is prior inadequacy — see SUMMARY §3) |
 | 5 | Structured-vs-isotropic CRPS comparison | _planned_ | future |
 | - | Cross-experiment summary with everything embedded inline | [`RESULTS_SUMMARY.md`](RESULTS_SUMMARY.md) | done |
 
@@ -57,7 +57,7 @@ For full per-horizon (h=1..12), val + test, MAE / RMSE / MAPE, see [`backbone-tr
 
 Full YAMLs: [`../results/prior_params/gwn_metrla.yaml`](../results/prior_params/gwn_metrla.yaml), [`../results/prior_params/gwn_pemsbay.yaml`](../results/prior_params/gwn_pemsbay.yaml).
 
-### SDE sanity checks (exp-004)
+### SDE sanity checks (sde-sanity)
 
 | Check | METR-LA | PEMS-BAY | verdict |
 |---|---:|---:|---|
@@ -65,7 +65,7 @@ Full YAMLs: [`../results/prior_params/gwn_metrla.yaml`](../results/prior_params/
 | Check 1 — stationary rel.Frob | 0.776 | 0.107 | ⚠ prior inadequacy / ⚠ at threshold |
 | Frac of joint eigenmodes ≈ stationary at τ=1 | 99.7% | 98.6% | schedule fix complete |
 
-The METR-LA Check 1 residual is **prior-side**: a small fraction of joint eigenmodes have empirical variance up to 30× the Kronecker prior's allocation (max ratio in direct measurement: 2506×). This is structural, not an SDE bug — the Kronecker low-rank approximation cannot capture every product mode exactly. The score model in exp-003 fills the gap during training.
+The METR-LA Check 1 residual is **prior-side**: a small fraction of joint eigenmodes have empirical variance up to 30× the Kronecker prior's allocation (max ratio in direct measurement: 2506×). This is structural, not an SDE bug — the Kronecker low-rank approximation cannot capture every product mode exactly. The score model in score-network fills the gap during training.
 
 ### AR(1) vs two-exp temporal kernel — verdict
 
@@ -74,7 +74,7 @@ The METR-LA Check 1 residual is **prior-side**: a small fraction of joint eigenm
 | METR-LA | 0.0432 → 0.0029 (**15×**) | −73 → −135 (**+61 better**) | two-exp wins decisively |
 | PEMS-BAY | 0.01636 → 0.01636 (**identical**) | −96.7 → −92.7 (AR(1) wins by 4) | two-exp degenerates to AR(1) |
 
-Adopted: two-exp uniformly. It's a strict superset of AR(1); on data with one timescale (PEMS-BAY) the optimiser collapses to AR(1) automatically; on data with two (METR-LA) it separates them. See [`exp-002-q-construction/SUMMARY.md`](exp-002-q-construction/SUMMARY.md) §6 for the full analysis.
+Adopted: two-exp uniformly. It's a strict superset of AR(1); on data with one timescale (PEMS-BAY) the optimiser collapses to AR(1) automatically; on data with two (METR-LA) it separates them. See [`prior-construction/SUMMARY.md`](prior-construction/SUMMARY.md) §6 for the full analysis.
 
 ---
 
@@ -104,7 +104,7 @@ python scripts/fit_prior.py            --dataset pemsbay
 python scripts/compare_ar1_vs_2exp.py                      # AR(1) vs two-exp comparison artifact
 
 # 4. SDE sanity checks
-python experiments/exp-004/run_sanity_checks.py
+python experiments/sde-sanity/run_sanity_checks.py
 ```
 
 Each step's outputs go to a deterministic location described in the corresponding `SUMMARY.md`.

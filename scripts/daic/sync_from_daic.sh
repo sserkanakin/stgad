@@ -10,6 +10,7 @@
 # Flags:
 #   --no-checkpoints     # skip large checkpoint files
 #   --no-residuals       # skip residual .npz files
+#   --no-logs            # skip Slurm logs
 
 set -euo pipefail
 
@@ -20,10 +21,12 @@ fi
 
 CKPTS=true
 RESIDS=true
+LOGS=true
 for arg in "$@"; do
   case "$arg" in
     --no-checkpoints) CKPTS=false ;;
     --no-residuals)   RESIDS=false ;;
+    --no-logs)        LOGS=false ;;
     *) echo "Unknown flag: $arg" >&2; exit 2 ;;
   esac
 done
@@ -52,6 +55,12 @@ echo "← Pulling experiments tree (figures + JSON, no large arrays) ..."
   --include='*.png' --include='*.json' --include='*.md' --include='*.yaml' \
   --include='*/' --exclude='*' \
   "${REMOTE}:${DAIC_PROJECT_DIR}/experiments/" experiments/
+
+if $LOGS; then
+  echo "← Pulling Slurm logs ..."
+  mkdir -p logs
+  "${RSYNC_BASE[@]}" "${REMOTE}:${DAIC_PROJECT_DIR}/logs/" logs/
+fi
 
 echo
 echo "Pull complete."

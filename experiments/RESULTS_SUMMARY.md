@@ -1,6 +1,6 @@
 # Results Summary — Backbone, Diagnostics, Fitted Prior, and SDE
 
-**Experiments covered:** exp-001 (residual diagnostics), exp-002 (Q construction & AR(1)-vs-two-exp), exp-004 (structured-prior SDE).
+**Experiments covered:** residual-diagnostics (residual diagnostics), prior-construction (Q construction & AR(1)-vs-two-exp), sde-sanity (structured-prior SDE).
 **Backbone:** Graph WaveNet (Wu et al., IJCAI 2019), trained on METR-LA and PEMS-BAY.
 **Status as of 2026-05-03:** both backbones converged within 5% of Wu 2019; all five empirical-motivation gates pass; Kronecker prior fit on **per-horizon-standardised residuals** (covariance + Tweedie sanity checks PASS); SDE forward+reverse machinery verified by oracle round-trip (METR-LA strict 0.069, PEMS-BAY acceptable 0.158); AR(1)-vs-two-exp comparison documents the empirical case for the two-exponential temporal kernel.
 
@@ -14,16 +14,16 @@
 | Backbone training script | `scripts/train_backbone.py` |
 | Residuals (per-window y_true, y_pred, mask) | `results/residuals/gwn_{metrla,pemsbay}_{train,val,test}_seed0.npz` |
 | Residual extraction script | `scripts/extract_residuals.py` |
-| **exp-001 figures** (variance, Σ_Q, Σ_S, regime) | `experiments/exp-001-residual-diagnostics/figures/fig_*.png` |
+| **residual-diagnostics figures** (variance, Σ_Q, Σ_S, regime) | `experiments/residual-diagnostics/figures/fig_*.png` |
 | EDA figures (weekly cycles, missingness, ACF, Dirichlet, Laplacian spectrum) | `experiments/eda/figures/fig_*.png` |
-| **exp-002 fitted-prior YAMLs** | `results/prior_params/gwn_{metrla,pemsbay}.yaml` |
+| **prior-construction fitted-prior YAMLs** | `results/prior_params/gwn_{metrla,pemsbay}.yaml` |
 | Prior-fit code (pure functions) | `src/diffusion/prior_fit.py` |
 | Prior-fit entry script | `scripts/fit_prior.py` |
-| Prior covariance + Tweedie sanity figures | `experiments/exp-002-q-construction/figures/fig_prior_samples_covariance_check_gwn_{metrla,pemsbay}.png` |
-| **AR(1) vs two-exp comparison figures** (PNG + PDF) | `experiments/exp-002-q-construction/figures/fig_ar1_vs_2exp_{lag_curve,implied_R}.{png,pdf}` |
-| AR(1) vs two-exp numerical results | `experiments/exp-002/results_ar1_vs_2exp.json` |
+| Prior covariance + Tweedie sanity figures | `experiments/prior-construction/figures/fig_prior_samples_covariance_check_gwn_{metrla,pemsbay}.png` |
+| **AR(1) vs two-exp comparison figures** (PNG + PDF) | `experiments/prior-construction/figures/fig_ar1_vs_2exp_{lag_curve,implied_R}.{png,pdf}` |
+| AR(1) vs two-exp numerical results | `experiments/prior-construction/results_ar1_vs_2exp.json` |
 | AR(1) vs two-exp script | `scripts/compare_ar1_vs_2exp.py` |
-| Vault-side experiment notes | `a-thesis-vault/03-experiments/exp-001-residual-diagnostics.md`, `exp-002-q-construction.md` (gitignored) |
+| Vault-side experiment notes | `a-thesis-vault/03-experiments/residual-diagnostics.md`, `prior-construction.md` (gitignored) |
 
 ---
 
@@ -75,9 +75,9 @@ Backbone is approximately unbiased on both datasets (a small negative bias of �
 
 **Question:** does residual variance grow with horizon? If yes, a horizon-dependent prior `δ_h` is justified; if not, the prior structure is unmotivated.
 
-![Variance vs horizon — METR-LA](exp-001-residual-diagnostics/figures/fig_variance_vs_horizon.png)
+![Variance vs horizon — METR-LA](residual-diagnostics/figures/fig_variance_vs_horizon.png)
 
-![Variance vs horizon — PEMS-BAY](exp-001-residual-diagnostics/figures/fig_variance_vs_horizon_pemsbay.png)
+![Variance vs horizon — PEMS-BAY](residual-diagnostics/figures/fig_variance_vs_horizon_pemsbay.png)
 
 **Per-horizon residual standard deviation (mph):**
 
@@ -102,9 +102,9 @@ The fitted `δ_h` values stored in `results/prior_params/gwn_{metrla,pemsbay}.ya
 
 **Question:** is the residual spatial covariance concentrated in low-frequency Laplacian modes? If yes, a graph-Laplacian-based GMRF prior `Σ_S = (β L + ε_s I)^{−1}` is justified.
 
-![Σ_S in Laplacian eigenbasis — METR-LA](exp-001-residual-diagnostics/figures/fig_sigma_R_spectral.png)
+![Σ_S in Laplacian eigenbasis — METR-LA](residual-diagnostics/figures/fig_sigma_R_spectral.png)
 
-![Σ_S in Laplacian eigenbasis — PEMS-BAY](exp-001-residual-diagnostics/figures/fig_sigma_R_spectral_pemsbay.png)
+![Σ_S in Laplacian eigenbasis — PEMS-BAY](residual-diagnostics/figures/fig_sigma_R_spectral_pemsbay.png)
 
 **Spectral concentration of Σ_S** (computed by projecting empirical sensor-by-sensor covariance onto Laplacian eigenvectors and taking the diagonal):
 
@@ -132,9 +132,9 @@ This contrast is reflected in the fitted **β** parameters (see §6): β = 0.025
 
 **Question:** are residuals at adjacent forecast horizons correlated? If yes, a Toeplitz-style temporal precision is justified; if it looks like the identity, no temporal structure is present.
 
-![Σ_Q (12×12 horizon covariance + correlation) — METR-LA](exp-001-residual-diagnostics/figures/fig_sigma_Q.png)
+![Σ_Q (12×12 horizon covariance + correlation) — METR-LA](residual-diagnostics/figures/fig_sigma_Q.png)
 
-![Σ_Q — PEMS-BAY](exp-001-residual-diagnostics/figures/fig_sigma_Q_pemsbay.png)
+![Σ_Q — PEMS-BAY](residual-diagnostics/figures/fig_sigma_Q_pemsbay.png)
 
 **Lag-averaged ACF on residuals** (averaging the empirical 12×12 correlation matrix over (h, h+k) pairs for each lag k):
 
@@ -159,9 +159,9 @@ The shape of the METR-LA lag curve is also where the AR(1)-vs-two-exp distinctio
 
 **Question:** does residual variance differ across traffic regimes (free-flow / transition / congested)? If yes, isotropic uncertainty would be miscalibrated and a structured prior carrying regime-dependent information is justified.
 
-![Variance by regime — METR-LA](exp-001-residual-diagnostics/figures/fig_variance_by_regime.png)
+![Variance by regime — METR-LA](residual-diagnostics/figures/fig_variance_by_regime.png)
 
-![Variance by regime — PEMS-BAY](exp-001-residual-diagnostics/figures/fig_variance_by_regime_pemsbay.png)
+![Variance by regime — PEMS-BAY](residual-diagnostics/figures/fig_variance_by_regime_pemsbay.png)
 
 **Per-horizon residual std (mph) stratified by tercile of mean input-window speed:**
 
@@ -177,9 +177,9 @@ In congested conditions, GWN's 60-minute-ahead residual std is **roughly 2× fre
 - METR-LA: 9.23 / 4.90 = **1.88×**
 - PEMS-BAY: 6.33 / 2.37 = **2.67×**
 
-A point forecast emits no uncertainty information at all. An isotropic diffusion model would assign the same uncertainty to every regime — under-covering during congestion and over-covering during free-flow. The structured prior, by capturing the spatial-temporal covariance shape that *changes with regime*, is what enables wide intervals during congestion and tight intervals during free-flow. **This is the calibration claim that exp-003 (structured-vs-isotropic CRPS comparison) is designed to test.**
+A point forecast emits no uncertainty information at all. An isotropic diffusion model would assign the same uncertainty to every regime — under-covering during congestion and over-covering during free-flow. The structured prior, by capturing the spatial-temporal covariance shape that *changes with regime*, is what enables wide intervals during congestion and tight intervals during free-flow. **This is the calibration claim that score-network (structured-vs-isotropic CRPS comparison) is designed to test.**
 
-Note that the regimes are dataset-relative (PEMS-BAY's "congested" speeds are still higher than METR-LA's "free-flow") — see exp-001 vault note for thresholds.
+Note that the regimes are dataset-relative (PEMS-BAY's "congested" speeds are still higher than METR-LA's "free-flow") — see residual-diagnostics vault note for thresholds.
 
 ---
 
@@ -261,9 +261,9 @@ All six Tweedie ratios within ±0.001 of the theoretical value of 1.0 — essent
 
 The diagnostic figures (Q_H heatmap, ACF fit, GMRF spectral fit, target-vs-empirical Kronecker covariance, Tweedie MSE bars) for each dataset:
 
-![Prior diagnostics — METR-LA](exp-002-q-construction/figures/fig_prior_samples_covariance_check_gwn_metrla.png)
+![Prior diagnostics — METR-LA](prior-construction/figures/fig_prior_samples_covariance_check_gwn_metrla.png)
 
-![Prior diagnostics — PEMS-BAY](exp-002-q-construction/figures/fig_prior_samples_covariance_check_gwn_pemsbay.png)
+![Prior diagnostics — PEMS-BAY](prior-construction/figures/fig_prior_samples_covariance_check_gwn_pemsbay.png)
 
 ### Cross-dataset comparison and physical reading
 
@@ -297,7 +297,7 @@ Both kernels fit by the same Nelder-Mead least-squares loop (sigmoid parameteris
 
 ### Numerical results
 
-`experiments/exp-002/results_ar1_vs_2exp.json`:
+`experiments/prior-construction/results_ar1_vs_2exp.json`:
 
 | Dataset  | Model   | Params | SSR        | RMSE       | Max abs lag-resid | ‖R−R_emp‖_F | AIC      | BIC      |
 |----------|---------|-------:|-----------:|-----------:|------------------:|------------:|---------:|---------:|
@@ -314,7 +314,7 @@ Fitted parameters:
 
 ### Lag curves
 
-![AR(1) vs two-exp lag-curve fit](exp-002-q-construction/figures/fig_ar1_vs_2exp_lag_curve.png)
+![AR(1) vs two-exp lag-curve fit](prior-construction/figures/fig_ar1_vs_2exp_lag_curve.png)
 
 **Reading.** Black dots are the empirical lag-averaged ACF. Red curve is the AR(1) fit; blue curve is the two-exp fit.
 
@@ -323,7 +323,7 @@ Fitted parameters:
 
 ### Implied 12×12 correlation heatmaps
 
-![R_emp, R_AR(1), R_2-exp, R_AR(1)−R_emp, R_2-exp−R_emp](exp-002-q-construction/figures/fig_ar1_vs_2exp_implied_R.png)
+![R_emp, R_AR(1), R_2-exp, R_AR(1)−R_emp, R_2-exp−R_emp](prior-construction/figures/fig_ar1_vs_2exp_implied_R.png)
 
 **Reading.** Five columns × two rows (METR-LA on top, PEMS-BAY on bottom). The first three columns show correlation matrices on a [0, 1] viridis colormap. The last two columns are residuals (model − empirical) on a diverging RdBu_r colormap centred at 0 (red = model overshoots, blue = model undershoots).
 
@@ -366,8 +366,8 @@ The story for the methodology chapter (and the supervisor meeting) is: *"We init
 - All six prior parameters fitted from per-horizon-standardised training residuals on both datasets; no hand-tuning.
 - Covariance + Tweedie sanity checks both PASS on both datasets — `sample_prior` actually produces draws from `N(0, Q_H ⊗ Σ_S)`.
 - AR(1)-vs-two-exp comparison documents the empirical case for the upgrade with reproducible numbers + figures.
-- **SDE machinery verified (exp-004):** forward marginal + reverse Euler-Maruyama + oracle Tweedie score all correct. Oracle round-trip strict-PASS on METR-LA (mean 0.069), acceptable-PASS on PEMS-BAY (mean 0.158). Schedule β_max=50 reaches stationary at τ=1 in 99.7% / 98.6% of joint eigenmodes.
+- **SDE machinery verified (sde-sanity):** forward marginal + reverse Euler-Maruyama + oracle Tweedie score all correct. Oracle round-trip strict-PASS on METR-LA (mean 0.069), acceptable-PASS on PEMS-BAY (mean 0.158). Schedule β_max=50 reaches stationary at τ=1 in 99.7% / 98.6% of joint eigenmodes.
 
-**Known limitation (exp-004 §3):** the Kronecker prior under-models the actual residual covariance per-mode on METR-LA — direct empirical-vs-prior variance ratios span 0.32 to 2,506 across modes (median 1.69). This is a fundamental property of the Kronecker low-rank approximation, not a fitting bug. The score model in exp-003 is expected to fill this gap during training.
+**Known limitation (sde-sanity §3):** the Kronecker prior under-models the actual residual covariance per-mode on METR-LA — direct empirical-vs-prior variance ratios span 0.32 to 2,506 across modes (median 1.69). This is a fundamental property of the Kronecker low-rank approximation, not a fitting bug. The score model in score-network is expected to fill this gap during training.
 
-**What's next:** exp-003 — train the score network on standardised residuals using the structured prior as the noise covariance for the forward SDE; compare to an isotropic-prior baseline on horizon-stratified CRPS (free-flow vs transition vs congested per §5).
+**What's next:** score-network — train the score network on standardised residuals using the structured prior as the noise covariance for the forward SDE; compare to an isotropic-prior baseline on horizon-stratified CRPS (free-flow vs transition vs congested per §5).

@@ -18,3 +18,4 @@ a-thesis-vault/
 # DAIC user-local config
 scripts/daic/env.sh
 logs/
+tea_debug.log

@@ -4,7 +4,7 @@ We test that:
   - reverse_learned returns the right shape and produces finite outputs
   - With a trivially-correct oracle r̂₀ = r₀, the reverse SDE recovers
     something close to r₀ from an initial sample drawn from p(r_τ|r_0)
-    (the oracle round-trip, mirrors exp-004's Check 2)
+    (the oracle round-trip, mirrors sde-sanity's Check 2)
   - sample_per_window stacks K trajectories correctly and produces
     finite outputs with shape (B, K, H, N)
 """
@@ -70,13 +70,13 @@ def test_reverse_learned_shape_and_finite(prior):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Oracle round-trip — exp-004 Check 2 in torch
+# Oracle round-trip — sde-sanity Check 2 in torch
 # ─────────────────────────────────────────────────────────────────────────────
 
 def test_oracle_reverse_recovers_r_0(prior):
     """With an oracle r̂₀=r₀, the reverse SDE from r_τ=1 should land near r₀.
 
-    Mirrors the exp-004 Check-2 PASS-strict result but in the torch
+    Mirrors the sde-sanity Check-2 PASS-strict result but in the torch
     implementation. We accept rel.recovery < 0.20 (the PASS-acceptable
     threshold) because we're using a smaller synthetic prior and float64.
     """

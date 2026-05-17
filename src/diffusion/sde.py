@@ -1,6 +1,6 @@
 """Forward + reverse SDE for the Kronecker-structured residual prior.
 
-Math (see exp-002 for the prior fit and exp-004 for the sanity checks):
+Math (see prior-construction for the prior fit and sde-sanity for the sanity checks):
 
   Forward SDE (linear OU with stationary distribution N(0, Σ_prior)):
       dr_τ = -½ g(τ)² Q r_τ dτ + g(τ) dW_τ            with Q = (Σ_prior)⁻¹
@@ -22,7 +22,7 @@ Math (see exp-002 for the prior fit and exp-004 for the sanity checks):
 Kronecker structure
 -------------------
 Σ_prior = Q_H ⊗ Σ_S, with Q_H ∈ ℝ^{H×H} the temporal covariance and Σ_S ∈ ℝ^{N×N}
-the spatial GMRF covariance fit in exp-002. Eigendecompose once at startup:
+the spatial GMRF covariance fit in prior-construction. Eigendecompose once at startup:
     Q_H = U_T diag(c_T) U_T.T,  c_T > 0   (eigvals of the temporal covariance)
     Σ_S = U_S diag(c_S) U_S.T,  c_S > 0   (eigvals of the spatial covariance)
 Then Σ_prior in the joint eigenbasis is diagonal with eigenvalues
@@ -34,7 +34,7 @@ Implementation
 --------------
 Pure NumPy, float64 throughout. Sizes (H ∈ {12}, N ∈ {207, 325}) are small enough
 that LAPACK on CPU dominates GPU; we don't need autograd for the sanity checks.
-PyTorch / MPS will be re-introduced in exp-003 for network training.
+PyTorch / MPS will be re-introduced in score-network for network training.
 
 The standard tensor shape for residuals throughout is `(..., H, N)` — leading
 batch dims are preserved by every transform.
@@ -84,7 +84,7 @@ def eigendecompose_prior(Q_H: np.ndarray, Sigma_S: np.ndarray) -> dict:
 
     Tiny negative eigenvalues from float roundoff are clipped to a small positive
     floor to keep `1 / s` finite. In practice both Q_H and Σ_S are well-conditioned
-    after the prior fit (see exp-002) so the clip is defensive only.
+    after the prior fit (see prior-construction) so the clip is defensive only.
     """
     c_T, U_T = np.linalg.eigh(np.asarray(Q_H, dtype=np.float64))
     c_S, U_S = np.linalg.eigh(np.asarray(Sigma_S, dtype=np.float64))

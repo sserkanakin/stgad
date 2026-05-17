@@ -17,7 +17,7 @@
 # r̃[n,h,i] = r[n,h,i] / target_scale[h], with target_scale[h] = sqrt(Var(r_h)).
 # This decouples scale (per-horizon σ_h) from structure (correlations), so the
 # fitted Σ_prior has eigenvalues O(1)–O(10) instead of O(10⁴) and the SDE noise
-# schedule β_max=O(50) reaches stationary at τ=1 (see exp-004 SUMMARY).
+# schedule β_max=O(50) reaches stationary at τ=1 (see sde-sanity SUMMARY).
 # The returned dict contains `target_scale` for de-standardisation at sample time.
 # Pass `standardize=False` to recover the raw-mph² behaviour.
 #
@@ -398,7 +398,7 @@ def fit_prior(
     ``target_scale[h] = sqrt(Var(r_h))``; the rest of the fit then operates on
     a unit-per-horizon-variance signal, which keeps the implied Σ_prior
     eigenvalues O(1)–O(10) and lets a moderate β_max reach stationary at τ=1
-    (see exp-004 SUMMARY for the diagnosis). The original per-horizon scale is
+    (see sde-sanity SUMMARY for the diagnosis). The original per-horizon scale is
     returned in ``target_scale`` for de-standardisation: a sample r̃ in the
     modelled variable maps back to mph as ``r̃ * target_scale[:, None]``.
 

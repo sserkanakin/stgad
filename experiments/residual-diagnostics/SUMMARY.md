@@ -1,4 +1,4 @@
-# exp-001 — Residual diagnostics
+# residual-diagnostics — Residual diagnostics
 
 **Goal.** Show that GWN's residuals exhibit the three structural facts (variance growing with horizon, spatial covariance concentrated on the road graph, temporal covariance with AR-style decay across horizons) that motivate a Kronecker-structured prior. **No diffusion training is involved here.** Pure data analysis on already-extracted residuals.
 
@@ -8,7 +8,7 @@
 
 **Companions:**
 - See [[../backbone-training/SUMMARY|backbone-training]] for the model whose residuals these are.
-- See [[../exp-002-q-construction/SUMMARY|exp-002-q-construction]] for the prior built from these structural observations.
+- See [[../prior-construction/SUMMARY|prior-construction]] for the prior built from these structural observations.
 - See [[../data-and-residuals-overview|data-and-residuals-overview]] for an above-the-line summary of dataset shapes and residual scale.
 
 ---
@@ -57,7 +57,7 @@ PEMS-BAY's empirical Σ_S is **highly anisotropic**. Over 60% of total spatial r
 
 METR-LA's empirical Σ_S is **nearly isotropic** (cond ≈ 5; only 22% of energy in top 20 of 207 modes). LA's mixed urban-arterial network has many local discontinuities (intersections, ramps, signals) that decorrelate adjacent sensors. The road topology contributes *little* to explaining residual covariance — the dominant structure is purely temporal.
 
-This contrast is reflected in the fitted **β** parameters (see [[../exp-002-q-construction/SUMMARY|exp-002]]): β = 0.025 on METR-LA (weak spatial smoothing) vs β = 0.784 on PEMS-BAY (strong spatial smoothing) — a 31× difference, fitted automatically without supervision.
+This contrast is reflected in the fitted **β** parameters (see [[../prior-construction/SUMMARY|prior-construction]]): β = 0.025 on METR-LA (weak spatial smoothing) vs β = 0.784 on PEMS-BAY (strong spatial smoothing) — a 31× difference, fitted automatically without supervision.
 
 **Implication for downstream work.** The benefit of the structured *spatial* prior over isotropic should be larger on PEMS-BAY than on METR-LA, because PEMS-BAY's spatial prior carries more information.
 
@@ -67,7 +67,7 @@ This contrast is reflected in the fitted **β** parameters (see [[../exp-002-q-c
 
 ## §3 — Horizon × horizon temporal covariance Σ_Q
 
-**Claim:** residuals at adjacent forecast horizons are correlated; correlation decays with lag. Justifies a Toeplitz-style temporal precision (initially planned AR(1), upgraded to two-exponential mixture in [[../exp-002-q-construction/SUMMARY|exp-002]]).
+**Claim:** residuals at adjacent forecast horizons are correlated; correlation decays with lag. Justifies a Toeplitz-style temporal precision (initially planned AR(1), upgraded to two-exponential mixture in [[../prior-construction/SUMMARY|prior-construction]]).
 
 ![Σ_Q (12×12 horizon covariance + correlation) — METR-LA](figures/fig_sigma_Q.png)
 
@@ -86,9 +86,9 @@ Lag-averaged ACF (averaging the 12×12 correlation matrix over (h, h+k) pairs fo
 
 **Reading.** Both datasets show strong, monotonically decaying off-diagonal structure — clearly not the identity. PEMS-BAY's lag-1 correlation is higher (0.840 vs 0.686), reflecting smoother dynamics on freeway traffic. By lag 11 (55 minutes apart) both have decayed to ~0.09–0.10 — non-zero but weak.
 
-**Important non-stationarity caveat.** The empirical 12×12 correlation matrix is *not* stationary. Lag-1 correlation grows from 0.484 at (h=0, h=1) to 0.759 at (h=10, h=11). Forecast errors become more correlated at longer horizons, which is physically plausible (longer-horizon errors are dominated by structured drift, while short-horizon errors carry more idiosyncratic burst noise). The two-exp kernel we eventually adopt is *stationary* — depends only on |h₁ − h₂|. We resolve this mismatch by fitting to the lag-averaged ACF (see exp-002), which captures the true stationary component.
+**Important non-stationarity caveat.** The empirical 12×12 correlation matrix is *not* stationary. Lag-1 correlation grows from 0.484 at (h=0, h=1) to 0.759 at (h=10, h=11). Forecast errors become more correlated at longer horizons, which is physically plausible (longer-horizon errors are dominated by structured drift, while short-horizon errors carry more idiosyncratic burst noise). The two-exp kernel we eventually adopt is *stationary* — depends only on |h₁ − h₂|. We resolve this mismatch by fitting to the lag-averaged ACF (see prior-construction), which captures the true stationary component.
 
-The shape of the METR-LA lag curve is also where the AR(1)-vs-two-exp distinction shows up most clearly — see [[../exp-002-q-construction/SUMMARY#§7|exp-002 §7]] for the comparison.
+The shape of the METR-LA lag curve is also where the AR(1)-vs-two-exp distinction shows up most clearly — see [[../prior-construction/SUMMARY#§7|prior-construction §7]] for the comparison.
 
 ---
 
@@ -143,4 +143,4 @@ The regimes are dataset-relative (PEMS-BAY's "congested" mean speed is still hig
 | Kronecker separability < 40% | ✓ | ✓ |
 | Backbone unbiased (|mean|≪std) | ✓ | ✓ |
 
-**All five gates PASS on both datasets.** Phase 4 (prior parameter fitting in [[../exp-002-q-construction/SUMMARY|exp-002]]) was unblocked by these results.
+**All five gates PASS on both datasets.** Phase 4 (prior parameter fitting in [[../prior-construction/SUMMARY|prior-construction]]) was unblocked by these results.

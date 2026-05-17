@@ -113,7 +113,7 @@ With per-horizon standardisation:
 
 **Cost.** A 12-vector `target_scale` is now part of the trained model's configuration. Inference output must be de-standardised correctly (multiply by `target_scale[h]` per horizon, then add backbone forecast). One extra line of code; easy to get right.
 
-**The story for the writeup.** "We initially planned to diffuse raw residuals; experimental evidence (exp-004 §3) showed the un-standardised Kronecker prior produces eigenvalues spanning 4 orders of magnitude, requiring β_max ≫ 10. Standardising per horizon brings the prior into the regime where standard score-based diffusion practice (β_max ∈ [10, 100]) is sensible."
+**The story for the writeup.** "We initially planned to diffuse raw residuals; experimental evidence (sde-sanity §3) showed the un-standardised Kronecker prior produces eigenvalues spanning 4 orders of magnitude, requiring β_max ≫ 10. Standardising per horizon brings the prior into the regime where standard score-based diffusion practice (β_max ∈ [10, 100]) is sensible."
 
 ---
 
@@ -155,14 +155,14 @@ EDM uses log-normal sampling centred away from 0; log-uniform is simpler and suf
 **Standard.** Everything in PyTorch on GPU.
 
 **Us.**
-- `src/diffusion/sde.py` — pure NumPy / float64 / CPU. Used by `experiments/exp-004/run_sanity_checks.py` for closed-form validation of the SDE machinery.
+- `src/diffusion/sde.py` — pure NumPy / float64 / CPU. Used by `experiments/sde-sanity/run_sanity_checks.py` for closed-form validation of the SDE machinery.
 - `src/diffusion/sde_torch.py` — PyTorch / float32 / device-aware. Used by training + inference.
 
 **Why.**
 - LAPACK on CPU is faster than `torch.linalg.eigh` for our 12×12 and 207/325×207/325 eigendecompositions — sizes too small for GPU to win.
 - Float64 NumPy gives bit-deterministic sanity-check results we can compare against the torch implementation (12 of the 30 SDE tests do exactly this).
 - The two implementations share API shape so converting between them is a one-line call (`eig_to_torch`).
-- Sanity checks (exp-004) don't need autograd; training (exp-003) does. Right tool for each.
+- Sanity checks (sde-sanity) don't need autograd; training (score-network) does. Right tool for each.
 
 **Cost.** Two implementations of the same math, kept in sync. Mitigated by unit tests asserting numerical equivalence to ≤1e-10 (float64) or ≤1e-5 (float32).
 

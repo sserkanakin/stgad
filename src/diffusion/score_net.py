@@ -1,4 +1,4 @@
-"""GWN-style score network for residual diffusion (exp-003 §14.2).
+"""GWN-style score network for residual diffusion (score-network §14.2).
 
 Predicts r̂₀ (Tweedie / x₀-prediction) given:
   - r_τ: noisy residual at time τ, shape (B, H, N)

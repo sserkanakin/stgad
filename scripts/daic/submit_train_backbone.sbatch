@@ -6,8 +6,8 @@
 #SBATCH --gres=gpu:a40:1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=16G
-#SBATCH --output=logs/slurm-%x-%j.out
-#SBATCH --error=logs/slurm-%x-%j.err
+#SBATCH --output=logs/train-backbone/%x-%j.out
+#SBATCH --error=logs/train-backbone/%x-%j.err
 #SBATCH --mail-user=sserkanakin@icloud.com
 #SBATCH --mail-type=END,FAIL
 #
@@ -17,7 +17,7 @@
 # Required env vars: DATASET (metrla|pemsbay), SEED (int).
 
 set -euo pipefail
-mkdir -p logs
+mkdir -p logs/train-backbone
 export PROJECT_DIR="${SLURM_SUBMIT_DIR:-$PWD}"
 source "${PROJECT_DIR}/scripts/daic/_common.sh"
 

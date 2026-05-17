@@ -1,4 +1,4 @@
-"""Reverse-SDE sampler using a learned score net (exp-003 §14.5).
+"""Reverse-SDE sampler using a learned score net (score-network §14.5).
 
 The training-time forward marginal is closed-form ``r_τ | r_0 ~ N(μ_τ, Σ_τ)``.
 For sampling we run the reverse SDE (Anderson 1982):
@@ -10,7 +10,7 @@ using the network's ``r̂₀ = f_θ(r_τ, τ, c)`` plugged into Tweedie:
     ∇log p_τ(r_τ) ≈ -Σ_τ⁻¹ (r_τ - μ_τ(r̂₀))      with μ_τ(r̂₀) = e^{-½β̄Q} r̂₀
 
 We discretise with Euler-Maruyama from τ_start = 1 down to τ_eps,
-matching exp-004's oracle round-trip step layout.
+matching sde-sanity's oracle round-trip step layout.
 """
 from __future__ import annotations
 

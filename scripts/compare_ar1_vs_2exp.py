@@ -9,9 +9,9 @@ training residuals (consistent with the existing prior fit; documented in
 results_ar1_vs_2exp.json metadata).
 
 Outputs (relative to repo root):
-    experiments/exp-002/fig_ar1_vs_2exp_lag_curve.pdf
-    experiments/exp-002/fig_ar1_vs_2exp_implied_R.pdf
-    experiments/exp-002/results_ar1_vs_2exp.json
+    experiments/prior-construction/fig_ar1_vs_2exp_lag_curve.pdf
+    experiments/prior-construction/fig_ar1_vs_2exp_implied_R.pdf
+    experiments/prior-construction/results_ar1_vs_2exp.json
 
 Usage:
     python scripts/compare_ar1_vs_2exp.py
@@ -378,7 +378,7 @@ def main() -> None:
               f"‖R−R_emp‖_F={d['two_exp']['frob_R_minus_emp']:.6f}  "
               f"AIC={d['two_exp']['aic']:.3f}  BIC={d['two_exp']['bic']:.3f}")
 
-    out_dir = ROOT / "experiments" / "exp-002"
+    out_dir = ROOT / "experiments" / "prior-construction"
     out_dir.mkdir(parents=True, exist_ok=True)
 
     # Figures
@@ -410,7 +410,7 @@ def main() -> None:
 
     # Markdown table
     print("\n" + "=" * 72)
-    print("Markdown table (paste into exp-002 Results section):")
+    print("Markdown table (paste into prior-construction Results section):")
     print("=" * 72)
     print(make_markdown_table(results))
 

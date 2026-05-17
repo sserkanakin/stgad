@@ -1,7 +1,7 @@
-# exp-003 — Score-network training on standardised residuals (PLAN)
+# score-network — Score-network training on standardised residuals (PLAN)
 
 **Status:** plan only; no code written yet. Awaiting review before scaffolding.
-**Unblocked by:** exp-004 v2 (5762320) — schedule fix complete, SDE machinery verified.
+**Unblocked by:** sde-sanity v2 (5762320) — schedule fix complete, SDE machinery verified.
 
 ---
 
@@ -9,7 +9,7 @@
 
 Train a denoising-score-matching (DSM) network on standardised GWN residuals using the Kronecker-structured forward SDE from `src/diffusion/sde.py`. Compare against an isotropic-prior baseline (same architecture, same training budget) on horizon-stratified probabilistic metrics computed on the held-out test split.
 
-**Thesis claim being tested:** the Kronecker-structured prior produces sharper, better-calibrated probabilistic forecasts than an isotropic-prior baseline at matched compute. If true, it justifies the entire exp-002 prior-fit pipeline.
+**Thesis claim being tested:** the Kronecker-structured prior produces sharper, better-calibrated probabilistic forecasts than an isotropic-prior baseline at matched compute. If true, it justifies the entire prior-construction prior-fit pipeline.
 
 ---
 
@@ -24,7 +24,7 @@ Train a denoising-score-matching (DSM) network on standardised GWN residuals usi
 
 ---
 
-## §3 — Forward / reverse SDE (re-using exp-004)
+## §3 — Forward / reverse SDE (re-using sde-sanity)
 
 Forward marginal (closed-form):
 $$ r_\tau \mid r_0 \sim \mathcal{N}(\mu_\tau(r_0), \Sigma_\tau), \quad
@@ -51,7 +51,7 @@ The score net operates on **standardised** residuals throughout. Concretely:
 - Inference output `r̂_0_std` is de-standardised by multiplying by `target_scale[h]` per horizon.
 - Final forecast: `y_sample = y_pred_backbone + r̂_0` in raw mph.
 
-This matches exp-004 v2 — keeps the network operating on a unit-variance variable, which is what makes β_max = 50 the right reach.
+This matches sde-sanity v2 — keeps the network operating on a unit-variance variable, which is what makes β_max = 50 the right reach.
 
 ---
 
@@ -97,7 +97,7 @@ The eigenbasis-weighted loss is equivalent to the natural-parameter loss for the
 
 For each test window:
 1. Sample `r_τ=1 ~ N(0, Σ_prior)` via `src/diffusion/sde.py:sample_stationary`.
-2. Run reverse Euler-Maruyama for n_reverse_steps (locked: 200; exp-004 showed 100 is marginal on PEMS-BAY):
+2. Run reverse Euler-Maruyama for n_reverse_steps (locked: 200; sde-sanity showed 100 is marginal on PEMS-BAY):
    - At step k: compute `r̂_0 = f_θ(r_τ_k, τ_k, conditioning)`, recover score via Tweedie, apply reverse-SDE update from `src/diffusion/sde.py:reverse_oracle` structure (replace oracle score with network score).
 3. After τ → τ_eps: take `r̂_0(τ_eps)` as the final standardised residual sample.
 4. De-standardise: `r̂_0_mph = r̂_0_std * target_scale[h]`.
@@ -110,10 +110,10 @@ For each test window:
 
 | Hyperparameter | Value | Source |
 |---|---|---|
-| β_min, β_max | 0.01, 50 | exp-004 v2 locked |
-| τ range | [1e-3, 1] | exp-004 v2 locked |
+| β_min, β_max | 0.01, 50 | sde-sanity v2 locked |
+| τ range | [1e-3, 1] | sde-sanity v2 locked |
 | τ sampling | log-uniform | this experiment |
-| n_reverse_steps | 200 (eval) | exp-004 Check 2 PEMS-BAY needed > 100 |
+| n_reverse_steps | 200 (eval) | sde-sanity Check 2 PEMS-BAY needed > 100 |
 | Optimizer | Adam, lr 1e-4 | matches GWN backbone training |
 | Batch size | 32 windows | MPS memory budget; tune in first run |
 | Epochs | 100 max, early-stop on val DSM loss with patience 20 | matches backbone protocol |
@@ -153,7 +153,7 @@ Computed on the **test split** residuals (`gwn_{dataset}_test_seed0.npz`), once,
 | Per-horizon pinball loss at q ∈ {0.1, 0.5, 0.9} | sharpness at specific quantiles |
 | Sample-spread vs error scatter | sanity: high spread should track high MAE |
 
-Reported: structured vs isotropic, on both datasets, averaged over 5 seeds with ±1 std. Final numbers go in `experiments/exp-003-score-network/SUMMARY.md` with figures in `figures/`.
+Reported: structured vs isotropic, on both datasets, averaged over 5 seeds with ±1 std. Final numbers go in `experiments/score-network/SUMMARY.md` with figures in `figures/`.
 
 ---
 
@@ -168,8 +168,8 @@ Reported: structured vs isotropic, on both datasets, averaged over 5 seeds with 
 | `scripts/train_diffusion.py` | training entry point, dataset + isotropic flag |
 | `scripts/sample_diffusion.py` | generate K samples per test window |
 | `scripts/compute_probabilistic_metrics.py` | CRPS / PIT / pinball, JSON output |
-| `experiments/exp-003-score-network/SUMMARY.md` | results, tables, embedded figures |
-| `experiments/exp-003-score-network/figures/` | CRPS bars, PIT histograms, reliability diagrams |
+| `experiments/score-network/SUMMARY.md` | results, tables, embedded figures |
+| `experiments/score-network/figures/` | CRPS bars, PIT histograms, reliability diagrams |
 | `tests/test_score_net.py` | shape checks, FiLM works |
 | `tests/test_dsm.py` | oracle x₀ → near-zero loss; isotropic == structured when Q = I; gradient finite at τ → τ_eps |
 | `tests/test_sampling.py` | sampler returns correct shape; stationary init = `sample_stationary` |
@@ -178,17 +178,17 @@ Reported: structured vs isotropic, on both datasets, averaged over 5 seeds with 
 
 ## §12 — Acceptance criteria
 
-Before declaring exp-003 complete:
+Before declaring score-network complete:
 1. All unit tests pass.
 2. Both runs (structured + isotropic) train to convergence (val DSM loss plateaus) on both datasets, 5 seeds each.
 3. CRPS, PIT, pinball reported per horizon for all four design points (2 datasets × 2 priors), with 5-seed mean ± std.
-4. `SUMMARY.md` includes the comparison table, the figures, and a per-horizon analysis matching the depth of exp-002 / exp-004 SUMMARYs.
+4. `SUMMARY.md` includes the comparison table, the figures, and a per-horizon analysis matching the depth of prior-construction / sde-sanity SUMMARYs.
 
 ---
 
 ## §13 — Risks & open questions
 
-- **Per-mode prior mismatch on METR-LA** (Check 1 §3 in exp-004): the Kronecker prior under-models a few modes by up to 30×. The score net is *supposed* to correct this during training. If it doesn't (val DSM loss plateaus high; PIT badly miscalibrated on METR-LA), we revisit the prior class in a follow-up experiment — not in exp-003 itself.
+- **Per-mode prior mismatch on METR-LA** (Check 1 §3 in sde-sanity): the Kronecker prior under-models a few modes by up to 30×. The score net is *supposed* to correct this during training. If it doesn't (val DSM loss plateaus high; PIT badly miscalibrated on METR-LA), we revisit the prior class in a follow-up experiment — not in score-network itself.
 - **Computation budget on MPS:** 200 reverse steps × K = 100 samples × N_test test windows × 5 seeds × 2 datasets × 2 priors is a lot. If wall-clock becomes a problem, drop K to 50 first (still defensible for CRPS), then reduce seeds to 3.
 - **PEMS-BAY temporal kernel is degenerate** (ρ₁ ≈ ρ₂): the two-exp mixture collapses to AR(1) on PEMS-BAY. This is fine for the score net but means PEMS-BAY's structured prior is genuinely less "structured" than METR-LA's — the gap to isotropic may be smaller.
 - **τ sampling distribution:** log-uniform is the v1 default. If training is unstable at small τ, switch to log-normal centred away from 0 (EDM convention).

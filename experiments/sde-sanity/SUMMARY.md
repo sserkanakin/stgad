@@ -1,4 +1,4 @@
-# exp-004 — Structured-prior SDE: forward, reverse, and sanity checks
+# sde-sanity — Structured-prior SDE: forward, reverse, and sanity checks
 
 **Status: ✓ Check 2 PASS / ⚠ Check 1 partial PASS.** The SDE machinery is correct (oracle round-trip strict on METR-LA at 0.069, acceptable on PEMS-BAY at 0.158). The original schedule mismatch is resolved (99%+ of joint eigenmodes now reach stationary at τ=1 with the standardised prior + β_max=50). Check 1 still flags a residual gap on METR-LA (rel.Frob 0.78) which is **prior inadequacy, not an SDE bug**: a small fraction of joint eigenmodes have empirical variance up to 30× what the Kronecker prior predicts. PEMS-BAY's prior is well-matched (max ratio 1.20) and Check 1 lands at 0.107, just outside the 0.10 threshold.
 
@@ -18,11 +18,11 @@ $\nabla_{r_\tau} \log p(r_\tau \mid r_0) = -\Sigma_\tau^{-1}(r_\tau - \mu_\tau(r
 
 **Schedule.** `β(τ) = β_min + τ(β_max − β_min)` with **β_min=0.01, β_max=50** (was 10 in v1; bumped to ensure β̄(1) ≫ max(Σ_prior eigval)). β̄(τ) = β_min·τ + ½τ²(β_max − β_min); β̄(1) = 25.005.
 
-**Variable.** The SDE operates on the **standardised** residual r̃ = r / target_scale[h] from exp-002 v2; samples are de-standardised by multiplying by `target_scale[h]` per horizon to recover mph.
+**Variable.** The SDE operates on the **standardised** residual r̃ = r / target_scale[h] from prior-construction v2; samples are de-standardised by multiplying by `target_scale[h]` per horizon to recover mph.
 
 Eigendecompose `Q_H = U_T diag(c_T) U_T.T` and `Σ_S = U_S diag(c_S) U_S.T` once at startup. In the joint eigenbasis Σ_prior is diagonal with eigenvalues `s[i,j] = c_T[i]·c_S[j]` (so Q has eigenvalues `q = 1/s`). All matrix exponentials become elementwise functions of these.
 
-**Device choice.** Pure NumPy / float64 on CPU. H = 12 and N ∈ {207, 325} are too small for MPS to win against LAPACK on CPU (we measured 60–220 s for the 5000-sample forward, 90–220 s for the 100-step reverse). MPS would also lose float64 + full eigenvalue support. PyTorch + MPS is reserved for the network-training experiment (exp-003).
+**Device choice.** Pure NumPy / float64 on CPU. H = 12 and N ∈ {207, 325} are too small for MPS to win against LAPACK on CPU (we measured 60–220 s for the 5000-sample forward, 90–220 s for the 100-step reverse). MPS would also lose float64 + full eigenvalue support. PyTorch + MPS is reserved for the network-training experiment (score-network).
 
 ---
 
@@ -93,13 +93,13 @@ The schedule is now adequate (99.7% of modes reach stationary). The residual rel
 
 A sizable fraction of joint eigenmodes carry far more empirical energy than the Kronecker prior allocates them — and a small handful (≈0.5%) are off by 1–3 orders of magnitude. The empirical residual covariance is **not separable** into a 12×12 temporal × 207×207 spatial product at the level of the per-mode product structure. This is a fundamental limitation of the Kronecker low-rank approximation, not a fitting bug.
 
-The exp-002 Tweedie/Frobenius checks did not detect this because (a) Tweedie tests samples drawn *from the prior*, not data fit *to the prior*, and (b) the Frobenius covariance check restricts to a 20-sensor subset where rank-aliasing makes the prior look adequate. A full per-mode test exposes the gap.
+The prior-construction Tweedie/Frobenius checks did not detect this because (a) Tweedie tests samples drawn *from the prior*, not data fit *to the prior*, and (b) the Frobenius covariance check restricts to a 20-sensor subset where rank-aliasing makes the prior look adequate. A full per-mode test exposes the gap.
 
 The SDE Check 1 picks up *some* of this because for the small fraction of modes that don't fully diffuse (~1%), the marginal at τ=1 retains the original empirical variance — and that empirical variance is what the prior is wrong about. So the Frobenius distance on Check 1 reflects a mix of (residual schedule-undershoot in ~1% of modes) × (data/prior mismatch up to 30× in those same modes).
 
 ### What this means for the SDE
 
-The reverse SDE machinery is correct (Check 2 PASS). The forward marginal is correctly converging to the *modeled* prior. The score model in exp-003 will be trained on the same standardised residuals that the SDE operates on — it sees the true data covariance, not the Kronecker approximation, and will fill in the missing per-mode variance during training. This is the standard role of structured priors in score-based diffusion: they provide *useful* (not exact) inductive bias for the noising process; the network corrects for any mismatch in the score.
+The reverse SDE machinery is correct (Check 2 PASS). The forward marginal is correctly converging to the *modeled* prior. The score model in score-network will be trained on the same standardised residuals that the SDE operates on — it sees the true data covariance, not the Kronecker approximation, and will fill in the missing per-mode variance during training. This is the standard role of structured priors in score-based diffusion: they provide *useful* (not exact) inductive bias for the noising process; the network corrects for any mismatch in the score.
 
 ### Why Check 2 passes despite Check 1 partially failing
 
@@ -111,11 +111,11 @@ Check 2 tests the SDE in a *closed loop*: forward sample drawn correctly + rever
 
 The schedule fix is done; the SDE machinery is verified. The remaining decisions concern the prior class:
 
-1. **Accept the Kronecker prior as approximate; defer to the score model.** This is the standard practice and what exp-003 will do. The score net trains on residuals and learns the corrections from the true distribution.
-2. **Enrich the prior class** — Kronecker-sum, low-rank correction, or a learned residual covariance — if Check 1 strict-PASS on rel.Frob is required for some downstream argument. Significant additional work; not blocking exp-003.
+1. **Accept the Kronecker prior as approximate; defer to the score model.** This is the standard practice and what score-network will do. The score net trains on residuals and learns the corrections from the true distribution.
+2. **Enrich the prior class** — Kronecker-sum, low-rank correction, or a learned residual covariance — if Check 1 strict-PASS on rel.Frob is required for some downstream argument. Significant additional work; not blocking score-network.
 3. **Tighten Check 2 PEMS-BAY by bumping reverse steps to 200–300.** Costs ~3 minutes more wall-clock; recovers strict-PASS. Optional polish.
 
-The recommendation is option 1: ship exp-003 with the current standardised prior and let the score model carry the correction. The Kronecker prior's role is structural inductive bias, not a perfect generative model of residuals.
+The recommendation is option 1: ship score-network with the current standardised prior and let the score model carry the correction. The Kronecker prior's role is structural inductive bias, not a perfect generative model of residuals.
 
 ---
 
@@ -123,7 +123,7 @@ The recommendation is option 1: ship exp-003 with the current standardised prior
 
 - `src/diffusion/sde.py` — eigendecompose_prior, β/β̄, spectral basis transforms, forward marginal, apply_Q, oracle_score, sample_stationary, reverse_oracle (Euler-Maruyama). Unchanged from v1.
 - `tests/test_sde.py` — 15 unit tests, all green (spectral round-trip, eigenvalue product rule, apply_Q vs explicit kron, forward marginal endpoints, oracle score zero on the mean, end-to-end recovery on a toy 4×5 prior). Independent of standardisation.
-- `experiments/exp-004/run_sanity_checks.py` — now loads `target_scale` from the YAML and standardises the training residuals before forward_sample (so the SDE acts in the same units as the prior). β_max set to 50.
+- `experiments/sde-sanity/run_sanity_checks.py` — now loads `target_scale` from the YAML and standardises the training residuals before forward_sample (so the SDE acts in the same units as the prior). β_max set to 50.
 - `src/diffusion/prior_fit.py` — `fit_prior(..., standardize=True)` is now the default. ε_s defaults to 1.0 when standardising, 0.01 when raw.
 
 ## Reproduction
@@ -132,7 +132,7 @@ The recommendation is option 1: ship exp-003 with the current standardised prior
 pytest tests/test_sde.py tests/test_prior_fit.py -v
 python scripts/fit_prior.py --dataset metrla
 python scripts/fit_prior.py --dataset pemsbay
-python experiments/exp-004/run_sanity_checks.py
+python experiments/sde-sanity/run_sanity_checks.py
 ```
 
 Wallclock on M-series Mac: ~9 minutes for the full sanity-check run (CPU + NumPy, float64).

@@ -37,6 +37,9 @@ N_SAMPLES="${N_SAMPLES:-50}"
 # Override per-job with --export=N_STEPS=200 if you need the tighter setting.
 N_STEPS="${N_STEPS:-100}"
 OUT_DIR="${OUT_DIR:-experiments/score-network}"
+# Optional: only evaluate the first MAX_WINDOWS test windows. Used by the
+# throughput-probe pattern to measure win/s before sizing real --time=.
+MAX_WINDOWS="${MAX_WINDOWS:-}"
 
 # Derive a readable job name from RUN_ID so squeue shows what's running.
 # Pattern: dsm_<prior>_<dataset>_seed<S>_<hash>  →  eval-<dataset>-<prior>
@@ -44,9 +47,16 @@ PRIOR_SHORT=$(echo "${RUN_ID}" | awk -F_ '{print $2}')
 DS_SHORT=$(echo "${RUN_ID}" | awk -F_ '{print $3}')
 scontrol update job="${SLURM_JOB_ID}" JobName="eval-${DS_SHORT}-${PRIOR_SHORT}" 2>/dev/null || true
 
+MAX_WIN_ARG=()
+if [ -n "${MAX_WINDOWS}" ]; then
+  MAX_WIN_ARG=(--max_windows "${MAX_WINDOWS}")
+  echo "Probe mode: --max_windows ${MAX_WINDOWS}"
+fi
+
 echo "Evaluating ${RUN_ID}  (K=${N_SAMPLES}, steps=${N_STEPS})  →  ${OUT_DIR}"
 srun --export=ALL "${DAIC_PYTHON}" scripts/eval_diffusion.py \
     --run_id "${RUN_ID}" \
     --n_samples "${N_SAMPLES}" \
     --n_steps "${N_STEPS}" \
-    --out_dir "${OUT_DIR}"
+    --out_dir "${OUT_DIR}" \
+    "${MAX_WIN_ARG[@]}"

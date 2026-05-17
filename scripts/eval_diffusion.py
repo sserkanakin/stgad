@@ -211,6 +211,14 @@ def main() -> None:
     abs_y_sum = np.zeros((H,), dtype=np.float64)   # for Variant 2 normalisation
     pit_bins = np.zeros((H, 20), dtype=np.int64)
     pin_sums = {q: np.zeros((H,), dtype=np.float64) for q in _QUANTILES}
+    # Additional aggregates (Stage-2 analysis): each accumulates a per-(window,
+    # horizon, sensor) quantity over unmasked positions, divided by counts at
+    # the end. None of these change the CRPS/PIT/pinball numbers.
+    mae_sample_mean_sum = np.zeros((H,), dtype=np.float64)   # |mean(K samples) - y_true|
+    mae_backbone_sum    = np.zeros((H,), dtype=np.float64)   # |y_pred - y_true|  (baseline)
+    sample_std_sum      = np.zeros((H,), dtype=np.float64)   # std(K samples) per position
+    cov50_count         = np.zeros((H,), dtype=np.int64)     # y in [q25, q75]
+    cov80_count         = np.zeros((H,), dtype=np.int64)     # y in [q10, q90]
 
     # MPS doesn't allow a CPU-side torch.Generator to drive randn() of MPS
     # tensors. Fall back to the global RNG seed in that case (still
@@ -267,6 +275,20 @@ def main() -> None:
             crps_count[h] += y_h.size
             abs_y_sum[h] += np.abs(y_h).sum()
 
+            # Extras: sample-mean MAE, backbone-baseline MAE, sample std,
+            # interval coverage. All computed from the same (m, K) tensor.
+            sample_mean_h = s_h.mean(axis=-1)                               # (m,)
+            sample_std_h  = s_h.std(axis=-1, ddof=1) if s_h.shape[-1] > 1 else np.zeros(s_h.shape[0])
+            y_pred_h      = y_pred_raw[:, h, :][mh]                         # (m,) — backbone forecast
+            mae_sample_mean_sum[h] += np.abs(sample_mean_h - y_h).sum()
+            mae_backbone_sum[h]    += np.abs(y_pred_h - y_h).sum()
+            sample_std_sum[h]      += sample_std_h.sum()
+            # Empirical quantile-interval coverage
+            q_lo50, q_hi50 = np.quantile(s_h, [0.25, 0.75], axis=-1)        # (m,) each
+            q_lo80, q_hi80 = np.quantile(s_h, [0.10, 0.90], axis=-1)
+            cov50_count[h] += int(((y_h >= q_lo50) & (y_h <= q_hi50)).sum())
+            cov80_count[h] += int(((y_h >= q_lo80) & (y_h <= q_hi80)).sum())
+
             # PIT into 20 bins
             pit_h = pit_values(y_h, s_h)                                    # (m,)
             counts, _ = np.histogram(pit_h, bins=20, range=(0.0, 1.0 + 1e-9))
@@ -302,6 +324,13 @@ def main() -> None:
     overall_crps_norm = float(crps_sum.sum() / max(abs_y_sum.sum(), 1e-12))
     avg_crps_norm = float(np.mean(per_h_crps_norm))
 
+    # Additional per-horizon aggregates
+    per_h_mae_sample_mean = (mae_sample_mean_sum / counts).tolist()
+    per_h_mae_backbone    = (mae_backbone_sum    / counts).tolist()
+    per_h_sample_std      = (sample_std_sum      / counts).tolist()
+    per_h_coverage_50     = (cov50_count.astype(np.float64) / counts).tolist()
+    per_h_coverage_80     = (cov80_count.astype(np.float64) / counts).tolist()
+
     out: dict = {
         "run_id": args.run_id,
         "dataset": dataset,
@@ -324,6 +353,12 @@ def main() -> None:
         "abs_y_mean_overall": overall_abs_y,
         "pit_histogram_per_horizon": pit_bins.tolist(),
         "pinball_per_horizon": per_h_pin,
+        # Additional Stage-2 analysis aggregates
+        "mae_sample_mean_per_horizon": per_h_mae_sample_mean,
+        "mae_backbone_per_horizon":    per_h_mae_backbone,
+        "sample_std_per_horizon":      per_h_sample_std,
+        "coverage_50_per_horizon":     per_h_coverage_50,
+        "coverage_80_per_horizon":     per_h_coverage_80,
         "config": cfg,
     }
     out_dir = Path(args.out_dir)
@@ -336,10 +371,25 @@ def main() -> None:
     print(f"\nCRPS per horizon (h=1..12):")
     for h, (c, cn, ay) in enumerate(zip(per_h_crps, per_h_crps_norm, per_h_abs_y), start=1):
         marker = " ←" if h in (3, 6, 12) else ""
-        print(f"  h={h:2d}  CRPS={c:6.3f} mph  norm={cn:.4f}  (mean|y|={ay:.2f}){marker}")
-    print(f"\naverage CRPS over horizons: {avg_crps:.3f} mph   "
+        print(f"  h={h:2d}  CRPS={c:6.3f}  norm={cn:.4f}  (mean|y|={ay:.2f}){marker}")
+    print(f"\naverage CRPS over horizons: {avg_crps:.3f}   "
           f"normalised: {avg_crps_norm:.4f}   pooled: {overall_crps_norm:.4f}")
-    print(f"wall-clock: {total_secs:.0f}s")
+
+    # Additional analysis summary
+    print(f"\nAdditional per-horizon analyses (h=1..12):")
+    print(f"  {'h':>3}  {'MAE_dsm':>8}  {'MAE_bbn':>8}  {'lift':>7}  {'std':>7}  {'cov50':>6}  {'cov80':>6}")
+    for h in range(H):
+        mae_d = per_h_mae_sample_mean[h]
+        mae_b = per_h_mae_backbone[h]
+        lift = mae_b - mae_d                       # positive = diffusion's point-est is better than backbone
+        marker = " ←" if (h + 1) in (3, 6, 12) else ""
+        print(f"  {h+1:>3}  {mae_d:>8.3f}  {mae_b:>8.3f}  {lift:>+7.3f}  "
+              f"{per_h_sample_std[h]:>7.3f}  {per_h_coverage_50[h]:>6.3f}  "
+              f"{per_h_coverage_80[h]:>6.3f}{marker}")
+    print(f"\n  cov50 should ≈ 0.50 if calibrated; cov80 should ≈ 0.80")
+    print(f"  lift > 0 → diffusion sample-mean is a better point forecast than backbone")
+
+    print(f"\nwall-clock: {total_secs:.0f}s")
 
 
 if __name__ == "__main__":

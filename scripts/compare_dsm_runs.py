@@ -187,6 +187,83 @@ def table3_structured_vs_isotropic(records: dict) -> pd.DataFrame:
     return pd.DataFrame(rows).set_index("dataset")
 
 
+def table5_point_forecast_lift(records: dict) -> pd.DataFrame:
+    """For each (dataset, prior): mean MAE of diffusion-sample-mean vs backbone MAE.
+
+    Tells us whether the diffusion model is also a better point forecaster
+    (not just a probabilistic one). lift = MAE_backbone − MAE_sample_mean;
+    positive lift means diffusion's point estimate beats the deterministic
+    backbone.
+    """
+    rows = []
+    for ds in ("metrla", "pemsbay", "pems08f"):
+        for prior in ("structured", "isotropic"):
+            rec = records.get((ds, prior))
+            if rec is None:
+                continue
+            mae_dsm = rec.get("mae_sample_mean_per_horizon")
+            mae_bbn = rec.get("mae_backbone_per_horizon")
+            if mae_dsm is None or mae_bbn is None:
+                continue
+            mae_dsm = np.asarray(mae_dsm)
+            mae_bbn = np.asarray(mae_bbn)
+            rows.append({
+                "dataset":          ds,
+                "prior":            prior,
+                "MAE_backbone h3":  float(mae_bbn[2]),
+                "MAE_backbone h6":  float(mae_bbn[5]),
+                "MAE_backbone h12": float(mae_bbn[11]),
+                "MAE_dsm h3":       float(mae_dsm[2]),
+                "MAE_dsm h6":       float(mae_dsm[5]),
+                "MAE_dsm h12":      float(mae_dsm[11]),
+                "lift h3":          float(mae_bbn[2]  - mae_dsm[2]),
+                "lift h6":          float(mae_bbn[5]  - mae_dsm[5]),
+                "lift h12":         float(mae_bbn[11] - mae_dsm[11]),
+                "MAE_backbone avg": float(mae_bbn.mean()),
+                "MAE_dsm avg":      float(mae_dsm.mean()),
+                "lift avg":         float((mae_bbn - mae_dsm).mean()),
+            })
+    return pd.DataFrame(rows).set_index(["dataset", "prior"])
+
+
+def table6_calibration(records: dict) -> pd.DataFrame:
+    """Quantile-interval coverage per (dataset, prior).
+
+    cov50 (fraction of y in [q25, q75]) should ≈ 0.50 if calibrated.
+    cov80 (fraction of y in [q10, q90]) should ≈ 0.80 if calibrated.
+    Mean sample-std reported as a sharpness measure: tight intervals + good
+    coverage = well-calibrated sharp forecaster.
+    """
+    rows = []
+    for ds in ("metrla", "pemsbay", "pems08f"):
+        for prior in ("structured", "isotropic"):
+            rec = records.get((ds, prior))
+            if rec is None:
+                continue
+            c50 = rec.get("coverage_50_per_horizon")
+            c80 = rec.get("coverage_80_per_horizon")
+            std = rec.get("sample_std_per_horizon")
+            if c50 is None or c80 is None or std is None:
+                continue
+            c50_arr = np.asarray(c50)
+            c80_arr = np.asarray(c80)
+            std_arr = np.asarray(std)
+            rows.append({
+                "dataset":   ds,
+                "prior":     prior,
+                "cov50 h3":  float(c50_arr[2]),
+                "cov50 h6":  float(c50_arr[5]),
+                "cov50 h12": float(c50_arr[11]),
+                "cov80 h3":  float(c80_arr[2]),
+                "cov80 h6":  float(c80_arr[5]),
+                "cov80 h12": float(c80_arr[11]),
+                "cov50 avg": float(c50_arr.mean()),
+                "cov80 avg": float(c80_arr.mean()),
+                "std avg":   float(std_arr.mean()),
+            })
+    return pd.DataFrame(rows).set_index(["dataset", "prior"])
+
+
 def table4_fitted_priors(prior_yaml_dir: Path) -> pd.DataFrame:
     """Fitted prior parameter table from results/prior_params/."""
     rows = []
@@ -349,6 +426,32 @@ def main() -> int:
     t4 = table4_fitted_priors(Path(args.prior_yaml_dir))
     print(t4.to_markdown(floatfmt=".4f"))
     t4.to_csv(out_dir / "table4_fitted_priors.csv")
+    print()
+
+    print("=" * 70)
+    print("Table 5 — Point-forecast lift: MAE(diffusion sample-mean) vs MAE(backbone)")
+    print("=" * 70)
+    t5 = table5_point_forecast_lift(records)
+    if not t5.empty:
+        print(t5.to_markdown(floatfmt=".3f"))
+        t5.to_csv(out_dir / "table5_point_forecast_lift.csv")
+    else:
+        print("(no MAE_sample_mean / MAE_backbone in eval JSONs — run with the updated eval_diffusion.py)")
+    print()
+
+    print("=" * 70)
+    print("Table 6 — Calibration: quantile-interval coverage")
+    print("=" * 70)
+    t6 = table6_calibration(records)
+    if not t6.empty:
+        print(t6.to_markdown(floatfmt=".3f"))
+        t6.to_csv(out_dir / "table6_calibration.csv")
+        print()
+        print("  Reading: cov50 should ≈ 0.50, cov80 should ≈ 0.80 if calibrated.")
+        print("  cov < target → forecast too narrow (overconfident).")
+        print("  cov > target → forecast too wide (under-confident).")
+    else:
+        print("(no coverage_* in eval JSONs — run with the updated eval_diffusion.py)")
     print()
 
     # ── Plots ────────────────────────────────────────────────────────────────

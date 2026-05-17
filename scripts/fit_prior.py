@@ -477,8 +477,14 @@ def main() -> int:
     # ── 4. Sanity checks ──────────────────────────────────────────────────────
     print("\n[4/5] Running sanity checks …")
 
-    print("  (a) Covariance check (5000 samples, 20-sensor subset) …")
-    cov_result = _covariance_check(Q_H, Sigma_S, n_samples=5000, subset_size=20)
+    # 20k samples instead of 5k: the relative-Frobenius estimator has Monte-
+    # Carlo variance ∝ 1/√n. With 5k samples PEMS08F's tightly-clustered Σ_S
+    # spectrum (cond ≈ 1.24) landed just above the 0.15 threshold even though
+    # the sampler is mathematically correct. 20k samples give all three
+    # datasets a comfortable margin (rel_frob < 0.10) and the threshold
+    # becomes a stricter test for a real sampler bug.
+    print("  (a) Covariance check (20000 samples, 20-sensor subset) …")
+    cov_result = _covariance_check(Q_H, Sigma_S, n_samples=20000, subset_size=20)
     cov_str = "PASS" if cov_result["pass"] else "FAIL"
     print(f"       relative Frobenius error = {cov_result['rel_frob']:.4f}  [{cov_str}]")
 

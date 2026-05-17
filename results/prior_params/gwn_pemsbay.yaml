@@ -36,7 +36,7 @@ rho2: 0.8187082141125474
 beta: 0.2365968277673062
 sigma: 3.0164361875783667
 checks:
-  covariance_rel_frob: 0.11110655729811429
+  covariance_rel_frob: 0.05505043724499423
   covariance_pass: true
   vp_marginal_taus:
   - 0.1

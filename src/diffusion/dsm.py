@@ -78,6 +78,7 @@ def dsm_x0_loss(
     beta_min: float,
     beta_max: float,
     weighting: str = "eigenbasis",
+    mask: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
     """Tweedie x₀-prediction loss with optional eigenbasis weighting.
 
@@ -91,9 +92,16 @@ def dsm_x0_loss(
         beta_min, beta_max: Noise schedule.
         weighting: ``"eigenbasis"`` (per-mode 1/var, default) or
                    ``"uniform"`` (plain MSE in the original basis).
+        mask: Optional ``(B, H, N)`` validity mask. When provided, the
+              raw-space error is zeroed at masked positions before the
+              orthogonal eigenbasis rotation (which preserves the sum of
+              squares, so masked positions contribute zero energy). The
+              loss is then normalised by ``mask.sum()`` instead of the
+              full ``B·H·N``. Pass ``None`` to recover the original
+              unmasked behaviour.
 
     Returns:
-        Scalar loss (mean over batch and all modes).
+        Scalar loss (mean over unmasked modes, or full mean when mask is None).
     """
     if r_hat_0.shape != r_0.shape:
         raise ValueError(
@@ -103,11 +111,22 @@ def dsm_x0_loss(
         raise ValueError(
             f"tau shape {tuple(tau.shape)} must be (B,) = ({r_0.shape[0]},)"
         )
+    if mask is not None and mask.shape != r_0.shape:
+        raise ValueError(
+            f"mask shape {tuple(mask.shape)} != r_0 shape {tuple(r_0.shape)}"
+        )
 
     err = r_hat_0 - r_0
+    if mask is not None:
+        # Zero error at masked positions in raw space. The eigenbasis rotation
+        # below is orthogonal (Plancherel), so the zero energy stays zero — no
+        # gradient contribution from masked positions.
+        err = err * mask
 
     if weighting == "uniform":
-        return err.pow(2).mean()
+        if mask is None:
+            return err.pow(2).mean()
+        return err.pow(2).sum() / mask.sum().clamp(min=1.0)
 
     if weighting != "eigenbasis":
         raise ValueError(
@@ -123,7 +142,9 @@ def dsm_x0_loss(
     var = -s * torch.expm1(-bb / s)                                   # (B, H, N)
     var = var.clamp(min=_VAR_FLOOR)
 
-    return (err_tilde.pow(2) / var).mean()
+    if mask is None:
+        return (err_tilde.pow(2) / var).mean()
+    return (err_tilde.pow(2) / var).sum() / mask.sum().clamp(min=1.0)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

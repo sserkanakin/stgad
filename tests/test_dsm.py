@@ -189,6 +189,78 @@ def test_loss_rejects_unknown_weighting(prior):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Mask
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_loss_mask_all_ones_matches_unmasked(prior):
+    """Mask of all-ones should reproduce the unmasked loss exactly."""
+    r_0 = torch.randn(B, H, N)
+    r_hat = torch.randn(B, H, N)
+    tau = torch.full((B,), 0.5)
+    L_none = dsm_x0_loss(r_hat, r_0, tau, prior, 0.01, 50.0)
+    L_full = dsm_x0_loss(r_hat, r_0, tau, prior, 0.01, 50.0,
+                         mask=torch.ones(B, H, N))
+    assert L_none.item() == pytest.approx(L_full.item(), rel=1e-6)
+
+
+def test_loss_mask_drops_masked_position_contribution(prior):
+    """Masking a position should make r_hat at that position irrelevant.
+
+    Build two predictions identical everywhere except one position where they
+    disagree wildly. With that position masked, the two losses must agree.
+    """
+    r_0 = torch.randn(B, H, N)
+    r_hat_a = torch.randn(B, H, N)
+    r_hat_b = r_hat_a.clone()
+    # Inject a huge prediction error at (0, 0, 0); mask it out.
+    r_hat_b[0, 0, 0] += 1e3
+    tau = torch.full((B,), 0.5)
+    mask = torch.ones(B, H, N)
+    mask[0, 0, 0] = 0.0
+    La = dsm_x0_loss(r_hat_a, r_0, tau, prior, 0.01, 50.0, mask=mask)
+    Lb = dsm_x0_loss(r_hat_b, r_0, tau, prior, 0.01, 50.0, mask=mask)
+    assert La.item() == pytest.approx(Lb.item(), rel=1e-5)
+
+
+def test_loss_mask_changes_loss_when_unmasked_position_differs(prior):
+    """Sanity contra-test: an UNmasked error must change the loss."""
+    r_0 = torch.randn(B, H, N)
+    r_hat_a = torch.randn(B, H, N)
+    r_hat_b = r_hat_a.clone()
+    r_hat_b[0, 0, 0] += 1e3  # unmasked this time
+    tau = torch.full((B,), 0.5)
+    mask = torch.ones(B, H, N)
+    La = dsm_x0_loss(r_hat_a, r_0, tau, prior, 0.01, 50.0, mask=mask)
+    Lb = dsm_x0_loss(r_hat_b, r_0, tau, prior, 0.01, 50.0, mask=mask)
+    assert abs(La.item() - Lb.item()) > 1.0
+
+
+def test_loss_mask_uniform_weighting(prior):
+    """Mask path also works under weighting='uniform'."""
+    r_0 = torch.randn(B, H, N)
+    r_hat = torch.randn(B, H, N)
+    tau = torch.full((B,), 0.5)
+    mask = torch.ones(B, H, N)
+    mask[:, 0, :] = 0.0  # mask out all of horizon 0
+    L_full = dsm_x0_loss(r_hat, r_0, tau, prior, 0.01, 50.0,
+                         weighting="uniform", mask=torch.ones(B, H, N))
+    L_part = dsm_x0_loss(r_hat, r_0, tau, prior, 0.01, 50.0,
+                         weighting="uniform", mask=mask)
+    # Different horizons usually have different squared errors, so the two
+    # means should differ.
+    assert L_full.item() != L_part.item()
+
+
+def test_loss_mask_rejects_shape_mismatch(prior):
+    r_0 = torch.randn(B, H, N)
+    r_hat = torch.randn(B, H, N)
+    tau = torch.full((B,), 0.5)
+    bad_mask = torch.ones(B, H, N + 1)
+    with pytest.raises(ValueError, match="mask shape"):
+        dsm_x0_loss(r_hat, r_0, tau, prior, 0.01, 50.0, mask=bad_mask)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # per_mode_squared_error
 # ─────────────────────────────────────────────────────────────────────────────
 

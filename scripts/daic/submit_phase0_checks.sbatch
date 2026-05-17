@@ -2,10 +2,10 @@
 #SBATCH --job-name=phase0-checks
 #SBATCH --partition=general
 #SBATCH --qos=short
-#SBATCH --time=00:15:00
+#SBATCH --time=00:08:00
 #SBATCH --gres=gpu:a40:1
 #SBATCH --cpus-per-task=2
-#SBATCH --mem=8G
+#SBATCH --mem=4G
 #SBATCH --output=logs/phase0-checks/%x-%j.out
 #SBATCH --error=logs/phase0-checks/%x-%j.err
 #SBATCH --mail-user=sserkanakin@icloud.com

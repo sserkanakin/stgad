@@ -60,6 +60,8 @@ class DiffusionDataset(Dataset):
         x_history (2, H, N) — normalised speed + time-of-day (from TrafficDataset)
         y_pred    (H, N)    — backbone forecast / target_scale[h]   (standardised)
         r_0       (H, N)    — residual           / target_scale[h]  (standardised)
+        mask      (H, N)    — validity bool from extract_residuals; masked
+                              positions are excluded from the DSM loss.
     """
 
     def __init__(self, dataset: str, split: str, seed: int, target_scale: np.ndarray) -> None:
@@ -68,7 +70,7 @@ class DiffusionDataset(Dataset):
         npz_path = f"data/processed/{dataset}_{split}.npz"
         self.traffic = TrafficDataset(npz_path, scaler_path)
 
-        # Residuals + y_pred from the extracted .npz
+        # Residuals + y_pred + mask from the extracted .npz
         resid_path = f"results/residuals/{_BACKBONE}_{dataset}_{split}_seed{seed}.npz"
         if not Path(resid_path).exists():
             raise FileNotFoundError(
@@ -78,11 +80,15 @@ class DiffusionDataset(Dataset):
         # All shapes are (N_win, 12, N, 1) in raw mph.
         residuals = resid["residuals"].squeeze(-1)
         y_pred = resid["y_pred"].squeeze(-1)
+        mask = resid["mask"].squeeze(-1).astype(bool)
 
         # Per-horizon standardisation
         ts = target_scale.astype(np.float32).reshape(1, _NUM_HORIZONS, 1)   # (1, H, 1)
         self.r_0 = torch.from_numpy((residuals / ts).astype(np.float32))   # (N_win, H, N)
         self.y_pred = torch.from_numpy((y_pred / ts).astype(np.float32))   # (N_win, H, N)
+        # Stored as float32 so it can broadcast directly into the loss
+        # multiplication on GPU without a dtype cast each step.
+        self.mask = torch.from_numpy(mask.astype(np.float32))               # (N_win, H, N)
 
         if self.r_0.shape[0] != len(self.traffic):
             raise RuntimeError(
@@ -101,6 +107,7 @@ class DiffusionDataset(Dataset):
             "x_history": x_history,
             "y_pred": self.y_pred[idx],
             "r_0": self.r_0[idx],
+            "mask": self.mask[idx],
         }
 
 
@@ -176,12 +183,16 @@ def train_epoch(
         r_0 = batch["r_0"].to(device)
         x_history = batch["x_history"].to(device)
         y_pred = batch["y_pred"].to(device)
+        mask = batch["mask"].to(device)
         B = r_0.shape[0]
 
         tau = sample_tau(B, tau_eps=tau_eps, device=device, dtype=r_0.dtype)
         r_tau = forward_sample(r_0, tau, eig_t, beta_min, beta_max)
         r_hat = model(r_tau, tau, x_history, y_pred)
-        loss = dsm_x0_loss(r_hat, r_0, tau, eig_t, beta_min, beta_max, weighting=weighting)
+        loss = dsm_x0_loss(
+            r_hat, r_0, tau, eig_t, beta_min, beta_max,
+            weighting=weighting, mask=mask,
+        )
 
         opt.zero_grad()
         loss.backward()
@@ -219,13 +230,17 @@ def val_epoch(
         r_0 = batch["r_0"].to(device)
         x_history = batch["x_history"].to(device)
         y_pred = batch["y_pred"].to(device)
+        mask = batch["mask"].to(device)
         B = r_0.shape[0]
 
         tau_cpu = sample_tau(B, tau_eps=tau_eps, device="cpu", dtype=torch.float32, generator=g_tau)
         tau = tau_cpu.to(device)
         r_tau = forward_sample(r_0, tau, eig_t, beta_min, beta_max, generator=g_noise)
         r_hat = model(r_tau, tau, x_history, y_pred)
-        loss = dsm_x0_loss(r_hat, r_0, tau, eig_t, beta_min, beta_max, weighting=weighting)
+        loss = dsm_x0_loss(
+            r_hat, r_0, tau, eig_t, beta_min, beta_max,
+            weighting=weighting, mask=mask,
+        )
         loss_sum += loss.item()
         n += 1
     return loss_sum / max(n, 1)

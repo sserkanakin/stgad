@@ -208,6 +208,7 @@ def main() -> None:
     H, N = _NUM_HORIZONS, _NUM_NODES[dataset]
     crps_sum = np.zeros((H,), dtype=np.float64)
     crps_count = np.zeros((H,), dtype=np.int64)
+    abs_y_sum = np.zeros((H,), dtype=np.float64)   # for Variant 2 normalisation
     pit_bins = np.zeros((H, 20), dtype=np.int64)
     pin_sums = {q: np.zeros((H,), dtype=np.float64) for q in _QUANTILES}
 
@@ -264,6 +265,7 @@ def main() -> None:
             crps_h = crps_ensemble(y_h, s_h)                                # (m,)
             crps_sum[h] += crps_h.sum()
             crps_count[h] += y_h.size
+            abs_y_sum[h] += np.abs(y_h).sum()
 
             # PIT into 20 bins
             pit_h = pit_values(y_h, s_h)                                    # (m,)
@@ -285,11 +287,20 @@ def main() -> None:
     total_secs = time.time() - t0
 
     # ── Aggregate + write JSON ─────────────────────────────────────────────
-    per_h_crps = (crps_sum / np.maximum(crps_count, 1)).tolist()
+    counts = np.maximum(crps_count, 1)
+    per_h_crps = (crps_sum / counts).tolist()                            # Variant 1: raw mph
+    per_h_abs_y = (abs_y_sum / counts).tolist()                          # mean |y| per horizon
+    # Variant 2: per-horizon normalisation — CRPS_h / mean(|y|_h).
+    # Denominator floor guards against the (very unlikely) all-zero case.
+    per_h_crps_norm = [c / max(a, 1e-12) for c, a in zip(per_h_crps, per_h_abs_y)]
     per_h_pin = {f"q{int(q*100):02d}":
-                 (pin_sums[q] / np.maximum(crps_count, 1)).tolist()
+                 (pin_sums[q] / counts).tolist()
                  for q in _QUANTILES}
     avg_crps = float(np.mean(per_h_crps))
+    # Overall Variant 2: pooled across all horizons (sum_CRPS / sum_|y|).
+    overall_abs_y = float(abs_y_sum.sum() / max(crps_count.sum(), 1))
+    overall_crps_norm = float(crps_sum.sum() / max(abs_y_sum.sum(), 1e-12))
+    avg_crps_norm = float(np.mean(per_h_crps_norm))
 
     out: dict = {
         "run_id": args.run_id,
@@ -306,6 +317,11 @@ def main() -> None:
         },
         "crps_per_horizon": per_h_crps,
         "crps_average": avg_crps,
+        "crps_per_horizon_normalized": per_h_crps_norm,
+        "crps_average_normalized": avg_crps_norm,
+        "crps_overall_normalized_pooled": overall_crps_norm,
+        "abs_y_mean_per_horizon": per_h_abs_y,
+        "abs_y_mean_overall": overall_abs_y,
         "pit_histogram_per_horizon": pit_bins.tolist(),
         "pinball_per_horizon": per_h_pin,
         "config": cfg,
@@ -318,10 +334,11 @@ def main() -> None:
     print(f"\nWrote {out_path}")
 
     print(f"\nCRPS per horizon (h=1..12):")
-    for h, c in enumerate(per_h_crps, start=1):
+    for h, (c, cn, ay) in enumerate(zip(per_h_crps, per_h_crps_norm, per_h_abs_y), start=1):
         marker = " ←" if h in (3, 6, 12) else ""
-        print(f"  h={h:2d}  CRPS={c:6.3f}{marker}")
-    print(f"\naverage CRPS over horizons: {avg_crps:.3f}")
+        print(f"  h={h:2d}  CRPS={c:6.3f} mph  norm={cn:.4f}  (mean|y|={ay:.2f}){marker}")
+    print(f"\naverage CRPS over horizons: {avg_crps:.3f} mph   "
+          f"normalised: {avg_crps_norm:.4f}   pooled: {overall_crps_norm:.4f}")
     print(f"wall-clock: {total_secs:.0f}s")
 
 

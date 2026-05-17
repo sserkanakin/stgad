@@ -200,9 +200,17 @@ def val_epoch(
     max_batches: int | None = None,
 ) -> float:
     model.eval()
-    # Fix the τ-sampling RNG so val loss is deterministic for a given model.
-    # Use a CPU generator and convert at use-site to whatever device.
-    g = torch.Generator(device="cpu").manual_seed(0)
+    # Deterministic val: fixed τ-sampling RNG and fixed forward-noise RNG.
+    # τ uses a CPU generator (sample_tau materialises on CPU then we .to()).
+    # Forward noise uses a device-side generator so randn lands on the right
+    # device. MPS doesn't accept a non-MPS generator for MPS randn; fall back
+    # to torch.manual_seed (same workaround as eval_diffusion.py).
+    g_tau = torch.Generator(device="cpu").manual_seed(0)
+    if device.type == "mps":
+        torch.manual_seed(0)
+        g_noise = None
+    else:
+        g_noise = torch.Generator(device=device.type).manual_seed(0)
     loss_sum = 0.0
     n = 0
     for batch in loader:
@@ -213,9 +221,9 @@ def val_epoch(
         y_pred = batch["y_pred"].to(device)
         B = r_0.shape[0]
 
-        tau_cpu = sample_tau(B, tau_eps=tau_eps, device="cpu", dtype=torch.float32, generator=g)
+        tau_cpu = sample_tau(B, tau_eps=tau_eps, device="cpu", dtype=torch.float32, generator=g_tau)
         tau = tau_cpu.to(device)
-        r_tau = forward_sample(r_0, tau, eig_t, beta_min, beta_max)
+        r_tau = forward_sample(r_0, tau, eig_t, beta_min, beta_max, generator=g_noise)
         r_hat = model(r_tau, tau, x_history, y_pred)
         loss = dsm_x0_loss(r_hat, r_0, tau, eig_t, beta_min, beta_max, weighting=weighting)
         loss_sum += loss.item()

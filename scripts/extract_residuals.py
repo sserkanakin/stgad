@@ -6,6 +6,7 @@ predictions to raw mph, computes residuals, and saves one .npz per split.
 Usage:
     python scripts/extract_residuals.py --dataset metrla --seed 0
     python scripts/extract_residuals.py --dataset pemsbay --seed 0
+    python scripts/extract_residuals.py --dataset pems08f --seed 0
 
 Outputs (one per split):
     results/residuals/gwn_{dataset}_{split}_seed{seed}.npz

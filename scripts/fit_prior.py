@@ -3,6 +3,7 @@
 Usage:
     python scripts/fit_prior.py --dataset metrla
     python scripts/fit_prior.py --dataset pemsbay
+    python scripts/fit_prior.py --dataset pems08f
 
 Outputs
 -------

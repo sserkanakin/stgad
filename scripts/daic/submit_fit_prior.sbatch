@@ -18,7 +18,7 @@ mkdir -p logs/fit-prior
 export PROJECT_DIR="${SLURM_SUBMIT_DIR:-$PWD}"
 source "${PROJECT_DIR}/scripts/daic/_common.sh"
 
-: "${DATASET:?Set DATASET=metrla or DATASET=pemsbay}"
+: "${DATASET:?Set DATASET=metrla|pemsbay|pems08f}"
 SEED="${SEED:-0}"
 
 scontrol update job="${SLURM_JOB_ID}" JobName="fit-${DATASET}" 2>/dev/null || true

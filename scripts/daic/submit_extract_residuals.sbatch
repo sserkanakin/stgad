@@ -20,7 +20,7 @@ mkdir -p logs/extract-residuals
 export PROJECT_DIR="${SLURM_SUBMIT_DIR:-$PWD}"
 source "${PROJECT_DIR}/scripts/daic/_common.sh"
 
-: "${DATASET:?Set DATASET=metrla or DATASET=pemsbay}"
+: "${DATASET:?Set DATASET=metrla|pemsbay|pems08f}"
 : "${SEED:?Set SEED=<int>}"
 
 scontrol update job="${SLURM_JOB_ID}" JobName="extr-${DATASET}-s${SEED}" 2>/dev/null || true

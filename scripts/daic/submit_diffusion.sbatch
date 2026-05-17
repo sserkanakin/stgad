@@ -17,8 +17,8 @@
 # Submit one variant:
 #   sbatch --export=DATASET=metrla,SEED=0,PRIOR=structured scripts/daic/submit_diffusion.sbatch
 #
-# Or sweep with a job array (5 seeds × 2 priors × 2 datasets = 20 jobs):
-#   for ds in metrla pemsbay; do
+# Or sweep with a job array (5 seeds × 2 priors × 3 datasets = 30 jobs):
+#   for ds in metrla pemsbay pems08f; do
 #     for prior in structured isotropic; do
 #       for seed in 0 1 2 3 4; do
 #         sbatch --export=DATASET=$ds,SEED=$seed,PRIOR=$prior \
@@ -32,7 +32,7 @@ mkdir -p logs/train-diffusion
 export PROJECT_DIR="${SLURM_SUBMIT_DIR:-$PWD}"
 source "${PROJECT_DIR}/scripts/daic/_common.sh"
 
-: "${DATASET:?Set DATASET=metrla or DATASET=pemsbay}"
+: "${DATASET:?Set DATASET=metrla|pemsbay|pems08f}"
 : "${SEED:?Set SEED=<int>}"
 : "${PRIOR:=structured}"   # structured | isotropic
 EPOCHS="${EPOCHS:-100}"

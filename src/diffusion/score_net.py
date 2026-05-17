@@ -176,7 +176,7 @@ class ScoreNet(nn.Module):
 
     Args:
         num_horizons:     H — number of forecast horizons (12 for our datasets).
-        num_sensors:      N — sensor count (207 METR-LA, 325 PEMS-BAY).
+        num_sensors:      N — sensor count (207 METR-LA, 325 PEMS-BAY, 170 PEMS08F).
         hidden_dim:       Internal channel width. Default 64.
         num_blocks:       Stacked score-net blocks. Default 4.
         tau_embed_dim:    Dim of the τ embedding bottleneck. Default 128.

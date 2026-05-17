@@ -8,7 +8,7 @@ every subsequent training run is a single `sbatch` command.
 
 ```
    Phase 1  Setup     ── env.sh, setup_env.sh, install_keytab           [~10 min]
-   Phase 2  Verify    ── sync_to_daic.sh --hybrid, verify, smoke job    [~15 min]
+   Phase 2  Verify    ── sync_to_daic.sh, verify_setup, smoke job       [~15 min]
    Phase 3  Run       ── extract residuals + fit prior + score net      [~hours]
    Phase 4  Monitor   ── wandb dashboard, watch_jobs.sh, sync_from       [live]
 ```
@@ -59,27 +59,34 @@ the `staff-umbrella` artefact tree.
 
 ## Phase 2 — Push data and verify
 
-### 2.1  Push data (Mac → DAIC), hybrid mode
+### 2.1  Push data (Mac → DAIC)
 
-The recommended bootstrap: push raw + processed data + checkpoints, but
-**not** residuals or prior_params — those are cheap to rebuild on DAIC
-and the rebuild exercises the pipeline end-to-end before any expensive
-training.
+Code travels via `git push` / `git pull` on DAIC. `sync_to_daic.sh` only
+pushes the large binary artefacts that aren't in git. The default is
+the recommended bootstrap: raw + processed + checkpoints, skipping
+residuals and priors (those are cheap to rebuild on DAIC and the
+rebuild exercises the pipeline end-to-end before any expensive
+training).
 
 ```bash
 # Locally, repo root, env.sh sourced
-bash scripts/daic/sync_to_daic.sh --hybrid
+bash scripts/daic/sync_to_daic.sh                  # default: raw + processed + checkpoints
 ```
 
 Alternative flags:
 
 | Flag | Effect |
 |---|---|
-| (no flag) | code + all data + checkpoints + residuals + priors |
-| `--hybrid` | code + data + checkpoints, skip residuals + priors (recommended) |
-| `--code-only` | only code (use this after every code edit) |
-| `--data-only` | everything except code |
-| `--no-residuals` / `--no-priors` | fine-grained omits |
+| (no flag) | raw + processed + checkpoints (skip residuals + priors) |
+| `--all` | raw + processed + checkpoints + residuals + priors |
+| `--raw` | only raw .h5 / PEMS08.npz + adjacency files |
+| `--processed` | only processed .npz + scaler YAMLs |
+| `--checkpoints` | only backbone checkpoints |
+| `--residuals` | only extracted residual .npz files |
+| `--priors` | only fitted prior YAMLs |
+
+The specific-target flags are exclusive — passing one disables all
+others. Use them after edits to a single artefact set.
 
 ### 2.2  Pre-flight verifier (login node)
 
@@ -112,10 +119,12 @@ you're cleared for the full pipeline.
 # Residual extraction (uses pushed checkpoints; ~10 min per dataset on A40)
 sbatch --export=DATASET=metrla,SEED=0  scripts/daic/submit_extract_residuals.sbatch
 sbatch --export=DATASET=pemsbay,SEED=0 scripts/daic/submit_extract_residuals.sbatch
+sbatch --export=DATASET=pems08f,SEED=0 scripts/daic/submit_extract_residuals.sbatch
 
 # Prior fit (CPU only, ~2 min)
 sbatch --export=DATASET=metrla  scripts/daic/submit_fit_prior.sbatch
 sbatch --export=DATASET=pemsbay scripts/daic/submit_fit_prior.sbatch
+sbatch --export=DATASET=pems08f scripts/daic/submit_fit_prior.sbatch
 
 # sde-sanity SDE sanity checks (CPU only, ~10 min)
 sbatch scripts/daic/submit_sanity_checks.sbatch
@@ -126,6 +135,7 @@ If you want to retrain the backbone from scratch on DAIC instead:
 ```bash
 sbatch --export=DATASET=metrla,SEED=0  scripts/daic/submit_train_backbone.sbatch
 sbatch --export=DATASET=pemsbay,SEED=0 scripts/daic/submit_train_backbone.sbatch
+sbatch --export=DATASET=pems08f,SEED=0 scripts/daic/submit_train_backbone.sbatch
 ```
 
 ### 3.2  Score network
@@ -138,8 +148,8 @@ sbatch --job-name="dsm-metrla-structured-s0" \
        --export=DATASET=metrla,SEED=0,PRIOR=structured \
        scripts/daic/submit_diffusion.sbatch
 
-# Full 20-job sweep (5 seeds × 2 priors × 2 datasets)
-for ds in metrla pemsbay; do
+# Full 30-job sweep (5 seeds × 2 priors × 3 datasets)
+for ds in metrla pemsbay pems08f; do
   for prior in structured isotropic; do
     for seed in 0 1 2 3 4; do
       sbatch --job-name="dsm-${ds}-${prior}-s${seed}" \
@@ -206,7 +216,7 @@ SUMMARY.md updates and figures back regardless of flags.
 | `env.example.sh` | 1 | Per-user config template. Copy → `env.sh` (gitignored). |
 | `setup_env.sh` | 1 | One-time conda env + CUDA torch install. |
 | `verify_setup.sh` | 2 | Login-node pre-flight. No Slurm, no GPU. |
-| `sync_to_daic.sh` | 2 | rsync Mac → DAIC with `--hybrid` flag. |
+| `sync_to_daic.sh` | 2 | rsync Mac → DAIC. Default = raw + processed + checkpoints; `--all` adds residuals + priors. |
 | `submit_smoke.sbatch` | 2 | 5-min A40 sanity (CUDA + SDE + wandb). |
 | `smoke_test.py` | 2 | Python driver behind `submit_smoke.sbatch`. |
 | `_common.sh` | 3 | Sourced by every sbatch. Modules + conda env + symlinks + diagnostics. |

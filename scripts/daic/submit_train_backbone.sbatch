@@ -14,14 +14,14 @@
 # Train the GWN backbone on one dataset / seed. Submit with:
 #   sbatch --export=DATASET=metrla,SEED=0 scripts/daic/submit_train_backbone.sbatch
 #
-# Required env vars: DATASET (metrla|pemsbay), SEED (int).
+# Required env vars: DATASET (metrla|pemsbay|pems08f), SEED (int).
 
 set -euo pipefail
 mkdir -p logs/train-backbone
 export PROJECT_DIR="${SLURM_SUBMIT_DIR:-$PWD}"
 source "${PROJECT_DIR}/scripts/daic/_common.sh"
 
-: "${DATASET:?Set DATASET=metrla or DATASET=pemsbay via --export}"
+: "${DATASET:?Set DATASET=metrla|pemsbay|pems08f via --export}"
 : "${SEED:?Set SEED=<int> via --export}"
 EPOCHS="${EPOCHS:-100}"
 

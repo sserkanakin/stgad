@@ -31,7 +31,7 @@ import yaml
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--dataset", default="metrla", choices=["metrla", "pemsbay"])
+    parser.add_argument("--dataset", default="metrla", choices=["metrla", "pemsbay", "pems08f"])
     args = parser.parse_args()
 
     failed: list[str] = []

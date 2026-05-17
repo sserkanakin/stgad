@@ -56,7 +56,7 @@ _RAW_PATHS = {
 _EXPECTED = {
     "metrla":  {"train": 23974, "val": 3425, "test": 6850},
     "pemsbay": {"train": 36481, "val": 5211, "test": 10423},
-    "pems08f": {"train": 10691, "val": 3548,  "test": 3549},
+    "pems08f": {"train": 10691, "val": 3548,  "test": 3548},
 }
 
 

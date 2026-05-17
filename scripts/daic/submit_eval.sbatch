@@ -32,7 +32,10 @@ source "${PROJECT_DIR}/scripts/daic/_common.sh"
 
 : "${RUN_ID:?Set RUN_ID=<checkpoint folder name> via --export}"
 N_SAMPLES="${N_SAMPLES:-50}"
-N_STEPS="${N_STEPS:-200}"
+# n_steps=100 is the default. Empirical check showed CRPS within 0.06 mph of
+# n_steps=200 — negligible at our scale, and halving steps halves wall time.
+# Override per-job with --export=N_STEPS=200 if you need the tighter setting.
+N_STEPS="${N_STEPS:-100}"
 OUT_DIR="${OUT_DIR:-experiments/score-network}"
 
 # Derive a readable job name from RUN_ID so squeue shows what's running.

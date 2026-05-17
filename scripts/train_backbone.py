@@ -44,6 +44,9 @@ from src.utils.wandb_setup import init_wandb
 _MAE_TARGETS = {
     "metrla":  {3: 2.69, 6: 3.07, 12: 3.53},
     "pemsbay": {3: 1.30, 6: 1.63, 12: 1.95},
+    # PEMS08F (flow, vehicles/5min) — targets to be populated after first
+    # baseline run on DAIC; sanity warning is suppressed until then.
+    "pems08f": {},
 }
 
 _BACKBONE = "gwn"
@@ -409,9 +412,12 @@ def main() -> None:  # noqa: C901
 
         test_mae = eval_split(model, test_loader, mean, std, eff_device)
         print("\n--- Test MAE ---")
+        targets = _MAE_TARGETS.get(ds_name, {})
+        if not targets:
+            print(f"  (no MAE targets defined for '{ds_name}' yet — "
+                  f"sanity warnings suppressed)")
         for h, mae in sorted(test_mae.items()):
             label = f"h{h} ({h*5}min)"
-            targets = _MAE_TARGETS.get(ds_name, {})
             target = targets.get(h, None)
             flag = ""
             if target is not None:

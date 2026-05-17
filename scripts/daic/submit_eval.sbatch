@@ -40,6 +40,11 @@ OUT_DIR="${OUT_DIR:-experiments/score-network}"
 # Optional: only evaluate the first MAX_WINDOWS test windows. Used by the
 # throughput-probe pattern to measure win/s before sizing real --time=.
 MAX_WINDOWS="${MAX_WINDOWS:-}"
+# batch_size for the eval DataLoader. Bigger B → fewer batches → less Python
+# overhead per window. A40 has 46 GB; model is small so B=64 or 128 is fine.
+# Optimal value per dataset comes from `submit_preflight.sbatch`; default 16
+# matches the historical setting for backward-compatibility.
+BATCH_SIZE="${BATCH_SIZE:-16}"
 
 # Derive a readable job name from RUN_ID so squeue shows what's running.
 # Pattern: dsm_<prior>_<dataset>_seed<S>_<hash>  →  eval-<dataset>-<prior>
@@ -53,10 +58,11 @@ if [ -n "${MAX_WINDOWS}" ]; then
   echo "Probe mode: --max_windows ${MAX_WINDOWS}"
 fi
 
-echo "Evaluating ${RUN_ID}  (K=${N_SAMPLES}, steps=${N_STEPS})  →  ${OUT_DIR}"
+echo "Evaluating ${RUN_ID}  (K=${N_SAMPLES}, steps=${N_STEPS}, batch_size=${BATCH_SIZE})  →  ${OUT_DIR}"
 srun --export=ALL "${DAIC_PYTHON}" scripts/eval_diffusion.py \
     --run_id "${RUN_ID}" \
     --n_samples "${N_SAMPLES}" \
     --n_steps "${N_STEPS}" \
+    --batch_size "${BATCH_SIZE}" \
     --out_dir "${OUT_DIR}" \
     "${MAX_WIN_ARG[@]}"

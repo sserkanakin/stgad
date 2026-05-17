@@ -125,19 +125,19 @@ def check_input_files(dataset: str, prior: str) -> tuple[bool, list[str]]:
 
 def end_to_end_smoke(
     dataset: str, prior: str, device: torch.device,
+    batch_size: int = 16, K: int = 50, n_steps: int = 100,
 ) -> tuple[bool, str, dict]:
     """Realistic-size single-batch smoke at real eval dimensions.
 
-    Uses batch_size=16, K=50, n_steps=100 (the submit_eval.sbatch defaults) on
-    one batch of REAL test data so per-batch timing represents real eval
-    throughput. Extrapolation: wall_full = wall_smoke × n_batches_real.
+    Uses ``batch_size`` windows × K=50 samples × n_steps=100 on one batch
+    of REAL test data so per-batch timing represents real eval throughput.
+    Extrapolation: wall_full = setup_overhead + wall_smoke × n_batches_real.
 
     Returns (ok, message, info). info includes wall_seconds and
     full_test_estimate_min.
     """
-    BATCH = 16
-    K = 50
-    N_STEPS = 100
+    BATCH = batch_size
+    N_STEPS = n_steps
     try:
         ckpt_dir = find_checkpoint(dataset, prior)
         ckpt = torch.load(ckpt_dir / "best.pt", map_location=device, weights_only=False)
@@ -319,51 +319,109 @@ def main() -> int:
         print("\n[eval_preflight] --skip-smoke set, done.")
         return 0
 
-    # ── B. End-to-end smoke per dataset (real test data, real eval dims) ─────
+    # ── B. End-to-end smoke per dataset, scanning batch sizes for best GPU saturation ─
     print()
     print("─" * 78)
-    print("B. End-to-end smoke (1 batch of 16 real test windows × K=50 × n_steps=100)")
+    print("B. Batch-size scan (per dataset, K=50, n_steps=100, real test data)")
     print("─" * 78)
-    summary = []
-    smoke_failures = 0
-    for ds in _DATASETS:
-        ok, msg, info = end_to_end_smoke(ds, "structured", device)
-        tag = "OK  " if ok else "FAIL"
-        if ok:
-            print(f"  [{tag}] {ds:>8}: {info['wall_seconds_per_batch']:>5.1f}s/batch × "
-                  f"{info['n_batches_real']:>4d} batches  →  full est. "
-                  f"{info['full_test_estimate_min']:>5.1f} min  "
-                  f"(model {info['model_params']/1e3:.0f}k params, "
-                  f"crps[h=0]={info['crps_h0_mean']:.3f})")
-            summary.append((ds, info))
-        else:
-            print(f"  [{tag}] {ds:>8}: {msg}")
-            smoke_failures += 1
+    print("   Goal: find the batch_size that maximises GPU utilisation. A40 has 46 GB;")
+    print("   our model is small (~230k params) so larger batches reduce Python/")
+    print("   kernel-launch overhead per window without hitting memory limits.")
+    print()
+    print(f"   {'dataset':>8}  {'B':>4}  {'per-batch':>10}  {'n_batches':>10}  "
+          f"{'full est.':>11}  {'win/s':>7}")
+    print("   " + "─" * 64)
 
-    if smoke_failures:
-        print(f"\n  {smoke_failures} smoke tests FAILED — investigate before submitting eval.")
+    summary = {}     # {dataset: {best_batch_size, info}}
+    smoke_failures = 0
+    candidate_batch_sizes = (16, 32, 64, 128)
+
+    for ds in _DATASETS:
+        best_per_window_s = float("inf")
+        best_B = None
+        best_info = None
+        for B in candidate_batch_sizes:
+            ok, msg, info = end_to_end_smoke(ds, "structured", device, batch_size=B)
+            if not ok:
+                # OOM or other failure at this B — usually means we've gone too big.
+                print(f"   {ds:>8}  {B:>4}  FAIL ({msg.split(':')[0]})")
+                # Out-of-memory at higher B isn't a fatal preflight failure if a
+                # smaller B succeeded; only flag fail if every B failed.
+                if best_B is None and B == candidate_batch_sizes[0]:
+                    smoke_failures += 1
+                break  # stop scanning bigger B once one OOMs
+            n_batches = info["n_batches_real"]
+            full_min = info["full_test_estimate_min"]
+            per_batch = info["wall_seconds_per_batch"]
+            per_window_s = per_batch / B
+            win_per_s = B / per_batch
+            marker = ""
+            if per_window_s < best_per_window_s:
+                best_per_window_s = per_window_s
+                best_B = B
+                best_info = info
+                marker = " ★"
+            print(f"   {ds:>8}  {B:>4}  {per_batch:>7.2f}s  {n_batches:>10d}  "
+                  f"{full_min:>8.1f}m  {win_per_s:>6.1f}{marker}")
+        if best_B is None:
+            print(f"   [FAIL] {ds}: no batch size succeeded")
+            continue
+        summary[ds] = {"batch_size": best_B, **best_info}
+
+    if smoke_failures or len(summary) < len(_DATASETS):
+        print(f"\n  Some datasets failed smoke — investigate before submitting eval.")
         return 1
 
-    # ── C. Recommended --time= per dataset (full test set, real eval dims + 25% margin) ─
+    # ── C. Recommended (batch_size, --time=) per dataset ─────────────────────
     print()
     print("─" * 78)
-    print("C. Recommended --time= per dataset (+25% margin + 5min I/O buffer)")
+    print("C. Recommendation per dataset (best batch_size + --time= with +25% margin)")
     print("─" * 78)
-    print(f"  {'dataset':>8}  {'est. min':>9}  {'+ margin/buffer':>16}  {'--time='}")
-    for ds, info in summary:
+    print(f"   {'dataset':>8}  {'best B':>7}  {'est. min':>9}  "
+          f"{'+ margin':>10}  {'--time='}")
+    print("   " + "─" * 60)
+    for ds, info in summary.items():
         base_min = info["full_test_estimate_min"]
         est_min_with_margin = base_min * 1.25 + 5.0
         hh, mm = int(est_min_with_margin // 60), int(round(est_min_with_margin % 60))
+        if mm == 60:
+            hh, mm = hh + 1, 0
+        print(f"   {ds:>8}  {info['batch_size']:>7d}  {base_min:>7.1f}m  "
+              f"{est_min_with_margin:>8.1f}m  {hh:02d}:{mm:02d}:00")
+
+    # ── Generate ready-to-paste launch commands ──────────────────────────────
+    print()
+    print("─" * 78)
+    print("D. Ready-to-paste launch commands for the six real eval jobs")
+    print("─" * 78)
+    print()
+    print("declare -A BS=(")
+    for ds, info in summary.items():
+        print(f"  [{ds}]={info['batch_size']}")
+    print(")")
+    print("declare -A T=(")
+    for ds, info in summary.items():
+        est_min_with_margin = info["full_test_estimate_min"] * 1.25 + 5.0
+        hh, mm = int(est_min_with_margin // 60), int(round(est_min_with_margin % 60))
         if mm == 60: hh, mm = hh + 1, 0
-        print(f"  {ds:>8}  {base_min:>7.1f}m  {est_min_with_margin:>14.1f}m  {hh:02d}:{mm:02d}:00")
+        print(f"  [{ds}]={hh:02d}:{mm:02d}:00")
+    print(")")
+    print("for ds in metrla pemsbay pems08f; do")
+    print("  for prior in structured isotropic; do")
+    print("    run_dir=$(ls -d results/checkpoints/dsm_${prior}_${ds}_seed0_*/ | head -1)")
+    print("    run_id=$(basename \"$run_dir\")")
+    print("    [ -f \"experiments/score-network/eval_${run_id}.json\" ] && { echo \"[skip] $run_id\"; continue; }")
+    print("    sbatch --time=${T[$ds]} \\")
+    print("           --export=RUN_ID=${run_id},BATCH_SIZE=${BS[$ds]} \\")
+    print("           scripts/daic/submit_eval.sbatch")
+    print("  done")
+    print("done")
 
     print()
     print("[eval_preflight] ALL CHECKS PASSED")
-    print("  Use the recommended --time= values when submitting the six eval jobs.")
-    print()
-    print("  NOTE: extrapolation assumes steady-state per-batch cost. Actual full-eval")
-    print("  wall may differ by ~15-25% due to disk I/O, kernel cold-start, NUMA effects.")
-    print("  The +25% margin above accounts for this; --time= shown is safe to submit.")
+    print("  Bigger batch_size DOES NOT change eval results (each window's K samples")
+    print("  are still independent). It only changes how many windows are processed")
+    print("  in parallel per forward pass.")
     return 0
 
 

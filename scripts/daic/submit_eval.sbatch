@@ -52,17 +52,20 @@ PRIOR_SHORT=$(echo "${RUN_ID}" | awk -F_ '{print $2}')
 DS_SHORT=$(echo "${RUN_ID}" | awk -F_ '{print $3}')
 scontrol update job="${SLURM_JOB_ID}" JobName="eval-${DS_SHORT}-${PRIOR_SHORT}" 2>/dev/null || true
 
-MAX_WIN_ARG=()
+MAX_WIN_ARG=""
 if [ -n "${MAX_WINDOWS}" ]; then
-  MAX_WIN_ARG=(--max_windows "${MAX_WINDOWS}")
+  MAX_WIN_ARG="--max_windows ${MAX_WINDOWS}"
   echo "Probe mode: --max_windows ${MAX_WINDOWS}"
 fi
 
 echo "Evaluating ${RUN_ID}  (K=${N_SAMPLES}, steps=${N_STEPS}, batch_size=${BATCH_SIZE})  →  ${OUT_DIR}"
+# MAX_WIN_ARG is intentionally unquoted so word-splitting expands it correctly
+# when set (and to nothing when empty). The string form works under `set -u`
+# where empty bash arrays trip "unbound variable".
 srun --export=ALL "${DAIC_PYTHON}" scripts/eval_diffusion.py \
     --run_id "${RUN_ID}" \
     --n_samples "${N_SAMPLES}" \
     --n_steps "${N_STEPS}" \
     --batch_size "${BATCH_SIZE}" \
     --out_dir "${OUT_DIR}" \
-    "${MAX_WIN_ARG[@]}"
+    ${MAX_WIN_ARG}

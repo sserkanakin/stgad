@@ -1,10 +1,14 @@
 """Train the Graph WaveNet backbone and save the best checkpoint.
 
-Full training is run by the user on their Mac (see RUNBOOK.md).
-Claude Code only executes smoke-test mode (--smoke) as a wiring check.
+Training runs on DAIC (A40 GPU) via scripts/daic/submit_train_backbone.sbatch.
+Local smoke-test mode (--smoke) exists as a wiring check.
+
+Standard recipe: masked MAE loss, z-score normalised input speed channel,
+Adam(lr=1e-3, weight_decay=1e-4), grad clip 5.0, best checkpoint selected
+by val_h12 MAE, early stopping with patience on val_h12.
 
 Usage:
-    # Full training (user runs this):
+    # Full training:
     python scripts/train_backbone.py --dataset metrla --seed 0
 
     # Smoke test (1 epoch, batch_size=16, wandb disabled):
@@ -197,6 +201,10 @@ def main() -> None:  # noqa: C901
                         help="Max training batches in smoke mode (default 50).")
     parser.add_argument("--fresh", action="store_true",
                         help="Delete existing checkpoint and start from scratch.")
+    parser.add_argument("--patience", type=int, default=15,
+                        help="Early-stopping patience on val_h12. Set to 0 to disable.")
+    parser.add_argument("--weight_decay", type=float, default=1e-4,
+                        help="Adam weight decay (default 1e-4, matches original GWN).")
     args = parser.parse_args()
 
     # ------------------------------------------------------------------ #
@@ -292,13 +300,14 @@ def main() -> None:  # noqa: C901
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"Backbone: {_BACKBONE}/{ds_name} | params={n_params:,} | device={eff_device}")
 
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=args.weight_decay)
 
     # ------------------------------------------------------------------ #
     # Resume from checkpoint
     # ------------------------------------------------------------------ #
     start_epoch = 0
     best_val_mae = float("inf")
+    best_epoch = -1
     batches_seen = 0
 
     latest_ckpt = find_latest_checkpoint(ckpt_dir)
@@ -310,6 +319,12 @@ def main() -> None:  # noqa: C901
         start_epoch = ckpt["epoch"] + 1
         best_val_mae = ckpt["best_val_mae"]
         restore_rng_states(ckpt["rng_states"])
+        state_path = ckpt_dir / "state.json"
+        if state_path.exists():
+            state = json.loads(state_path.read_text())
+            best_epoch = int(state.get("best_epoch", ckpt["epoch"]))
+        else:
+            best_epoch = ckpt["epoch"]
         print(f"  Resumed from epoch {ckpt['epoch']} | best_val_mae={best_val_mae:.4f}")
     else:
         print(f"Starting fresh | epochs={epochs} | batch_size={batch_size} | lr={lr}")
@@ -362,6 +377,7 @@ def main() -> None:  # noqa: C901
         improved = val_mae[12] < best_val_mae
         if improved:
             best_val_mae = val_mae[12]
+            best_epoch = epoch
             save_checkpoint(
                 ckpt_dir / "best.pt",
                 model, optimizer, sched=None,
@@ -371,10 +387,21 @@ def main() -> None:  # noqa: C901
 
         (ckpt_dir / "state.json").write_text(json.dumps({
             "last_epoch": epoch,
+            "best_epoch": best_epoch,
             "best_val_mae": best_val_mae,
             "run_id": run_id,
             "cfg_hash": cfg_hash,
         }, indent=2))
+
+        # Early stopping on val_h12
+        if args.patience > 0 and best_epoch >= 0:
+            stale = epoch - best_epoch
+            if stale >= args.patience:
+                print(
+                    f"Early stop: no val_h12 improvement for {stale} epochs "
+                    f"(best epoch {best_epoch}, best val_h12={best_val_mae:.4f})."
+                )
+                break
 
         if not args.smoke:
             import wandb

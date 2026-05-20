@@ -30,8 +30,22 @@ _GWN_BASE = {
     "layers": 2,
     "gcn_bool": True,
     "addaptadj": True,
-    "aptinit": None,
+    # aptinit is set per-call from supports[0] (forward random-walk transition),
+    # matching the original GWN train.py default (randomadj=False).
 }
+
+
+def _asym_adj(adj: np.ndarray) -> np.ndarray:
+    """Row-normalised (asymmetric) transition matrix: D^-1 @ A.
+
+    Matches util.asym_adj in third_party/Graph-WaveNet — copied here so we
+    don't import scipy/sparse at module load and so we keep one numpy path
+    for both METR-LA/PEMS-BAY (directed) and PEMS08F (symmetric binary)
+    adjacencies.
+    """
+    rowsum = adj.sum(axis=1)
+    d_inv = np.where(rowsum > 0, 1.0 / rowsum, 0.0)
+    return (np.diag(d_inv) @ adj).astype(np.float32)
 
 
 # ---------------------------------------------------------------------------
@@ -104,10 +118,19 @@ def _load_gwn(dataset: str, adj_mx: np.ndarray, device: torch.device) -> nn.Modu
     num_nodes = _NUM_NODES[dataset]
     kwargs = dict(_GWN_BASE)
 
+    # Double-transition supports: forward + backward random walk on A.
+    # Matches the original GWN training recipe (adjtype="doubletransition").
+    supports = [
+        torch.from_numpy(_asym_adj(adj_mx)).to(device),
+        torch.from_numpy(_asym_adj(adj_mx.T)).to(device),
+    ]
+    aptinit = supports[0]   # initialise adaptive adj from forward transition
+
     model = gwnet(
         device=device,
         num_nodes=num_nodes,
-        supports=None,
+        supports=supports,
+        aptinit=aptinit,
         **kwargs,
     )
     model = model.to(device)
@@ -163,9 +186,11 @@ def load_backbone(
         name: Must be ``"gwn"``. Kept as a parameter for call-site clarity.
         dataset: ``"metrla"``, ``"pemsbay"``, or ``"pems08f"``.
         adj_mx: N×N float32 adjacency matrix from ``adjacency.load_adjacency``.
-            Note: GWN is instantiated with ``supports=None`` and learns its
-            own adaptive adjacency, so this argument is currently unused by
-            the model. Kept for interface stability / future use.
+            Used to build the double-transition supports
+            ``[D^-1 @ A,  D^-1 @ A^T]`` passed into GWN, plus ``aptinit =
+            supports[0]`` for adaptive-adjacency initialisation. Matches
+            the original GWN training recipe (adjtype="doubletransition",
+            randomadj=False).
         device: Requested torch device.
 
     Returns:

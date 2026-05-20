@@ -10,7 +10,9 @@ blocks: 4
 layers: 2
 gcn_bool: true
 addaptadj: true
-aptinit: null
+# Pre-computed graph supports + aptinit are wired in src/backbones/__init__.py:
+#   supports = [D^-1 @ A, D^-1 @ A^T]   (doubletransition)
+#   aptinit  = supports[0]              (matches GWN train.py default)
 
 # Training
 lr: 1.0e-3

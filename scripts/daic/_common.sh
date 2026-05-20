@@ -56,7 +56,11 @@ export PYTHONUNBUFFERED=1
 cd "${PROJECT_DIR}"
 
 # Symlink large artefact directories on first run (idempotent).
+# Ensure the symlink targets exist first — otherwise the link is dangling and
+# any downstream `mkdir -p` on the link path fails with "File exists" because
+# Python's exist_ok=True only swallows the error when the path is a directory.
 mkdir -p data results
+mkdir -p "${DAIC_DATA_DIR}"/{raw,processed,checkpoints,residuals}
 [ -e data/raw          ] || ln -sfn "${DAIC_DATA_DIR}/raw"          data/raw
 [ -e data/processed    ] || ln -sfn "${DAIC_DATA_DIR}/processed"    data/processed
 [ -e results/checkpoints  ] || ln -sfn "${DAIC_DATA_DIR}/checkpoints"  results/checkpoints

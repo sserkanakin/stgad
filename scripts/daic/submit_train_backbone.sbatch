@@ -2,7 +2,7 @@
 #SBATCH --job-name=gwn-train
 #SBATCH --partition=general
 #SBATCH --qos=short
-#SBATCH --time=04:00:00
+#SBATCH --time=01:00:00
 #SBATCH --gres=gpu:a40:1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=16G

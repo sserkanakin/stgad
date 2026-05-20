@@ -19,7 +19,9 @@ download_if_missing() {
         echo "  Already exists, skipping: $dest"
     else
         echo "  Downloading $dest ..."
-        wget -q --show-progress -c -O "$dest" "$url"
+        # --show-progress requires wget >= 1.16; DAIC's wget is older.
+        # Plain `wget -c -O` works everywhere and shows enough output.
+        wget -c -O "$dest" "$url"
     fi
 }
 

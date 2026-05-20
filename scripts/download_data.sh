@@ -37,15 +37,15 @@ download_if_missing \
 echo "=== Traffic speed data (Zenodo record 5724362) ==="
 download_if_missing \
     "https://zenodo.org/records/5724362/files/METR-LA.h5" \
-    "$RAW/METR-LA.h5"
+    "$RAW/metr-la.h5"
 
 download_if_missing \
     "https://zenodo.org/records/5724362/files/PEMS-BAY.h5" \
-    "$RAW/PEMS-BAY.h5"
+    "$RAW/pems-bay.h5"
 
 echo ""
 echo "=== Checking files ==="
-for f in "$RAW/METR-LA.h5" "$RAW/PEMS-BAY.h5" "$RAW/adj_mx_metrla.pkl" "$RAW/adj_mx_pemsbay.pkl"; do
+for f in "$RAW/metr-la.h5" "$RAW/pems-bay.h5" "$RAW/adj_mx_metrla.pkl" "$RAW/adj_mx_pemsbay.pkl"; do
     if [ -f "$f" ]; then
         echo "  OK  $f  ($(du -h "$f" | cut -f1))"
     else

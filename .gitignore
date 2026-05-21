@@ -21,3 +21,4 @@ scripts/daic/env.sh
 scripts/daic-exp/env.sh
 logs/
 tea_debug.log
+results/

@@ -246,7 +246,11 @@ def main() -> None:  # noqa: C901
     # ------------------------------------------------------------------ #
     # Checkpoint directory and run ID
     # ------------------------------------------------------------------ #
-    cfg_hash = hash_config({k: v for k, v in cfg.items() if k not in ("seed",)})
+    # cfg_hash captures architecture + data preprocessing, not training-control
+    # knobs. Excluding training fields lets --epochs 1 smoke runs and full runs
+    # share the same checkpoint dir.
+    _HASH_EXCLUDE = {"seed", "epochs", "batch_size", "lr", "weight_decay", "patience"}
+    cfg_hash = hash_config({k: v for k, v in cfg.items() if k not in _HASH_EXCLUDE})
     run_id = f"{_BACKBONE}_{args.dataset}_seed{args.seed}_{cfg_hash}"
     ckpt_dir = Path(f"results/checkpoints/{run_id}")
     ckpt_dir.mkdir(parents=True, exist_ok=True)

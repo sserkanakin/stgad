@@ -159,7 +159,9 @@ def main() -> None:
         **backbone_cfg,
         **data_cfg,
     }
-    cfg_hash = hash_config({k: v for k, v in cfg.items() if k not in ("seed",)})
+    # Keep this exclusion list in sync with scripts/train_backbone.py.
+    _HASH_EXCLUDE = {"seed", "epochs", "batch_size", "lr", "weight_decay", "patience"}
+    cfg_hash = hash_config({k: v for k, v in cfg.items() if k not in _HASH_EXCLUDE})
     run_id = f"{_BACKBONE}_{args.dataset}_seed{args.seed}_{cfg_hash}"
     ckpt_dir = Path(f"results/checkpoints/{run_id}")
     best_ckpt = ckpt_dir / "best.pt"

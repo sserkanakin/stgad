@@ -3,21 +3,23 @@
 End-to-end runbook for executing the thesis-diffusion pipeline on DAIC.
 Official docs: <https://daic.tudelft.nl/docs/>.
 
-The workflow has four phases. Once Phase 1+2 are done (one-time setup),
-every subsequent training run is a single `sbatch` command.
+Six-phase project plan mirrors `/Users/serkan/.claude/plans/lets-plan-from-this-fuzzy-hopcroft.md`:
 
 ```
-   Phase 1  Setup     ── env.sh, setup_env.sh, install_keytab           [~10 min]
-   Phase 2  Verify    ── sync_to_daic.sh, verify_setup, smoke job       [~15 min]
-   Phase 3  Run       ── extract residuals + fit prior + score net      [~hours]
-   Phase 4  Monitor   ── wandb dashboard, watch_jobs.sh, sync_from       [live]
+   Phase 1  Backbone (GWN) + residual extraction     ✅ DONE
+   Phase 2  Kronecker prior fit + diagnostics        ✅ DONE
+   Phase 3  Forward sampler (FCPS, eigenbasis)       Stage B
+   Phase 4  Denoiser (UGnet) + training harness      Stage C
+   Phase 5  Reverse sampling + headline experiments  Stage D
+   Phase 6  Writeup                                   Stage E
 ```
 
----
+The pre-rewrite diffusion / DSM / eval submission scripts were removed in the
+2026-05-28 cleanup. New sbatch templates land alongside the corresponding stage.
 
-## Phase 1 — One-time setup
+## One-time setup (per machine)
 
-### 1.1  Local Mac
+### On your Mac
 
 ```bash
 cp scripts/daic/env.example.sh scripts/daic/env.sh
@@ -25,7 +27,7 @@ $EDITOR scripts/daic/env.sh                   # set DAIC_NETID, group dir
 source scripts/daic/env.sh
 ```
 
-Add to your local `~/.ssh/config` so `ssh daic` works:
+Add to `~/.ssh/config` so `ssh daic` works:
 
 ```
 Host daic
@@ -33,11 +35,10 @@ Host daic
   User <your-netid>
 ```
 
-You must be on the TU Delft network or connected to **eduVPN** to reach
-DAIC. DAIC does not accept SSH public keys — every login is a Kerberos
-password prompt.
+You must be on TU Delft network or **eduVPN** to reach DAIC.
+SSH public keys are NOT supported — every login is a Kerberos password prompt.
 
-### 1.2  On DAIC (first login)
+### On DAIC (first login)
 
 ```bash
 ssh daic
@@ -47,48 +48,37 @@ cp scripts/daic/env.example.sh scripts/daic/env.sh
 $EDITOR scripts/daic/env.sh                   # same NetID + paths
 source scripts/daic/env.sh
 
-bash scripts/daic/setup_env.sh                # creates conda env, installs torch+cu121
-wandb login                                   # one-time; paste key from wandb.ai/authorize
-install_keytab                                # enables Slurm Kerberos auto-renewal
+bash scripts/daic/setup_env.sh                # conda env, torch+cu121
+wandb login                                   # paste key from wandb.ai/authorize
+install_keytab                                # Slurm Kerberos auto-renewal
 ```
 
-`setup_env.sh` is idempotent — re-running it just verifies the conda env and
-the `staff-umbrella` artefact tree.
+`setup_env.sh` is idempotent.
 
----
+## Pushing artefacts (Mac → DAIC)
 
-## Phase 2 — Push data and verify
-
-### 2.1  Push data (Mac → DAIC)
-
-Code travels via `git push` / `git pull` on DAIC. `sync_to_daic.sh` only
-pushes the large binary artefacts that aren't in git. The default is
-the recommended bootstrap: raw + processed + checkpoints, skipping
-residuals and priors (those are cheap to rebuild on DAIC and the
-rebuild exercises the pipeline end-to-end before any expensive
-training).
+Code travels via `git push` / `git pull` on DAIC. `sync_to_daic.sh` pushes
+the large binary artefacts that aren't in git.
 
 ```bash
-# Locally, repo root, env.sh sourced
 bash scripts/daic/sync_to_daic.sh                  # default: raw + processed + checkpoints
 ```
 
-Alternative flags:
+Flags:
 
 | Flag | Effect |
 |---|---|
-| (no flag) | raw + processed + checkpoints (skip residuals + priors) |
-| `--all` | raw + processed + checkpoints + residuals + priors |
-| `--raw` | only raw .h5 / PEMS08.npz + adjacency files |
-| `--processed` | only processed .npz + scaler YAMLs |
-| `--checkpoints` | only backbone checkpoints |
-| `--residuals` | only extracted residual .npz files |
-| `--priors` | only fitted prior YAMLs |
+| (no flag) | raw + processed + checkpoints |
+| `--all` | + residuals + priors |
+| `--raw` | raw .h5 / PEMS08.npz + adjacency only |
+| `--processed` | processed .npz + scaler YAMLs only |
+| `--checkpoints` | backbone checkpoints only |
+| `--residuals` | extracted residual .npz only |
+| `--priors` | fitted prior outputs only |
 
-The specific-target flags are exclusive — passing one disables all
-others. Use them after edits to a single artefact set.
+Specific-target flags are exclusive.
 
-### 2.2  Pre-flight verifier (login node)
+## Pre-flight (login node)
 
 ```bash
 ssh daic
@@ -96,139 +86,113 @@ cd ~/research-tud && source scripts/daic/env.sh
 bash scripts/daic/verify_setup.sh
 ```
 
-Checks env vars, modules, conda env, project imports, data symlinks, data
-files, wandb auth, and runs a subset of unit tests. No Slurm, no GPU.
+Checks env, modules, conda env, imports, symlinks, data files, wandb auth.
+No Slurm, no GPU.
 
-### 2.3  GPU smoke test (5 min on an A40)
+## GPU smoke test
 
 ```bash
 sbatch --export=DATASET=metrla scripts/daic/submit_smoke.sbatch
 ```
 
-Confirms CUDA works, the SDE forward marginal runs against the real
-prior YAML and residual npz, and wandb logs a run. Once this passes
-you're cleared for the full pipeline.
+Confirms CUDA + wandb + repo imports. Once green, you're cleared.
 
----
+## Phase 1 — Backbone + residuals ✅ DONE
 
-## Phase 3 — Run the pipeline
+Outputs already cached under `results/checkpoints/` and `results/residuals/`.
+**Do not rerun** unless intentionally retraining a backbone or invalidating a
+residual cache.
 
-### 3.1  Rebuild residuals and prior on DAIC
-
-```bash
-# Residual extraction (uses pushed checkpoints; ~10 min per dataset on A40)
-sbatch --export=DATASET=metrla,SEED=0  scripts/daic/submit_extract_residuals.sbatch
-sbatch --export=DATASET=pemsbay,SEED=0 scripts/daic/submit_extract_residuals.sbatch
-sbatch --export=DATASET=pems08f,SEED=0 scripts/daic/submit_extract_residuals.sbatch
-
-# Prior fit (CPU only, ~2 min)
-sbatch --export=DATASET=metrla  scripts/daic/submit_fit_prior.sbatch
-sbatch --export=DATASET=pemsbay scripts/daic/submit_fit_prior.sbatch
-sbatch --export=DATASET=pems08f scripts/daic/submit_fit_prior.sbatch
-
-# sde-sanity SDE sanity checks (CPU only, ~10 min)
-sbatch scripts/daic/submit_sanity_checks.sbatch
-```
-
-If you want to retrain the backbone from scratch on DAIC instead:
+If you do need to rerun:
 
 ```bash
+# Backbone (A40, medium, ~12h)
 sbatch --export=DATASET=metrla,SEED=0  scripts/daic/submit_train_backbone.sbatch
 sbatch --export=DATASET=pemsbay,SEED=0 scripts/daic/submit_train_backbone.sbatch
 sbatch --export=DATASET=pems08f,SEED=0 scripts/daic/submit_train_backbone.sbatch
+
+# Residual extraction (A40, short, ~1h)
+sbatch --export=DATASET=metrla,SEED=0  scripts/daic/submit_extract_residuals.sbatch
+sbatch --export=DATASET=pemsbay,SEED=0 scripts/daic/submit_extract_residuals.sbatch
+sbatch --export=DATASET=pems08f,SEED=0 scripts/daic/submit_extract_residuals.sbatch
 ```
 
-### 3.2  Score network
+## Phase 2 — Prior + diagnostics ✅ DONE
 
-After PLAN §14.4 lands `scripts/train_diffusion.py`:
+γ* locked per dataset (geomean of energy + spectral fits):
+METR-LA 0.158, PEMS-BAY 0.213, PEMS08F 0.924.
+Acceptance suite (D1/D2/D3) ran on all three datasets.
 
-```bash
-# Single run — pass --job-name so the log filename encodes dataset/prior/seed
-sbatch --job-name="dsm-metrla-structured-s0" \
-       --export=DATASET=metrla,SEED=0,PRIOR=structured \
-       scripts/daic/submit_diffusion.sbatch
+Outputs under `results/prior_params/` and `results/section3/`.
+**Do not rerun** unless changing the prior spec. Driver scripts live under
+`scripts/section3/` (exp31–36, diag_prior_kron, exp_temporal_stationarity).
 
-# Full 30-job sweep (5 seeds × 2 priors × 3 datasets)
-for ds in metrla pemsbay pems08f; do
-  for prior in structured isotropic; do
-    for seed in 0 1 2 3 4; do
-      sbatch --job-name="dsm-${ds}-${prior}-s${seed}" \
-             --export=DATASET=$ds,SEED=$seed,PRIOR=$prior \
-             scripts/daic/submit_diffusion.sbatch
-    done
-  done
-done
-```
+## Phase 3 — Forward sampler (Stage B, coming)
 
-The `--job-name` override sets `%x` in the log filename, so you get
-`logs/train-diffusion/dsm-metrla-structured-s0-12345.out` instead of the
-generic `dsm-train-12345.out`. Without an override, the static
-`#SBATCH --job-name` inside each template is used as the fallback.
+To be added: `scripts/daic/submit_forward_sanity.sbatch` once
+`src/diffusion/forward_fcps.py` lands. Will run the three forward-sampler sanity
+checks + per-dataset mixing diagnostic on CPU.
 
----
+## Phase 4 — Denoiser training (Stage C, coming)
 
-## Phase 4 — Monitor and pull results
+To be added: `scripts/daic/submit_train_diffusion.sbatch` once UGnet + training
+loop land. A40, medium, 24h budget. Pre-create `logs/train_diffusion/` before
+first submission.
 
-### 4.1  Live monitoring (Mac)
+## Phase 5 — Evaluation (Stage D, coming)
+
+To be added: `scripts/daic/submit_eval_diffusion.sbatch`. CRPS / MAE / PIT over
+K=16 reverse samples per test window.
+
+## Monitoring (any phase)
 
 ```bash
 bash scripts/daic/watch_jobs.sh           # one-shot squeue + wandb link + newest log
 bash scripts/daic/watch_jobs.sh --follow  # refreshes every 10 s
 bash scripts/daic/watch_jobs.sh --tail    # tail -F the newest slurm log
-bash scripts/daic/watch_jobs.sh --tail 12345  # tail a specific job
 ```
 
-### 4.2  Wandb dashboard
+Wandb: <https://wandb.ai/tud-thesis/thesis-diffusion>.
+`init_wandb` uses run IDs `{backbone}_{dataset}_seed{seed}_{cfg_hash}` suffixed
+with `SLURM_JOB_ID` so manual resubmits get fresh dashboard entries.
 
-All training runs log to <https://wandb.ai/tud-thesis/thesis-diffusion>.
-`init_wandb` uses deterministic run IDs of the form
-`{backbone}_{dataset}_seed{seed}_{cfg_hash}`, so re-submitting an sbatch
-after a crash resumes the same run (same URL, same loss curves).
-
-### 4.3  Direct Slurm commands (on DAIC)
+Direct Slurm:
 
 ```bash
 squeue --me                                            # your queue
 squeue --me -t RUNNING -o "%i %T %M %j %R"             # running with elapsed
 sacct -j <jobid> --format=JobID,Elapsed,MaxRSS,State   # post-mortem
-tail -F logs/train-diffusion/dsm-*-<jobid>.out         # live log
 scancel <jobid>                                        # kill
 sinteractive --cpus-per-task=2 --mem=8G --gres=gpu:a40:1 --time=01:00:00
 ```
 
-### 4.4  Pull results back to Mac
+## Pulling results (DAIC → Mac)
 
 ```bash
-bash scripts/daic/sync_from_daic.sh                       # everything (incl. ckpts)
+bash scripts/daic/sync_from_daic.sh                       # everything
 bash scripts/daic/sync_from_daic.sh --no-checkpoints      # skip GB of .pt
 bash scripts/daic/sync_from_daic.sh --no-residuals        # skip GB of .npz
+bash scripts/daic/sync_from_daic.sh --no-priors           # skip prior YAMLs
 ```
 
-The puller always grabs `experiments/**/*.{md,json,png,yaml}` so you get
-SUMMARY.md updates and figures back regardless of flags.
-
----
+Always grabs `results/**/*.{md,json,png,yaml}` so SUMMARY.md updates and
+figures come back regardless of flags.
 
 ## File reference
 
 | File | Phase | Purpose |
 |---|---|---|
-| `env.example.sh` | 1 | Per-user config template. Copy → `env.sh` (gitignored). |
-| `setup_env.sh` | 1 | One-time conda env + CUDA torch install. |
-| `verify_setup.sh` | 2 | Login-node pre-flight. No Slurm, no GPU. |
-| `sync_to_daic.sh` | 2 | rsync Mac → DAIC. Default = raw + processed + checkpoints; `--all` adds residuals + priors. |
-| `submit_smoke.sbatch` | 2 | 5-min A40 sanity (CUDA + SDE + wandb). |
-| `smoke_test.py` | 2 | Python driver behind `submit_smoke.sbatch`. |
-| `_common.sh` | 3 | Sourced by every sbatch. Modules + conda env + symlinks + diagnostics. |
-| `submit_train_backbone.sbatch` | 3 | GWN training. A40, medium, 12h. |
-| `submit_extract_residuals.sbatch` | 3 | Inference + residual dump. A40, short, 1h. |
-| `submit_fit_prior.sbatch` | 3 | Prior fit. CPU, short. |
-| `submit_sanity_checks.sbatch` | 3 | sde-sanity sanity. CPU, short. |
-| `submit_diffusion.sbatch` | 3 | score-network score net. A40, medium, 24h. |
-| `watch_jobs.sh` | 4 | Local live monitor. squeue + wandb + tail. |
-| `sync_from_daic.sh` | 4 | rsync DAIC → Mac. |
-
----
+| `env.example.sh` | setup | Per-user config template. Copy → `env.sh` (gitignored). |
+| `setup_env.sh` | setup | One-time conda env + CUDA torch install. |
+| `verify_setup.sh` | setup | Login-node pre-flight. No Slurm, no GPU. |
+| `_common.sh` | shared | Sourced by every sbatch. Modules + conda env + symlinks. |
+| `sync_to_daic.sh` | sync | rsync Mac → DAIC. |
+| `sync_from_daic.sh` | sync | rsync DAIC → Mac. |
+| `submit_smoke.sbatch` | smoke | 5-min A40 sanity. |
+| `smoke_test.py` | smoke | Python driver behind submit_smoke. |
+| `submit_train_backbone.sbatch` | 1 | GWN training. A40, medium, 12h. ✅ done. |
+| `submit_extract_residuals.sbatch` | 1 | Inference + residual dump. A40, short, 1h. ✅ done. |
+| `watch_jobs.sh` | monitor | Local live monitor. |
 
 ## Hardware crib sheet
 
@@ -239,47 +203,33 @@ SUMMARY.md updates and figures back regardless of flags.
 | V100 | 32 GB | 11 | older, FP64 ok | `--gres=gpu:v100:1` |
 | RTX 2080 Ti | 11 GB | 24 | small models, plentiful | `--gres=gpu:turing:1` |
 
-QoS levels on the `general` partition:
+QoS on the `general` partition:
 
 | QoS | Max time | Use for |
 |---|---|---|
 | `interactive` | 1 h | `sinteractive` only — do not `sbatch` with this |
 | `short` | 4 h | residual extraction, prior fit, sanity checks, smoke |
-| `medium` | 1.5 d | backbone training, single score-network run |
+| `medium` | 1.5 d | backbone, single diffusion training run |
 | `long` | 7 d | only if needed; lowest priority |
 
-CPUs are always allocated in multiples of 2; project default is
-`--cpus-per-task=4`. Adjust upward only if your dataloader is the bottleneck.
-
----
+CPUs allocate in multiples of 2; default `--cpus-per-task=4`.
 
 ## Storage tiers
 
-- `$HOME` — small quota, slow; OK for code + logs. Conda envs live under
-  `$HOME/.conda/envs/` by default (~3 GB for ours).
-- `staff-umbrella/<group>/<netid>/research-tud-data` — DAIC-recommended
-  research-data location, larger quota, snapshotted. This is what
-  `DAIC_DATA_DIR` points at; the `_common.sh` preamble symlinks
+- `$HOME` — small quota, slow. Code + logs. Conda env under `$HOME/.conda/envs/` (~3 GB).
+- `staff-umbrella/<group>/<netid>/research-tud-data` — research-data tier,
+  larger quota, snapshotted. `DAIC_DATA_DIR` points here; `_common.sh` symlinks
   `data/`, `results/checkpoints`, `results/residuals`, `results/prior_params`
-  into the project tree automatically on each job.
+  into the project tree per job.
 - `/tmp` on compute nodes — local NVMe scratch, evaporates at job end.
-  Useful for short-lived intermediates only.
 
-Never `sshfs` against the login nodes — overloads the shared filesystem.
-`rsync -avz --no-perms` (used by the helpers) is the supported path.
-
----
+Never `sshfs` against login nodes. Use `rsync -avz --no-perms` (the helpers do).
 
 ## Known DAIC quirks
 
-- **No public-key SSH.** Kerberos password every session. Use `eduVPN`
-  if you're off-campus.
-- **CPUs in pairs.** Slurm rounds `--cpus-per-task` up to an even number.
-- **Lmod uses `/opt/insy/modulefiles`.** `_common.sh` does `module use` for you.
-- **Kerberos tickets expire after 10 h.** `install_keytab` (one-time)
-  enables auto-renewal for unattended jobs.
-- **Multi-partition submission.** `--partition=insy,general` takes
-  whichever opens first; we default to `general` for portability.
-- **wandb network egress** is allowed by default. If your group restricts
-  it, flip `WANDB_MODE=offline` in `env.sh` and `wandb sync` from the
-  login node after each run.
+- **No public-key SSH** — Kerberos password every session. Use `eduVPN` off-campus.
+- **CPUs in pairs** — Slurm rounds `--cpus-per-task` up to an even number.
+- **Lmod at `/opt/insy/modulefiles`** — `_common.sh` does `module use` for you.
+- **Kerberos tickets expire after 10 h** — `install_keytab` enables auto-renewal.
+- **Multi-partition submission** — `--partition=insy,general` takes whichever opens first.
+- **wandb egress allowed by default** — if restricted, set `WANDB_MODE=offline` in `env.sh`.

@@ -31,8 +31,10 @@ The "c_0" / "c" naming follows the GAD paper.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Optional
 
 import numpy as np
+import torch
 
 from .prior import KroneckerPrior
 
@@ -173,3 +175,80 @@ def sample_prior(
     Z = rng.standard_normal(shape_batch + (prior.N, prior.H))
     Ct = np.sqrt(prior.sigma2) * Z
     return _rotate_from_eigenbasis(Ct, prior)
+
+
+# ─── Torch counterparts (training pipeline) ──────────────────────────────────
+
+
+@dataclass(frozen=True)
+class TorchPriorTensors:
+    """Pre-converted torch tensors for the prior (one device + dtype).
+
+    Construct once at the start of training; pass to sample_R_t_given_R0_torch
+    on every step to avoid converting V_S, V_T, theta from numpy each call.
+    """
+
+    V_S: torch.Tensor
+    V_T: torch.Tensor
+    theta: torch.Tensor
+
+
+def prior_to_torch(
+    prior: KroneckerPrior, device: torch.device, dtype: torch.dtype = torch.float32
+) -> TorchPriorTensors:
+    return TorchPriorTensors(
+        V_S=torch.as_tensor(prior.V_S, device=device, dtype=dtype),
+        V_T=torch.as_tensor(prior.V_T, device=device, dtype=dtype),
+        theta=torch.as_tensor(prior.theta, device=device, dtype=dtype),
+    )
+
+
+def _fcps_c_bar_torch(
+    t: torch.Tensor, schedule: FCPSSchedule
+) -> torch.Tensor:
+    """Per-element c̄(t) under FCPSSchedule. t shape: any."""
+    u = t / schedule.T
+    return schedule.c_min * t + (schedule.c_0 - schedule.c_min * schedule.T) * u.pow(
+        schedule.alpha + 1
+    )
+
+
+def sample_R_t_given_R0_torch(
+    R0: torch.Tensor,
+    t: torch.Tensor,
+    prior_t: TorchPriorTensors,
+    schedule: FCPSSchedule,
+    generator: Optional[torch.Generator] = None,
+) -> torch.Tensor:
+    """Sample R_t ~ p(R_t | R_0) under the GAD forward SDE — torch on-device.
+
+    Parameters
+    ----------
+    R0 : (B, N, H) torch tensor.
+    t  : (B,) torch tensor of per-sample diffusion times.
+    prior_t : pre-converted torch tensors from prior_to_torch.
+    schedule : FCPSSchedule (host-side floats; broadcasts to torch).
+    generator : optional torch.Generator for the noise term.
+
+    Returns
+    -------
+    R_t : (B, N, H) torch tensor on R0's device.
+    """
+    if R0.ndim != 3:
+        raise ValueError(f"R0 must be (B, N, H); got shape {tuple(R0.shape)}")
+    if t.shape != (R0.shape[0],):
+        raise ValueError(f"t shape {tuple(t.shape)} must be ({R0.shape[0]},)")
+
+    c_bar_t = _fcps_c_bar_torch(t, schedule)              # (B,)
+    c_bar_b = c_bar_t.view(-1, 1, 1)                       # (B, 1, 1)
+    theta_b = prior_t.theta.unsqueeze(0)                   # (1, N, H)
+
+    H_t = torch.exp(-theta_b * c_bar_b)                    # (B, N, H)
+    sigma2_t = (1.0 - torch.exp(-2.0 * theta_b * c_bar_b)) / theta_b  # (B, N, H)
+
+    # Rotate to eigenbasis: V_S^T R0 V_T.
+    C0 = torch.einsum("ki,bih,hj->bkj", prior_t.V_S.T, R0, prior_t.V_T)
+    Z = torch.randn(R0.shape, generator=generator, device=R0.device, dtype=R0.dtype)
+    Ct = H_t * C0 + sigma2_t.sqrt() * Z
+    # Rotate back: V_S C V_T^T.
+    return torch.einsum("ik,bkh,hj->bih", prior_t.V_S, Ct, prior_t.V_T.T)

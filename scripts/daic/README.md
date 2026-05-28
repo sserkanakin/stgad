@@ -133,11 +133,30 @@ To be added: `scripts/daic/submit_forward_sanity.sbatch` once
 `src/diffusion/forward_fcps.py` lands. Will run the three forward-sampler sanity
 checks + per-dataset mixing diagnostic on CPU.
 
-## Phase 4 — Denoiser training (Stage C, coming)
+## Phase 4 — Denoiser training (Stage C) 🚧
 
-To be added: `scripts/daic/submit_train_diffusion.sbatch` once UGnet + training
-loop land. A40, medium, 24h budget. Pre-create `logs/train_diffusion/` before
-first submission.
+Trains the R0Denoiser (UGnet-based) via the GAD forward FCPS + DDIM reverse
+plumbing. A40, medium QoS, 24 h budget.
+
+```bash
+# Single run
+sbatch --job-name="diff-metrla-s0" \
+       --export=DATASET=metrla,SEED=0 \
+       scripts/daic/submit_train_diffusion.sbatch
+
+# 10-job sweep (5 seeds × 2 headline datasets)
+for ds in metrla pems08f; do
+  for seed in 0 1 2 3 4; do
+    sbatch --job-name="diff-${ds}-s${seed}" \
+           --export=DATASET=$ds,SEED=$seed \
+           scripts/daic/submit_train_diffusion.sbatch
+  done
+done
+```
+
+Optional overrides via `--export`: `EPOCHS`, `BATCH_SIZE`, `LR`, `D_H`, `C_0`,
+`ALPHA`, `EXTRA_FLAGS` (passed verbatim to the python script). The sbatch
+auto-creates `logs/train-diffusion/` on first invocation.
 
 ## Phase 5 — Evaluation (Stage D, coming)
 
@@ -192,6 +211,7 @@ figures come back regardless of flags.
 | `smoke_test.py` | smoke | Python driver behind submit_smoke. |
 | `submit_train_backbone.sbatch` | 1 | GWN training. A40, medium, 12h. ✅ done. |
 | `submit_extract_residuals.sbatch` | 1 | Inference + residual dump. A40, short, 1h. ✅ done. |
+| `submit_train_diffusion.sbatch` | 4 | Diffusion denoiser training. A40, medium, 24h. |
 | `watch_jobs.sh` | monitor | Local live monitor. |
 
 ## Hardware crib sheet

@@ -68,6 +68,10 @@ if $RESIDS; then
   _pull "residuals" "${DAIC_DATA_DIR}/residuals/" results/residuals
 fi
 
+# Evaluation outputs (metrics JSON, comparison tables, figures, small sample
+# bank) live in the project dir, not the data dir. All small — pull wholesale.
+_pull "eval results" "${DAIC_PROJECT_DIR}/results/eval/" results/eval
+
 echo "← Pulling experiments tree (figures + JSON, no large arrays) ..."
 mkdir -p experiments
 "${RSYNC_BASE[@]}" \

@@ -42,26 +42,39 @@ WHICH="${WHICH:-best}"
 RUN_EVAL="${RUN_EVAL:-1}"
 EXTRA_FLAGS="${EXTRA_FLAGS:-}"
 
-# Resolve the checkpoint dir. If CKPT_DIR is unset, pick the single run dir for
-# this dataset/seed that contains a best.pt (fail loudly if 0 or >1 match).
+# Resolve the checkpoint dir. If CKPT_DIR is unset, find run dirs for this
+# dataset/seed that contain a best.pt and PREFER the real (non-smoke) one — so a
+# leftover smoke checkpoint doesn't have to be cleaned up before a full eval. A
+# smoke checkpoint (config.json has "smoke": true) is used only if no real one
+# exists, with a warning. Fails loudly on 0 matches or >1 within a tier.
 if [ -z "${CKPT_DIR:-}" ]; then
   shopt -s nullglob
   matches=(results/checkpoints/diffusion/diff_gwn_"${DATASET}"_seed"${SEED}"_*)
-  resolved=()
+  real=(); smoke=()
   for d in "${matches[@]}"; do
-    [ -f "${d}/best.pt" ] && resolved+=("${d}")
+    [ -f "${d}/best.pt" ] || continue
+    if grep -q '"smoke": *true' "${d}/config.json" 2>/dev/null; then
+      smoke+=("${d}")
+    else
+      real+=("${d}")
+    fi
   done
-  if [ "${#resolved[@]}" -eq 0 ]; then
+  if [ "${#real[@]}" -ge 1 ]; then
+    tier=("${real[@]}"); label="real"
+  elif [ "${#smoke[@]}" -ge 1 ]; then
+    tier=("${smoke[@]}"); label="smoke"
+    echo "WARNING: only a smoke checkpoint found — eval numbers will be meaningless." >&2
+  else
     echo "ERROR: no checkpoint dir with best.pt for ${DATASET} seed ${SEED}." >&2
     echo "       Train first, or pass CKPT_DIR=<dir> via --export." >&2
     exit 1
   fi
-  if [ "${#resolved[@]}" -gt 1 ]; then
-    echo "ERROR: multiple checkpoint dirs match; set CKPT_DIR explicitly:" >&2
-    printf '       %s\n' "${resolved[@]}" >&2
+  if [ "${#tier[@]}" -gt 1 ]; then
+    echo "ERROR: multiple ${label} checkpoint dirs match; set CKPT_DIR explicitly:" >&2
+    printf '       %s\n' "${tier[@]}" >&2
     exit 1
   fi
-  CKPT_DIR="${resolved[0]}"
+  CKPT_DIR="${tier[0]}"
 fi
 
 scontrol update job="${SLURM_JOB_ID}" JobName="eval-${DATASET}-s${SEED}" 2>/dev/null || true

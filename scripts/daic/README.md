@@ -174,6 +174,17 @@ runs the CPU evaluate/diagnostics/figures chain), `EXTRA_FLAGS`. Outputs land in
 each metric and figure means is documented in `scripts/eval/README.md`. The log
 dir `logs/eval-samples/` is created by the sbatch on first submit.
 
+**Pipeline helpers** (thin wrappers that just call `sbatch --export=...` and
+chain eval after training with `--dependency=afterok:`):
+
+```bash
+# 1. Smoke each step first — short QoS, 15-min walltime, EXTRA_FLAGS=--smoke:
+bash scripts/daic/submit_smoke_pipeline.sh metrla        # train→eval chain, one dataset
+
+# 2. Full runs once smokes pass (medium QoS / 24h training, K=100 test eval):
+bash scripts/daic/submit_full_pipeline.sh "metrla pems08f pemsbay"
+```
+
 ## Monitoring (any phase)
 
 ```bash
@@ -224,6 +235,8 @@ figures come back regardless of flags.
 | `submit_extract_residuals.sbatch` | 1 | Inference + residual dump. A40, short, 1h. ✅ done. |
 | `submit_train_diffusion.sbatch` | 4 | Diffusion denoiser training. A40, medium, 24h. |
 | `submit_generate_samples.sbatch` | 5 | Sampling + scoring + figures. A40, short, 4h. |
+| `submit_smoke_pipeline.sh` | 5 | Wrapper: smoke train→eval chain (one dataset). |
+| `submit_full_pipeline.sh` | 5 | Wrapper: full train→eval chain (many datasets). |
 | `watch_jobs.sh` | monitor | Local live monitor. |
 
 ## Hardware crib sheet

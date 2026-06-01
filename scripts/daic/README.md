@@ -158,10 +158,21 @@ Optional overrides via `--export`: `EPOCHS`, `BATCH_SIZE`, `LR`, `D_H`, `C_0`,
 `ALPHA`, `EXTRA_FLAGS` (passed verbatim to the python script). The sbatch
 auto-creates `logs/train-diffusion/` on first invocation.
 
-## Phase 5 — Evaluation (Stage D, coming)
+## Phase 5 — Evaluation (Stage D) 🚧
 
-To be added: `scripts/daic/submit_eval_diffusion.sbatch`. CRPS / MAE / PIT over
-K=16 reverse samples per test window.
+Generate K reverse samples per window, score them, and build the comparison
+tables + figures in one job (auto-discovers the trained checkpoint):
+
+```bash
+sbatch --export=DATASET=metrla,SEED=0,SPLIT=test scripts/daic/submit_generate_samples.sbatch
+```
+
+Optional `--export` knobs: `K` (default 100), `N_STEPS` (100), `ETA` (1.0),
+`WHICH` (best|last), `CKPT_DIR` (override auto-discovery), `RUN_EVAL` (1|0 — also
+runs the CPU evaluate/diagnostics/figures chain), `EXTRA_FLAGS`. Outputs land in
+`results/eval/${DATASET}/` (metrics JSON, `comparison_*.md/.csv`, figures). What
+each metric and figure means is documented in `scripts/eval/README.md`. The log
+dir `logs/eval-samples/` is created by the sbatch on first submit.
 
 ## Monitoring (any phase)
 
@@ -212,6 +223,7 @@ figures come back regardless of flags.
 | `submit_train_backbone.sbatch` | 1 | GWN training. A40, medium, 12h. ✅ done. |
 | `submit_extract_residuals.sbatch` | 1 | Inference + residual dump. A40, short, 1h. ✅ done. |
 | `submit_train_diffusion.sbatch` | 4 | Diffusion denoiser training. A40, medium, 24h. |
+| `submit_generate_samples.sbatch` | 5 | Sampling + scoring + figures. A40, short, 4h. |
 | `watch_jobs.sh` | monitor | Local live monitor. |
 
 ## Hardware crib sheet

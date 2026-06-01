@@ -250,5 +250,7 @@ def sample_R_t_given_R0_torch(
     C0 = torch.einsum("ki,bih,hj->bkj", prior_t.V_S.T, R0, prior_t.V_T)
     Z = torch.randn(R0.shape, generator=generator, device=R0.device, dtype=R0.dtype)
     Ct = H_t * C0 + sigma2_t.sqrt() * Z
-    # Rotate back: V_S C V_T^T.
-    return torch.einsum("ik,bkh,hj->bih", prior_t.V_S, Ct, prior_t.V_T.T)
+    # Rotate back: V_S C V_T^T. Output index is `bij` (sum over the spatial mode
+    # k and the temporal mode h); writing `bih` would reuse h as the output time
+    # index and collapse V_T.T into a column-sum, scrambling the temporal basis.
+    return torch.einsum("ik,bkh,hj->bij", prior_t.V_S, Ct, prior_t.V_T.T)

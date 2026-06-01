@@ -14,12 +14,15 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
+import torch
 from scipy import stats
 
 from src.diffusion.forward_fcps import (
     FCPSSchedule,
     ULSchedule,
+    prior_to_torch,
     sample_R_t_given_R0,
+    sample_R_t_given_R0_torch,
     sample_prior,
 )
 from src.diffusion.prior import KroneckerPrior, load_prior
@@ -132,6 +135,58 @@ def test_real_data_per_coord_variance(dataset):
     p99 = float(np.quantile(rel, 0.99))
     assert median_rel < 0.05, f"median rel var err {median_rel:.3f} ≥ 0.05"
     assert p99 < 0.15, f"99th-pct rel var err {p99:.3f} ≥ 0.15"
+
+
+def test_torch_sampler_stationary_cov_matches_kron():
+    """Regression: the *torch* forward sampler must match N(0, Σ_T⊗Σ_S) at t=T.
+
+    Guards the eigenbasis rotate-back einsum in sample_R_t_given_R0_torch. A wrong
+    output index (e.g. `->bih` instead of `->bij`) collapses V_T and scrambles the
+    temporal covariance — caught here but not by the numpy-only tests above.
+    """
+    prior = _toy_prior()
+    sched = FCPSSchedule(c_min=0.05, c_0=500.0, alpha=7.0, T=1.0)
+    prior_t = prior_to_torch(prior, device=torch.device("cpu"), dtype=torch.float64)
+
+    n = 20000
+    R0 = torch.zeros((n, prior.N, prior.H), dtype=torch.float64)
+    t = torch.full((n,), sched.T, dtype=torch.float64)
+    g = torch.Generator().manual_seed(123)
+    Rt = sample_R_t_given_R0_torch(R0, t, prior_t, sched, generator=g).numpy()
+
+    R_flat = Rt.transpose(0, 2, 1).reshape(n, prior.N * prior.H)
+    cov_emp = np.cov(R_flat, rowvar=False)
+
+    Sigma_S = prior.V_S @ np.diag(1.0 / (prior.lam_S + prior.gamma)) @ prior.V_S.T
+    Sigma_T = prior.V_T @ np.diag(prior.mu_T) @ prior.V_T.T
+    cov_true = np.kron(Sigma_T, Sigma_S)
+
+    rel_err = np.linalg.norm(cov_emp - cov_true) / np.linalg.norm(cov_true)
+    assert rel_err < 0.05, f"torch sampler cov rel err {rel_err:.3f} ≥ 0.05"
+
+
+def test_torch_and_numpy_samplers_agree_in_distribution():
+    """Torch and numpy forward samplers must produce the same marginal variance."""
+    prior = _toy_prior(seed=3)
+    sched = FCPSSchedule(c_min=0.05, c_0=50.0, alpha=7.0, T=1.0)
+    prior_t = prior_to_torch(prior, device=torch.device("cpu"), dtype=torch.float64)
+    n, t = 20000, 0.5
+
+    rng = np.random.default_rng(0)
+    R0 = rng.standard_normal((1, prior.N, prior.H))
+    Rt_np = sample_R_t_given_R0(
+        np.repeat(R0, n, axis=0), t=t, prior=prior, schedule=sched, rng=rng
+    )
+    g = torch.Generator().manual_seed(0)
+    Rt_t = sample_R_t_given_R0_torch(
+        torch.as_tensor(np.repeat(R0, n, axis=0)), torch.full((n,), t, dtype=torch.float64),
+        prior_t, sched, generator=g,
+    ).numpy()
+
+    var_np = Rt_np.var(axis=0)
+    var_t = Rt_t.var(axis=0)
+    rel = np.abs(var_t - var_np) / np.clip(var_np, 1e-8, None)
+    assert rel.max() < 0.1, f"torch/numpy per-cell variance disagree, max rel {rel.max():.3f}"
 
 
 def test_uls_schedule_basic_shape():

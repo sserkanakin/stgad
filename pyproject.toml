@@ -18,6 +18,7 @@ dependencies = [
     "tqdm",
     "matplotlib",
     "einops",
+    "easydict",   # required by the vendored DiffSTG UGnet (src/diffusion/denoiser.py)
 ]
 
 [project.optional-dependencies]

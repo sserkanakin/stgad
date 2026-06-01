@@ -18,6 +18,11 @@
 #   bash scripts/daic/sync_to_daic.sh --checkpoints   # just backbone ckpts
 #   bash scripts/daic/sync_to_daic.sh --residuals     # just extracted residuals
 #   bash scripts/daic/sync_to_daic.sh --priors        # just fitted prior YAMLs
+#   bash scripts/daic/sync_to_daic.sh --third-party    # vendored third_party/ (gitignored)
+#
+# third_party/ is gitignored (see THIRD_PARTY.md) — it does NOT travel via git,
+# so it must be pushed here (or cloned on DAIC). Required for diffusion training
+# (DiffSTG UGnet) and backbone (Graph-WaveNet). .git is excluded from the push.
 
 set -euo pipefail
 
@@ -32,6 +37,7 @@ PUSH_PROCESSED=true
 PUSH_CKPTS=true
 PUSH_RESIDUALS=false
 PUSH_PRIORS=false
+PUSH_THIRDPARTY=false
 
 if [ "${1:-}" = "--all" ]; then
   PUSH_RESIDUALS=true
@@ -46,8 +52,9 @@ elif [ -n "${1:-}" ]; then
       --checkpoints) PUSH_CKPTS=true ;;
       --residuals)   PUSH_RESIDUALS=true ;;
       --priors)      PUSH_PRIORS=true ;;
+      --third-party) PUSH_THIRDPARTY=true ;;
       *) echo "Unknown flag: $arg" >&2
-         echo "Use one of: --all --raw --processed --checkpoints --residuals --priors" >&2
+         echo "Use one of: --all --raw --processed --checkpoints --residuals --priors --third-party" >&2
          exit 2 ;;
     esac
   done
@@ -79,6 +86,13 @@ fi
 if $PUSH_PRIORS && [ -d results/prior_params ]; then
   echo "→ results/prior_params → ${REMOTE}:${DAIC_DATA_DIR}/prior_params"
   "${RSYNC_BASE[@]}" results/prior_params/ "${REMOTE}:${DAIC_DATA_DIR}/prior_params/"
+fi
+if $PUSH_THIRDPARTY && [ -d third_party ]; then
+  # third_party lives in the PROJECT dir on DAIC (it's code), not the data dir.
+  # Exclude .git / __pycache__ — DAIC only needs the source files.
+  echo "→ third_party → ${REMOTE}:${DAIC_PROJECT_DIR}/third_party"
+  "${RSYNC_BASE[@]}" --exclude='.git' --exclude='__pycache__' \
+    third_party/ "${REMOTE}:${DAIC_PROJECT_DIR}/third_party/"
 fi
 
 echo

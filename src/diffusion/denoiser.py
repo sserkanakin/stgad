@@ -46,7 +46,6 @@ import easydict  # noqa: E402
 
 from algorithm.diffstg.ugnet import UGnet as _UGnet  # noqa: E402
 
-
 # Scale factor mapping continuous t ∈ [0, 1] to UGnet's discrete-step range.
 # UGnet's sinusoidal embedding (from DDPM) was designed for integer t in [0, N]
 # with N≈1000. We multiply by this scale so the cos/sin frequencies cover the

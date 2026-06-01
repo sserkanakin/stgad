@@ -19,6 +19,11 @@ SEED="${2:-0}"
 
 cd "$(cd "$(dirname "${BASH_SOURCE[0]}")"/../.. && pwd)"
 
+# Slurm opens each job's --output file BEFORE the job script runs, so the log
+# dirs must already exist at submission time (the mkdir inside the .sbatch body
+# is too late for the first-ever run). Create them here on the login node.
+mkdir -p logs/train-diffusion logs/eval-samples
+
 for ds in ${DATASETS}; do
   train_id=$(sbatch --parsable \
     --job-name="diff-${ds}-s${SEED}" \

@@ -171,8 +171,12 @@ Optional `--export` knobs: `K` (default 100), `N_STEPS` (100), `ETA` (1.0),
 `WHICH` (best|last), `CKPT_DIR` (override auto-discovery), `RUN_EVAL` (1|0 — also
 runs the CPU evaluate/diagnostics/figures chain), `EXTRA_FLAGS`. Outputs land in
 `results/eval/${DATASET}/` (metrics JSON, `comparison_*.md/.csv`, figures). What
-each metric and figure means is documented in `scripts/eval/README.md`. The log
-dir `logs/eval-samples/` is created by the sbatch on first submit.
+each metric and figure means is documented in `scripts/eval/README.md`.
+
+> **First-time gotcha:** Slurm opens the job's `--output` file before the script
+> runs, so its log dir must already exist or the job dies at startup *with no
+> log*. Run `mkdir -p logs/eval-samples logs/train-diffusion` once before a
+> direct `sbatch`. The pipeline helpers below do this for you.
 
 **Pipeline helpers** (thin wrappers that just call `sbatch --export=...` and
 chain eval after training with `--dependency=afterok:`):

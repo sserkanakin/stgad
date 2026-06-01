@@ -24,8 +24,11 @@
 #           WHICH (best|last, default best), RUN_EVAL (1|0, default 1 — also run
 #           the CPU evaluate/diagnostics/figures chain), EXTRA_FLAGS.
 #
-# NB: the log dir is created below; if submitting from a shell, this exists
-# before the first run. Mirrors submit_train_diffusion.sbatch conventions.
+# IMPORTANT: Slurm opens the --output file (logs/eval-samples/...) BEFORE this
+# script runs, so that directory must already exist or the job fails at startup
+# with no log. The pipeline helpers (submit_*_pipeline.sh) mkdir it for you; for
+# a direct submit, run once first:  mkdir -p logs/eval-samples
+# The mkdir below only helps subsequent runs, not the first.
 
 set -euo pipefail
 mkdir -p logs/eval-samples

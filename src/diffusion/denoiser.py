@@ -24,6 +24,7 @@ Notes:
   - We import UGnet from third_party/DiffSTG (see THIRD_PARTY.md). The path
     insertion is local to this module.
   - Output is R̂₀ (Tweedie target), not ε. UGnet's architecture is reused
+  
     unchanged; the difference is purely in the training loss target.
   - X history conditioning is not used yet; it can be added later by widening
     the channel dim of x_masked (F → 1 + extra_cond_channels).

@@ -1,28 +1,24 @@
 #!/bin/bash
-# Push data files (NOT code) to DAIC. Run from your local machine, repo root.
+# push data files (not code) to daic. run from your local machine, repo root.
 #
-# Code travels via git push / git pull on DAIC. This helper only pushes the
-# large binary artefacts that aren't in git: raw .h5 + adjacency pickles,
-# processed .npz + scalers, trained backbone checkpoints, and (optionally)
-# extracted residuals or fitted prior YAMLs.
-#
-# Defaults (most common workflow): pushes raw + processed + checkpoints.
-# Residuals + prior_params are rebuilt on DAIC by sbatch jobs, so they're
-# skipped by default. Use --all to push them too.
+# code travels via git. this only pushes the large gitignored artefacts:
+# raw + processed data, trained backbone/diffusion checkpoints, and optionally
+# residuals or the vendored third_party/.
 #
 #   source scripts/daic/env.sh
-#   bash scripts/daic/sync_to_daic.sh                 # raw + processed + checkpoints
-#   bash scripts/daic/sync_to_daic.sh --all           # also push residuals + priors
-#   bash scripts/daic/sync_to_daic.sh --raw           # just raw .h5
-#   bash scripts/daic/sync_to_daic.sh --processed     # just processed .npz
-#   bash scripts/daic/sync_to_daic.sh --checkpoints   # just backbone ckpts
-#   bash scripts/daic/sync_to_daic.sh --residuals     # just extracted residuals
-#   bash scripts/daic/sync_to_daic.sh --priors        # just fitted prior YAMLs
-#   bash scripts/daic/sync_to_daic.sh --third-party    # vendored third_party/ (gitignored)
+#   bash scripts/daic/sync_to_daic.sh                 # raw + processed + models
+#   bash scripts/daic/sync_to_daic.sh --all           # also push residuals
+#   bash scripts/daic/sync_to_daic.sh --raw           # just raw
+#   bash scripts/daic/sync_to_daic.sh --processed     # just processed
+#   bash scripts/daic/sync_to_daic.sh --checkpoints   # backbone + diffusion ckpts
+#   bash scripts/daic/sync_to_daic.sh --residuals     # extracted residuals
+#   bash scripts/daic/sync_to_daic.sh --third-party   # vendored third_party/
 #
-# third_party/ is gitignored (see THIRD_PARTY.md) — it does NOT travel via git,
-# so it must be pushed here (or cloned on DAIC). Required for diffusion training
-# (DiffSTG UGnet) and backbone (Graph-WaveNet). .git is excluded from the push.
+# rsync mirrors the local tree, so the per-dataset layout (data/processed/<ds>/)
+# propagates as-is. it does NOT delete remote files, so if you reorganised the
+# layout, clean up the old flat files on daic once:
+#   ssh "$DAIC_NETID@login.daic.tudelft.nl" \
+#     "find $DAIC_DATA_DIR/processed -maxdepth 1 -type f -delete"
 
 set -euo pipefail
 
@@ -31,19 +27,16 @@ if [ -z "${DAIC_NETID:-}" ]; then
   exit 1
 fi
 
-# Default: push raw + processed + checkpoints. Residuals + priors off.
 PUSH_RAW=true
 PUSH_PROCESSED=true
 PUSH_CKPTS=true
 PUSH_RESIDUALS=false
-PUSH_PRIORS=false
 PUSH_THIRDPARTY=false
 
 if [ "${1:-}" = "--all" ]; then
   PUSH_RESIDUALS=true
-  PUSH_PRIORS=true
 elif [ -n "${1:-}" ]; then
-  # Specific-target mode: turn everything off, then enable only the named one(s).
+  # specific-target mode: turn everything off, enable only the named ones.
   PUSH_RAW=false; PUSH_PROCESSED=false; PUSH_CKPTS=false
   for arg in "$@"; do
     case "$arg" in
@@ -51,10 +44,9 @@ elif [ -n "${1:-}" ]; then
       --processed)   PUSH_PROCESSED=true ;;
       --checkpoints) PUSH_CKPTS=true ;;
       --residuals)   PUSH_RESIDUALS=true ;;
-      --priors)      PUSH_PRIORS=true ;;
       --third-party) PUSH_THIRDPARTY=true ;;
       *) echo "Unknown flag: $arg" >&2
-         echo "Use one of: --all --raw --processed --checkpoints --residuals --priors --third-party" >&2
+         echo "Use: --all --raw --processed --checkpoints --residuals --third-party" >&2
          exit 2 ;;
     esac
   done
@@ -64,7 +56,7 @@ REMOTE="${DAIC_NETID}@login.daic.tudelft.nl"
 RSYNC_BASE=(rsync --progress -avz --no-perms \
             -e 'ssh -o ServerAliveInterval=30 -o ServerAliveCountMax=10')
 
-echo "→ Code: NOT pushed (use git push / git pull instead)."
+echo "→ code: NOT pushed (use git push / git pull instead)."
 echo
 
 if $PUSH_RAW && [ -d data/raw ]; then
@@ -75,26 +67,25 @@ if $PUSH_PROCESSED && [ -d data/processed ]; then
   echo "→ data/processed → ${REMOTE}:${DAIC_DATA_DIR}/processed"
   "${RSYNC_BASE[@]}" data/processed/ "${REMOTE}:${DAIC_DATA_DIR}/processed/"
 fi
-if $PUSH_CKPTS && [ -d results/checkpoints ]; then
-  echo "→ results/checkpoints → ${REMOTE}:${DAIC_DATA_DIR}/checkpoints"
-  "${RSYNC_BASE[@]}" results/checkpoints/ "${REMOTE}:${DAIC_DATA_DIR}/checkpoints/"
+if $PUSH_CKPTS; then
+  for stage in backbone diffusion; do
+    if [ -d "results/${stage}" ]; then
+      echo "→ results/${stage} → ${REMOTE}:${DAIC_DATA_DIR}/${stage}"
+      "${RSYNC_BASE[@]}" "results/${stage}/" "${REMOTE}:${DAIC_DATA_DIR}/${stage}/"
+    fi
+  done
 fi
 if $PUSH_RESIDUALS && [ -d results/residuals ]; then
   echo "→ results/residuals → ${REMOTE}:${DAIC_DATA_DIR}/residuals"
   "${RSYNC_BASE[@]}" results/residuals/ "${REMOTE}:${DAIC_DATA_DIR}/residuals/"
 fi
-if $PUSH_PRIORS && [ -d results/prior_params ]; then
-  echo "→ results/prior_params → ${REMOTE}:${DAIC_DATA_DIR}/prior_params"
-  "${RSYNC_BASE[@]}" results/prior_params/ "${REMOTE}:${DAIC_DATA_DIR}/prior_params/"
-fi
 if $PUSH_THIRDPARTY && [ -d third_party ]; then
-  # third_party lives in the PROJECT dir on DAIC (it's code), not the data dir.
-  # Exclude .git / __pycache__ — DAIC only needs the source files.
+  # third_party is code-like but gitignored, so it lives in the project dir.
   echo "→ third_party → ${REMOTE}:${DAIC_PROJECT_DIR}/third_party"
   "${RSYNC_BASE[@]}" --exclude='.git' --exclude='__pycache__' \
     third_party/ "${REMOTE}:${DAIC_PROJECT_DIR}/third_party/"
 fi
 
 echo
-echo "Data sync complete."
-echo "Reminder: code goes via git. On DAIC:  cd ~/research-tud && git pull"
+echo "data sync complete."
+echo "reminder: code goes via git. on daic:  cd ~/research-tud && git pull"

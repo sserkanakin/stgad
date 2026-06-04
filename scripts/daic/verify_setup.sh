@@ -89,14 +89,15 @@ check("scipy", "import scipy")
 check("yaml", "import yaml")
 check("h5py", "import h5py")
 check("wandb", "import wandb")
-check("src", "import src; import src.diffusion.sde as sde; import src.diffusion.prior_fit as pf")
+check("easydict", "import easydict")
+check("src.diffusion", "import src.diffusion.forward_fcps, src.diffusion.prior, src.diffusion.reverse, src.diffusion.denoiser")
+check("src.data + paths", "import src.data.adjacency, src.data.dataset; from src.utils import paths")
 sys.exit(status)
 PY
 
 echo
 echo "── data symlinks ───────────────────────────────────────────────"
-# prior_params is tracked in git (small YAMLs), not symlinked.
-for sub in data/raw data/processed results/checkpoints results/residuals; do
+for sub in data/raw data/processed results/backbone results/diffusion results/residuals results/eval; do
   if [ -L "$sub" ] || [ -d "$sub" ]; then
     target="$(readlink -f "$sub" 2>/dev/null || echo "$sub")"
     ok "$sub → $target"
@@ -108,12 +109,12 @@ done
 echo
 echo "── data files ──────────────────────────────────────────────────"
 declare -a CHECK_FILES=(
-  "data/raw/metr-la.h5"
-  "data/raw/pems-bay.h5"
-  "data/processed/metrla_train.npz"
-  "data/processed/pemsbay_train.npz"
-  "data/processed/metrla_scaler.yaml"
-  "results/checkpoints"  # directory; per-run subdirs created during training
+  "data/raw/metrla/metr-la.h5"
+  "data/raw/pemsbay/pems-bay.h5"
+  "data/processed/metrla/train.npz"
+  "data/processed/pemsbay/train.npz"
+  "data/processed/metrla/scaler.yaml"
+  "results/backbone"  # directory; per-run subdirs created during training
 )
 for f in "${CHECK_FILES[@]}"; do
   if [ -e "$f" ]; then
@@ -137,9 +138,9 @@ else
 fi
 
 echo
-echo "── unit tests (subset) ─────────────────────────────────────────"
-if pytest -q tests/test_sde.py tests/test_prior_fit.py 2>&1 | tail -5; then
-  ok "test_sde + test_prior_fit pass"
+echo "── unit tests ──────────────────────────────────────────────────"
+if pytest -q tests/ 2>&1 | tail -5; then
+  ok "tests/ pass"
 else
   fail "unit tests failed"
 fi

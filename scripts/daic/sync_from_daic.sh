@@ -1,17 +1,16 @@
 #!/bin/bash
-# Pull results back from DAIC. Run from your local machine, repo root.
+# pull results back from daic. run from your local machine, repo root.
 #
-# Pulls back checkpoints, residuals, fitted prior YAMLs, figures, and JSON
-# results. Does NOT touch code (use git for that).
+# pulls backbone + diffusion checkpoints, residuals, eval outputs, and slurm
+# logs. does NOT touch code (use git for that).
 #
 #   source scripts/daic/env.sh
 #   bash scripts/daic/sync_from_daic.sh
 #
-# Flags:
-#   --no-checkpoints     # skip large checkpoint files
+# flags:
+#   --no-checkpoints     # skip backbone + diffusion checkpoints
 #   --no-residuals       # skip residual .npz files
-#   --no-priors          # skip fitted prior YAMLs
-#   --no-logs            # skip Slurm logs
+#   --no-logs            # skip slurm logs
 
 set -uo pipefail   # not -e: rsync exit 23/24 (missing files) must not abort
 
@@ -22,13 +21,11 @@ fi
 
 CKPTS=true
 RESIDS=true
-PRIORS=true
 LOGS=true
 for arg in "$@"; do
   case "$arg" in
     --no-checkpoints) CKPTS=false ;;
     --no-residuals)   RESIDS=false ;;
-    --no-priors)      PRIORS=false ;;
     --no-logs)        LOGS=false ;;
     *) echo "Unknown flag: $arg" >&2; exit 2 ;;
   esac
@@ -56,31 +53,20 @@ _pull() {
   fi
 }
 
-if $PRIORS; then
-  _pull "prior params" "${DAIC_DATA_DIR}/prior_params/" results/prior_params
-fi
-
 if $CKPTS; then
-  _pull "checkpoints" "${DAIC_DATA_DIR}/checkpoints/" results/checkpoints
+  _pull "backbone checkpoints"  "${DAIC_DATA_DIR}/backbone/"  results/backbone
+  _pull "diffusion checkpoints" "${DAIC_DATA_DIR}/diffusion/" results/diffusion
 fi
 
 if $RESIDS; then
   _pull "residuals" "${DAIC_DATA_DIR}/residuals/" results/residuals
 fi
 
-# Evaluation outputs (metrics JSON, comparison tables, figures, small sample
-# bank) live in the project dir, not the data dir. All small — pull wholesale.
-_pull "eval results" "${DAIC_PROJECT_DIR}/results/eval/" results/eval
-
-echo "← Pulling experiments tree (figures + JSON, no large arrays) ..."
-mkdir -p experiments
-"${RSYNC_BASE[@]}" \
-  --include='*.png' --include='*.json' --include='*.md' --include='*.yaml' \
-  --include='*/' --exclude='*' \
-  "${REMOTE}:${DAIC_PROJECT_DIR}/experiments/" experiments/ || true
+# eval outputs (metrics json, tables, figures, small sample bank).
+_pull "eval results" "${DAIC_DATA_DIR}/eval/" results/eval
 
 if $LOGS; then
-  _pull "Slurm logs" "${DAIC_PROJECT_DIR}/logs/" logs
+  _pull "slurm logs" "${DAIC_PROJECT_DIR}/logs/" logs
 fi
 
 echo

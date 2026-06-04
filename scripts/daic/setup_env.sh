@@ -102,20 +102,18 @@ if torch.cuda.is_available():
     print(f"  capability: {torch.cuda.get_device_capability(0)}")
 PY
 
-# Set up the artefact directories and symlinks.
-mkdir -p "${DAIC_DATA_DIR}"/{raw,processed,checkpoints,residuals,prior_params,wandb}
+# set up the artefact directories and symlinks (match _common.sh).
+mkdir -p "${DAIC_DATA_DIR}"/{raw,processed,backbone,diffusion,residuals,eval,wandb}
 mkdir -p "${DAIC_PROJECT_DIR}/logs"
 
 cd "${DAIC_PROJECT_DIR}"
 mkdir -p data results
-ln -sfn "${DAIC_DATA_DIR}/raw"          data/raw
-ln -sfn "${DAIC_DATA_DIR}/processed"    data/processed
-ln -sfn "${DAIC_DATA_DIR}/checkpoints"  results/checkpoints
-ln -sfn "${DAIC_DATA_DIR}/residuals"    results/residuals
-# NOTE: results/prior_params is intentionally NOT symlinked. It's small
-# (~1 KB per YAML), tracked in git, and is the canonical fit artefact.
-# fit_prior.sbatch writes here; commit + push afterwards to keep the
-# repo's prior YAMLs in sync with what was fit on the cluster.
+ln -sfn "${DAIC_DATA_DIR}/raw"        data/raw
+ln -sfn "${DAIC_DATA_DIR}/processed"  data/processed
+ln -sfn "${DAIC_DATA_DIR}/backbone"   results/backbone
+ln -sfn "${DAIC_DATA_DIR}/diffusion"  results/diffusion
+ln -sfn "${DAIC_DATA_DIR}/residuals"  results/residuals
+ln -sfn "${DAIC_DATA_DIR}/eval"       results/eval
 
 echo
 echo "[bonus] wandb login (one-time; only needed for live dashboards):"

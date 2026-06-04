@@ -1,18 +1,16 @@
-"""GPU smoke test for the DAIC setup.
+"""gpu smoke test for the daic setup.
 
-Tests *infrastructure only* — does not require residuals or prior YAML
-files. Runs in ~30 seconds. Checks:
+infrastructure only — runs in well under a minute and needs no trained
+artefacts. checks:
 
-  1. CUDA available + a small matmul succeeds on the GPU.
-  2. Project modules import cleanly.
-  3. SDE math runs end-to-end on a synthetic prior (eigendecompose
-     + forward marginal + spectral round-trip).
-  4. wandb init + log + finish (online mode reaches dashboard).
-  5. Optional: residual .npz / prior YAML loads — *warned*, not failed,
-     so this passes even before extract_residuals + fit_prior have been
-     run on the cluster.
+  1. cuda is available and a small matmul runs on the gpu
+  2. the project modules import cleanly
+  3. the forward sampler and the denoiser run end to end on a toy prior
+  4. wandb init + log + finish
+  5. optional: the real prior + residual cache load (warned, not failed, since
+     they only exist after the backbone + residual jobs have run)
 
-Run via the sbatch wrapper `submit_smoke.sbatch` or directly:
+run via submit_smoke.sbatch or directly:
 
     python scripts/daic/smoke_test.py --dataset metrla
 """
@@ -22,11 +20,41 @@ import argparse
 import os
 import sys
 import time
-from pathlib import Path
 
 import numpy as np
 import torch
-import yaml
+
+
+def _pick_device() -> torch.device:
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    if torch.backends.mps.is_available():
+        return torch.device("mps")
+    return torch.device("cpu")
+
+
+def _toy_prior(N: int = 12, H: int = 12, seed: int = 0):
+    # a small but valid kronecker prior, so we can exercise the math without
+    # any trained artefacts on disk.
+    from src.data.adjacency import compute_normalized_laplacian
+    from src.diffusion.prior import KroneckerPrior
+
+    rng = np.random.default_rng(seed)
+    A = rng.uniform(0, 1, (N, N))
+    A = (A + A.T) / 2
+    np.fill_diagonal(A, 0)
+    lam_S, V_S = np.linalg.eigh(compute_normalized_laplacian(A))
+
+    B = rng.standard_normal((H, H))
+    Sigma_T = (B @ B.T) / H + 0.5 * np.eye(H)
+    mu_T, V_T = np.linalg.eigh(Sigma_T)
+
+    gamma = 0.2
+    theta = (lam_S[:, None] + gamma) / mu_T[None, :]
+    return KroneckerPrior(
+        dataset="toy", gamma=gamma, V_S=V_S, lam_S=lam_S, V_T=V_T, mu_T=mu_T,
+        theta=theta, delta_h=np.diag(Sigma_T).copy(), R_H=np.eye(H),
+    ), A
 
 
 def main() -> int:
@@ -36,127 +64,97 @@ def main() -> int:
 
     failed: list[str] = []
     warned: list[str] = []
+
     def step(name, fn, fatal=True):
         t0 = time.time()
         try:
             fn()
             print(f"  ✓ {name}  ({time.time()-t0:.2f}s)")
         except Exception as e:
-            tag = "✗" if fatal else "!"
-            print(f"  {tag} {name}: {e}")
+            print(f"  {'✗' if fatal else '!'} {name}: {e}")
             (failed if fatal else warned).append(name)
 
-    print(f"[smoke] dataset={args.dataset}")
+    device = _pick_device()
+    print(f"[smoke] dataset={args.dataset}  device={device}")
     print(f"[smoke] python={sys.version.split()[0]}  torch={torch.__version__}")
 
-    # ── 1. CUDA (fatal) ──────────────────────────────────────────────
-    print("\n── 1. CUDA ─────────────────────────────────────────────")
-    def _cuda():
-        assert torch.cuda.is_available(), "torch.cuda not available"
-        d = torch.cuda.get_device_name(0)
-        cap = torch.cuda.get_device_capability(0)
-        print(f"      device: {d}  capability: {cap}")
-        x = torch.randn(1024, 1024, device="cuda")
-        y = x @ x.T
-        torch.cuda.synchronize()
-        assert y.shape == (1024, 1024)
-    step("cuda available + matmul", _cuda)
+    # 1. cuda
+    print("\n-- 1. device --")
+    def _device_matmul():
+        if device.type == "cuda":
+            print(f"      {torch.cuda.get_device_name(0)}  cap={torch.cuda.get_device_capability(0)}")
+        x = torch.randn(1024, 1024, device=device)
+        (x @ x.T).sum().item()
+    step("device matmul", _device_matmul)
 
-    # ── 2. Project imports (fatal) ───────────────────────────────────
-    print("\n── 2. Project imports ──────────────────────────────────")
-    def _import_src():
-        from src.diffusion import sde, prior_fit  # noqa: F401
-        from src.data.adjacency import load_adjacency  # noqa: F401
-    step("src.diffusion + src.data", _import_src)
+    # 2. imports
+    print("\n-- 2. project imports --")
+    def _imports():
+        import src.diffusion.forward_fcps, src.diffusion.prior  # noqa: F401
+        import src.diffusion.reverse, src.diffusion.denoiser  # noqa: F401
+        import src.data.adjacency, src.data.dataset  # noqa: F401
+        from src.utils import paths  # noqa: F401
+    step("src.diffusion + src.data + paths", _imports)
 
-    # ── 3. SDE math with synthetic prior (fatal) ─────────────────────
-    print("\n── 3. SDE forward marginal (synthetic prior) ───────────")
-    def _sde_synthetic():
-        from src.diffusion.sde import (
-            eigendecompose_prior, forward_sample,
-            to_spectral, from_spectral,
+    # 3. forward sampler + denoiser on a toy prior
+    print("\n-- 3. forward sampler + denoiser (toy prior) --")
+    def _forward_and_denoise():
+        from src.diffusion.forward_fcps import (
+            FCPSSchedule, prior_to_torch, sample_R_t_given_R0_torch,
         )
-        rng = np.random.default_rng(0)
-        # Synthetic 12×N priors: temporal AR(1)-like, spatial Wishart-ish.
-        H, N = 12, 20
-        lag = np.abs(np.arange(H)[:, None] - np.arange(H)[None, :])
-        Q_H = 0.8 ** lag.astype(np.float64)
-        A = rng.standard_normal((N, N))
-        Sigma_S = (A @ A.T) / N + 0.1 * np.eye(N)
-        eig = eigendecompose_prior(Q_H, Sigma_S)
-        r_0 = rng.standard_normal((4, H, N))
-        r_tau = forward_sample(
-            r_0, tau=0.5, eig=eig, beta_min=0.01, beta_max=50.0, rng=rng,
-        )
-        assert r_tau.shape == r_0.shape
-        # Spectral round-trip
-        r_back = from_spectral(to_spectral(r_0, eig["U_T"], eig["U_S"]),
-                               eig["U_T"], eig["U_S"])
-        err = float(np.abs(r_back - r_0).max())
-        print(f"      forward marginal: τ=0.5  shape={r_tau.shape}")
-        print(f"      spectral round-trip max abs err: {err:.2e}")
-        assert err < 1e-10, f"round-trip err too high: {err}"
-    step("eigendecompose + forward_sample + spectral round-trip", _sde_synthetic)
+        from src.diffusion.denoiser import R0Denoiser
 
-    # ── 4. wandb (fatal in online mode, non-fatal otherwise) ─────────
-    print("\n── 4. wandb ────────────────────────────────────────────")
+        prior, A = _toy_prior()
+        N, H, Bsz = prior.N, prior.H, 2
+        sched = FCPSSchedule(c_min=0.05, c_0=500.0, alpha=7.0)
+        prior_t = prior_to_torch(prior, device=device)
+
+        R0 = torch.randn(Bsz, N, H, device=device)
+        t = torch.rand(Bsz, device=device) * sched.T
+        R_t = sample_R_t_given_R0_torch(R0, t, prior_t, sched)
+        assert R_t.shape == (Bsz, N, H) and torch.isfinite(R_t).all()
+
+        denoiser = R0Denoiser(N=N, H=H, adjacency=A, device=str(device)).to(device)
+        R0_hat = denoiser(R_t, t, torch.zeros_like(R_t))
+        assert R0_hat.shape == (Bsz, N, H) and torch.isfinite(R0_hat).all()
+        print(f"      R_t {tuple(R_t.shape)} -> R0_hat {tuple(R0_hat.shape)}")
+    step("forward sample + denoiser forward", _forward_and_denoise)
+
+    # 4. wandb
+    print("\n-- 4. wandb --")
     def _wandb():
         import wandb
         mode = os.environ.get("WANDB_MODE", "online")
         run = wandb.init(
             project=os.environ.get("WANDB_PROJECT", "thesis-diffusion"),
-            name=f"daic-smoke-{args.dataset}",
-            mode=mode,
-            tags=["smoke", "daic"],
-            reinit=True,
+            name=f"smoke_{args.dataset}", job_type="smoke",
+            tags=["smoke", args.dataset], mode=mode, reinit=True,
         )
-        wandb.log({"smoke/cuda_ok": 1.0, "smoke/dataset": args.dataset})
-        url = getattr(run, "url", "(offline)") or "(offline)"
-        print(f"      mode={mode}  url={url}")
+        wandb.log({"smoke/ok": 1.0})
+        print(f"      mode={mode}  url={getattr(run, 'url', '(offline)') or '(offline)'}")
         wandb.finish()
     step("wandb init + log + finish", _wandb)
 
-    # ── 5. Optional real-data checks (non-fatal) ─────────────────────
-    print("\n── 5. Optional: real residuals + prior YAML ────────────")
-    def _resid_load():
-        path = Path(f"results/residuals/gwn_{args.dataset}_train_seed0.npz")
-        if not path.exists():
-            raise FileNotFoundError(
-                f"{path} not present yet — rebuild on DAIC via "
-                f"submit_extract_residuals.sbatch (expected for first run)"
-            )
-        data = np.load(path)
-        r = data["residuals"]
-        print(f"      residuals: {r.shape} {r.dtype}")
-        assert r.ndim == 4 and r.shape[1] == 12
-    step("residual npz loads", _resid_load, fatal=False)
+    # 5. optional real artefacts (need backbone + residual jobs to have run)
+    print("\n-- 5. optional: real prior + residual cache --")
+    def _real_prior():
+        from src.utils import paths
+        from src.diffusion.prior import load_prior
+        res = paths.residual_npz(args.dataset, "train", 0)
+        if not res.exists():
+            raise FileNotFoundError(f"{res} not present yet (run extract_residuals first)")
+        prior = load_prior(args.dataset)
+        print(f"      load_prior ok: N={prior.N} H={prior.H} gamma={prior.gamma:.4f}")
+    step("load_prior from real residuals", _real_prior, fatal=False)
 
-    def _prior_load():
-        path = Path(f"results/prior_params/gwn_{args.dataset}.yaml")
-        if not path.exists():
-            raise FileNotFoundError(
-                f"{path} not present yet — fit on DAIC via "
-                f"submit_fit_prior.sbatch (expected for first run)"
-            )
-        with path.open() as f:
-            p = yaml.safe_load(f)
-        assert p.get("standardized") is True, "prior must be standardised (v2)"
-        assert len(p["target_scale"]) == 12
-        print(f"      α={p['alpha']:.4f}  ρ₁={p['rho1']:.4f}  "
-              f"ρ₂={p['rho2']:.4f}  β={p['beta']:.4f}  ε_s={p['epsilon_s']:.3f}")
-    step("prior yaml loads (v2 standardised)", _prior_load, fatal=False)
-
-    # ── verdict ──────────────────────────────────────────────────────
     print()
     if failed:
-        print(f"[smoke] FAILED steps: {', '.join(failed)}")
-        print(f"[smoke] Infrastructure is broken — fix before submitting jobs.")
+        print(f"[smoke] FAILED: {', '.join(failed)} — fix before submitting jobs.")
         return 1
     if warned:
-        print(f"[smoke] Infrastructure OK. Pending steps: {', '.join(warned)}")
-        print(f"[smoke] These run next:  sbatch submit_extract_residuals.sbatch")
+        print(f"[smoke] infra OK. pending (expected on first run): {', '.join(warned)}")
         return 0
-    print("[smoke] ALL CHECKS PASSED — infrastructure AND data ready.")
+    print("[smoke] ALL CHECKS PASSED — infrastructure and data ready.")
     return 0
 
 

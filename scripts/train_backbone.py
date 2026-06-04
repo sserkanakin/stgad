@@ -333,7 +333,10 @@ def main() -> None:  # noqa: C901
     # wandb
     # ------------------------------------------------------------------ #
     if not args.smoke:
-        run = init_wandb(cfg, run_id)
+        run = init_wandb(
+            cfg, stage="backbone", dataset=args.dataset, seed=args.seed,
+            backbone=_BACKBONE,
+        )
         if latest_ckpt is not None and not args.fresh:
             import wandb
             wandb.log({"resumed_from_epoch": start_epoch - 1}, step=0)

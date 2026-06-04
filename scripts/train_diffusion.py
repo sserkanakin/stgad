@@ -249,7 +249,10 @@ def main() -> None:
 
     # ── wandb
     if os.environ.get("WANDB_MODE", "online") != "disabled":
-        init_wandb(cfg, run_id, resume="allow")
+        init_wandb(
+            cfg, stage="diffusion", dataset=args.dataset, seed=args.seed,
+            prior=_PRIOR, backbone=_BACKBONE,
+        )
     import wandb  # safe — always installed
 
     # ── Train

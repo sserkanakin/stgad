@@ -11,6 +11,10 @@ set -euo pipefail
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")"/../.. && pwd)"
 cd "${PROJECT_DIR}"
 
+# slurm opens job logs into these dirs *before* the job body runs and won't
+# create them, so make sure they exist (they're gitignored and easy to wipe).
+mkdir -p logs/{backbone,residuals,diffusion,smoke,eval}
+
 if [ -z "${DAIC_CONDA_ENV:-}" ]; then
   echo "FAIL: env.sh not sourced or out of date (DAIC_CONDA_ENV unset)." >&2
   echo "      Regenerate from env.example.sh and edit your NetID + DATA_DIR." >&2

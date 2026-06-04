@@ -1,20 +1,12 @@
-"""Train the Graph WaveNet backbone and save the best checkpoint.
+"""train the graph wavenet backbone and keep the best checkpoint.
 
-Training runs on DAIC (A40 GPU) via scripts/daic/submit_train_backbone.sbatch.
-Local smoke-test mode (--smoke) exists as a wiring check.
+standard recipe: masked mae loss, z-scored input speed channel, adam(lr=1e-3,
+weight_decay=1e-4), dropout 0.3, grad clip 5, no lr scheduler. trains a fixed
+epoch budget and keeps the best val_h12 checkpoint.
 
-Standard recipe: masked MAE loss, z-score normalised input speed channel,
-Adam(lr=1e-3, weight_decay=1e-4), grad clip 5.0, best checkpoint selected
-by val_h12 MAE, early stopping with patience on val_h12.
-
-Usage:
-    # Full training:
+usage:
     python scripts/train_backbone.py --dataset metrla --seed 0
-
-    # Smoke test (1 epoch, batch_size=16, wandb disabled):
     python scripts/train_backbone.py --dataset metrla --seed 0 --smoke
-
-    # Force fresh start (deletes checkpoint and resets wandb run):
     python scripts/train_backbone.py --dataset metrla --seed 0 --fresh
 """
 import argparse
@@ -66,16 +58,7 @@ def masked_mae(
     target: torch.Tensor,
     mask: torch.Tensor,
 ) -> torch.Tensor:
-    """Masked mean absolute error.
-
-    Args:
-        pred:   (B, T, N, 1) or any broadcastable shape
-        target: same shape as pred
-        mask:   bool tensor, same shape — True = valid reading
-
-    Returns:
-        Scalar loss tensor.
-    """
+    """masked mean absolute error; pred/target/mask broadcast to the same shape."""
     err = torch.abs(pred - target) * mask.float()
     return err.sum() / (mask.float().sum() + 1e-8)
 
@@ -94,19 +77,9 @@ def train_one_epoch(
     batches_seen: int,
     max_batches: int | None = None,
 ) -> tuple[float, int]:
-    """Run one training epoch.
+    """run one training epoch; returns (mean_loss, batches_seen).
 
-    Args:
-        model: Backbone wrapper on ``device``.
-        loader: Training DataLoader.
-        optimizer: Adam optimiser.
-        mean, std: Scaler values from TrafficDataset.
-        device: Compute device.
-        batches_seen: Running batch counter (for wandb step alignment).
-        max_batches: If set, stop after this many batches (for smoke mode).
-
-    Returns:
-        (epoch_mean_loss, updated_batches_seen)
+    max_batches caps the batches per epoch (used by smoke mode).
     """
     model.train()
     total_loss = 0.0
@@ -145,11 +118,7 @@ def eval_split(
     std: float,
     device: torch.device,
 ) -> dict[int, float]:
-    """Evaluate MAE at horizons h=3,6,12 (1-indexed).
-
-    Returns:
-        Dict mapping horizon index to masked MAE in raw mph.
-    """
+    """masked mae at horizons 3, 6, 12 (raw mph); returns {h: mae}."""
     model.eval()
 
     all_pred: list[torch.Tensor] = []
@@ -247,9 +216,9 @@ def main() -> None:  # noqa: C901
     # ------------------------------------------------------------------ #
     # Checkpoint directory and run ID
     # ------------------------------------------------------------------ #
-    # cfg_hash captures architecture + data preprocessing, not training-control
-    # knobs. Excluding training fields lets --epochs 1 smoke runs and full runs
-    # share the same checkpoint dir.
+    # cfg_hash is provenance only (saved in state.json); the checkpoint dir is
+    # paths.backbone_dir, not hash-based. exclude training-control knobs so it
+    # tracks architecture + preprocessing.
     _HASH_EXCLUDE = {"seed", "epochs", "batch_size", "lr", "weight_decay", "patience"}
     cfg_hash = hash_config({k: v for k, v in cfg.items() if k not in _HASH_EXCLUDE})
     run_id = f"{_BACKBONE}_{args.dataset}_seed{args.seed}_{cfg_hash}"

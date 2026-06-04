@@ -1,5 +1,4 @@
-# Checkpoint save/load utilities for backbone and diffusion training.
-# Every training script uses these helpers to guarantee resumability.
+# checkpoint save/load helpers, used by both training scripts for resumability.
 import json
 from pathlib import Path
 
@@ -16,22 +15,8 @@ def save_checkpoint(
     best_val_mae: float,
     rng_states: dict,
 ) -> None:
-    """Save a full training checkpoint to ``path``.
-
-    The checkpoint contains all state needed to resume training bit-exactly
-    (modulo non-deterministic GPU ops): model weights, optimiser state,
-    scheduler state, epoch index, best validation MAE, and all RNG states.
-
-    Args:
-        path: Destination file path (e.g. ``results/checkpoints/.../last.pt``).
-        model: The model whose state_dict to save.
-        optim: The optimiser whose state_dict to save.
-        sched: LR scheduler (may be None).
-        epoch: The epoch that just finished (0-indexed).
-        best_val_mae: Best val MAE seen so far (used to decide when to save best.pt).
-        rng_states: Dict with keys ``python``, ``numpy``, ``torch_cpu``,
-            and optionally ``torch_cuda`` / ``torch_mps``.
-    """
+    """save everything needed to resume: model, optimiser, scheduler (may be
+    None), epoch, best val mae and the rng states."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     ckpt = {
@@ -46,18 +31,7 @@ def save_checkpoint(
 
 
 def load_checkpoint(path: Path) -> dict:
-    """Load a checkpoint written by :func:`save_checkpoint`.
-
-    Args:
-        path: Path to the ``.pt`` checkpoint file.
-
-    Returns:
-        Dict with keys ``model_state_dict``, ``optimizer_state_dict``,
-        ``scheduler_state_dict``, ``epoch``, ``best_val_mae``, ``rng_states``.
-
-    Raises:
-        FileNotFoundError: if ``path`` does not exist.
-    """
+    """load a checkpoint written by save_checkpoint."""
     path = Path(path)
     if not path.exists():
         raise FileNotFoundError(f"Checkpoint not found: {path}")
@@ -65,24 +39,13 @@ def load_checkpoint(path: Path) -> dict:
 
 
 def find_latest_checkpoint(ckpt_dir: Path) -> "Path | None":
-    """Return the path to ``last.pt`` in ``ckpt_dir``, or None if absent.
-
-    Args:
-        ckpt_dir: Directory that may contain ``last.pt``.
-
-    Returns:
-        Path to ``last.pt`` if it exists, else None.
-    """
+    """return last.pt in ckpt_dir, or None if it isn't there."""
     candidate = Path(ckpt_dir) / "last.pt"
     return candidate if candidate.exists() else None
 
 
 def get_rng_states() -> dict:
-    """Capture current RNG states for all available backends.
-
-    Returns:
-        Dict suitable for passing to :func:`save_checkpoint` as ``rng_states``.
-    """
+    """capture the current python / numpy / torch rng states."""
     import random
     import numpy as np
 
@@ -97,11 +60,7 @@ def get_rng_states() -> dict:
 
 
 def restore_rng_states(states: dict) -> None:
-    """Restore RNG states previously captured by :func:`get_rng_states`.
-
-    Args:
-        states: Dict as returned by :func:`get_rng_states`.
-    """
+    """restore rng states captured by get_rng_states."""
     import random
     import numpy as np
 

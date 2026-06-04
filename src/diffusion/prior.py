@@ -1,20 +1,14 @@
-"""Kronecker prior loader.
+"""builds the kronecker prior Σ = Σ_T ⊗ Σ_S used by the diffusion sde.
 
-Σ = Σ_T ⊗ Σ_S, used by the forward / reverse diffusion SDE.
+  Σ_S = (L + γ I)^{-1}, with a per-dataset γ (locked below). the laplacian
+        eigendecomposition is read from the cached file (see src.utils.paths).
+  Σ_T = D_H^{1/2} R_H D_H^{1/2}, fit from the training residuals:
+        D_H[h] = (1.4826 · MAD_h)^2   (robust per-horizon variance)
+        R_H    = corrcoef of the residuals   (empirical correlation)
 
-  Σ_S = (L + γ_ds·I)^{-1},  γ_ds per dataset (locked geomean — see
-        results/section3/SUMMARY.md). Eigendecomposition reuses the
-        cached file at data/processed/{ds}_laplacian_eigs.npz.
-  Σ_T = D_H^{1/2} R_H D_H^{1/2}, fit from training residuals:
-        D_H[h,h] = (1.4826 · MAD_h)^2  (robust per-horizon variance)
-        R_H      = corrcoef(R_flat.T)  (empirical correlation, PSD)
-
-vec convention: R has shape (N, H); vec(R)[h·N+i] = R[i, h]. Hence
-np.kron(Σ_T, Σ_S) matches numpy's vec.
-
-The joint precision Q = Σ^{-1} = Q_T ⊗ Q_S has eigenvalues
-Θ[k, h] = (λ_k + γ) / μ_h, where λ_k are Laplacian eigenvalues and μ_h
-are eigenvalues of Σ_T. The eigenbasis is V_S ⊗ V_T.
+residuals have shape (N, H) with vec(R)[h·N + i] = R[i, h], so np.kron(Σ_T, Σ_S)
+matches numpy's vec. the precision Q = Σ^{-1} has eigenvalues θ[k,h] = (λ_k + γ)/μ_h
+in the V_S ⊗ V_T basis.
 """
 from __future__ import annotations
 
@@ -25,8 +19,7 @@ import numpy as np
 
 from src.utils import paths
 
-# ── locked γ⋆ per dataset (geomean of energy-match and spectral-match;
-# ── see results/section3/SUMMARY.md, locked 2026-05-21).
+# locked per-dataset γ, fit once from the residual spectrum (see git history).
 GAMMA_LOCKED: dict[str, float] = {
     "metrla": 0.15755546019980676,
     "pemsbay": 0.21271054104199358,
@@ -35,28 +28,16 @@ GAMMA_LOCKED: dict[str, float] = {
 
 @dataclass(frozen=True)
 class KroneckerPrior:
-    """Kronecker prior structure cached after fitting from training residuals.
+    """the fitted kronecker prior, cached after building from training residuals.
 
-    Attributes
-    ----------
-    dataset : str
-    gamma : float
-        Laplacian shift, locked per dataset.
-    V_S : np.ndarray, shape (N, N)
-        Eigenvectors of the symmetric normalised Laplacian (orthonormal).
-    lam_S : np.ndarray, shape (N,)
-        Laplacian eigenvalues, ascending; lam_S[0] ≈ 0 by construction.
-    V_T : np.ndarray, shape (H, H)
-        Eigenvectors of Σ_T.
-    mu_T : np.ndarray, shape (H,)
-        Eigenvalues of Σ_T (variance scale, ascending).
-    theta : np.ndarray, shape (N, H)
-        Joint eigenvalues of the precision Q = Σ^{-1}; theta[k, h] = (lam_S[k] + gamma) / mu_T[h].
-        Stationary variance in the joint eigenbasis is 1 / theta.
-    delta_h : np.ndarray, shape (H,)
-        Per-horizon MAD-based variance (diagonal of D_H).
-    R_H : np.ndarray, shape (H, H)
-        Empirical horizon correlation matrix.
+    fields:
+      gamma            laplacian shift, locked per dataset
+      V_S, lam_S       eigenvectors/eigenvalues of the normalised laplacian (N)
+      V_T, mu_T        eigenvectors/eigenvalues of Σ_T (H)
+      theta            (N, H) precision eigenvalues (λ_k + γ)/μ_h; the stationary
+                       variance per mode is 1/theta
+      delta_h          (H,) per-horizon MAD variance (diagonal of D_H)
+      R_H              (H, H) empirical horizon correlation
     """
 
     dataset: str

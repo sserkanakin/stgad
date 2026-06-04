@@ -1,31 +1,18 @@
-"""Train the diffusion denoiser (Tweedie R̂_0 target).
+"""train the diffusion denoiser (predicts the clean residual R0).
 
-Inputs come from the cached residual files at
-``results/residuals/gwn_{dataset}_{split}_seed{seed}.npz`` and the locked
-Kronecker prior at ``results/section3/SUMMARY.md`` (γ per dataset) — see
-``src/diffusion/prior.py::load_prior``.
+inputs are the cached residuals (src.utils.paths.residual_npz) and the kronecker
+prior from src.diffusion.prior.load_prior.
 
-Per step:
+each step:
+  1. take a batch of (R0, Y_hat, mask) from the residual cache
+  2. draw t ~ Uniform[t_eps, T]  (t_eps avoids the singular t=0 where σ²_t -> 0)
+  3. forward-sample R_t = sample_R_t_given_R0_torch(R0, t, ...)
+  4. predict R0_hat = denoiser(R_t, t, Y_hat)
+  5. masked mse between R0_hat and R0, then backprop
 
-  1. sample a batch of (R_0, Y_hat, mask) from the residual cache;
-  2. draw per-sample t ~ Uniform[t_eps, T] (t_eps avoids the singular t=0
-     where σ²_t → 0);
-  3. forward-sample R_t = sample_R_t_given_R0_torch(R_0, t, prior_t, schedule);
-  4. predict R̂_0 = denoiser(R_t, t, Y_hat);
-  5. masked MSE between R̂_0 and R_0; backprop.
-
-Multi-seed runs share the same config hash; the wandb run id is suffixed with
-SLURM_JOB_ID to give each submission a fresh dashboard entry (see
-``src.utils.wandb_setup.init_wandb``).
-
-Usage:
-    # Full training (DAIC):
+usage:
     python scripts/train_diffusion.py --dataset metrla --seed 0
-
-    # Smoke test (1 epoch, tiny batch, wandb disabled):
     python scripts/train_diffusion.py --dataset metrla --seed 0 --smoke
-
-    # Force fresh start (deletes checkpoint + new wandb id):
     python scripts/train_diffusion.py --dataset metrla --seed 0 --fresh
 """
 from __future__ import annotations

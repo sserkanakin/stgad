@@ -1,6 +1,5 @@
-# Sliding-window construction, chronological split, time-of-day encoding, and missing mask.
-# Protocol confirmed from DCRNN source: liyaguang/DCRNN/scripts/generate_training_data.py
-# and nnzhan/Graph-WaveNet/generate_training_data.py — do NOT deviate.
+# sliding windows, chronological split, time-of-day, and the missing mask.
+# the protocol follows dcrnn / graph-wavenet's generate_training_data.py.
 import numpy as np
 import pandas as pd
 
@@ -10,20 +9,10 @@ def split_timestamps(
     train_frac: float = 0.7,
     test_frac: float = 0.2,
 ) -> tuple[int, int]:
-    """Return (n_train, n_val_end) split boundary indices.
+    """chronological split boundaries (n_train, n_val_end).
 
-    Defaults match the DCRNN protocol (70/10/20 train/val/test). PEMS08F
-    follows the STSGCN protocol (60/20/20) — pass train_frac=0.6, test_frac=0.2.
-
-    Slices: train=[0, n_train), val=[n_train, n_val_end), test=[n_val_end, T)
-
-    Args:
-        T: Total number of timestamps.
-        train_frac: Fraction of T allocated to training.
-        test_frac:  Fraction of T allocated to test (val = 1 - train - test).
-
-    Returns:
-        Tuple ``(n_train, n_val_end)``.
+    slices are train=[0, n_train), val=[n_train, n_val_end), test=[n_val_end, T).
+    defaults are 70/10/20 (dcrnn); pass 0.6/0.2 for pems08's 60/20/20.
     """
     n_test = round(T * test_frac)
     n_train = round(T * train_frac)
@@ -32,16 +21,9 @@ def split_timestamps(
 
 
 def compute_time_of_day(index: pd.DatetimeIndex) -> np.ndarray:
-    """Time-of-day as a continuous float in [0, 1) for each timestamp.
+    """time-of-day as a float in [0, 1): (timestamp - midnight) / 24h.
 
-    Convention: (timestamp - midnight) / 24h — matches DCRNN exactly.
-    00:00 → 0.0,  06:00 → 0.25,  12:00 → 0.5,  23:55 → ~0.997.
-
-    Args:
-        index: DatetimeIndex of length T.
-
-    Returns:
-        float32 array of shape (T,) with values in [0, 1).
+    matches dcrnn (00:00 -> 0.0, 12:00 -> 0.5). returns float32 (T,).
     """
     seconds = (index - index.normalize()).total_seconds().values
     return (seconds / 86400.0).astype(np.float32)
@@ -52,25 +34,11 @@ def build_windows(
     x_offsets: np.ndarray,
     y_offsets: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Build sliding input/output windows from a single split's data array.
+    """build sliding (x, y) windows from one split array (T_split, N, C).
 
-    Operates on an already-sliced split array (train, val, or test).
-    Matches DCRNN's ``generate_graph_seq2seq_io_data`` logic:
-        min_t = abs(x_offsets.min())          # 11
-        max_t = T_split - y_offsets.max()     # T_split - 12  (exclusive)
-        for t in range(min_t, max_t): ...
-
-    Args:
-        data: Array of shape (T_split, N, C) for one split.
-        x_offsets: 1-D array [-11, ..., 0] (12 steps ending at anchor t).
-        y_offsets: 1-D array [1, ..., 12]  (12 future steps).
-
-    Returns:
-        Tuple (x, y):
-            x — float32 (N_windows, 12, N, C)  — all feature channels
-            y — float32 (N_windows, 12, N, 1)  — speed channel only
-        where N_windows = T_split - len(x_offsets) - len(y_offsets) + 1
-                        = T_split - 23.
+    x is (n_windows, 12, N, C) over the 12 input steps; y is (n_windows, 12, N, 1)
+    over the 12 future steps (channel 0 only). n_windows = T_split - 23. matches
+    dcrnn's generate_graph_seq2seq_io_data.
     """
     T_split = data.shape[0]
     min_t = int(abs(x_offsets.min()))            # 11
@@ -87,31 +55,18 @@ def build_windows(
 
 
 def compute_mask(raw_speed_windows: np.ndarray) -> np.ndarray:
-    """Boolean validity mask: True where speed != 0.
+    """validity mask, true where the raw value != 0.
 
-    Must be computed BEFORE normalisation — zeros are meaningful (missing)
-    only in the raw data; after normalisation they become non-zero.
-
-    Args:
-        raw_speed_windows: float32 array of any shape.
-
-    Returns:
-        Boolean array of the same shape; True = valid reading.
+    compute it before normalisation: a raw 0 means missing, but after z-scoring
+    it becomes non-zero. only used for datasets where 0 means missing.
     """
     return raw_speed_windows != 0.0
 
 
 def compute_scaler(train_speed: np.ndarray) -> dict:
-    """Global z-score statistics from the training split's speed channel.
+    """global z-score stats (single mean, std) from the training values.
 
-    A single (mean, std) pair across all sensors and all training timestamps.
-    Applied at load time to x's speed channel only; y is never normalised.
-
-    Args:
-        train_speed: float32 array of any shape containing raw training speeds.
-
-    Returns:
-        Dict ``{"mean": float, "std": float}``.
+    returns {"mean", "std"}; applied to x's speed channel at load time.
     """
     return {
         "mean": float(train_speed.mean()),

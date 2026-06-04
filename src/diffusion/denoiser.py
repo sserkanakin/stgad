@@ -1,33 +1,19 @@
-"""Tweedie R₀ denoiser adapted from DiffSTG's UGnet.
+"""denoiser that predicts the clean residual R0, built on diffstg's ugnet.
 
-We wrap DiffSTG's `UGnet` with a clean signature for our setup:
+we wrap ugnet with a simple signature:
 
-    R̂₀ = denoiser(R_t, t, Y_hat)
+    R0_hat = denoiser(R_t, t, Y_hat)
 
-  R_t   : (B, N, H) residual diffusion state at time t
-  t     : (B,) continuous diffusion time ∈ [0, schedule.T]
-  Y_hat : (B, N, H) deterministic backbone forecast (the conditioning we have)
+    R_t   (B, N, H)  noisy residual at diffusion time t
+    t     (B,)       continuous diffusion time in [0, schedule.T]
+    Y_hat (B, N, H)  backbone forecast, used as conditioning
 
-UGnet expects:
-  x : (B, F, V, T)
-  t : (B,) integer-like timesteps (used in a sinusoidal embedding)
-  c = (x_masked, pos_w, pos_d)   pos_w/pos_d unused for our setup
+ugnet itself wants x as (B, F, V, T), an integer-ish step t for its sinusoidal
+embedding, and a tuple c = (x_masked, pos_w, pos_d). so we add a feature axis,
+pass Y_hat as x_masked, scale t into ugnet's step range, and ignore pos_w/pos_d.
 
-so we:
-  - unsqueeze the single feature channel: R_t → (B, 1, N, H)
-  - feed Y_hat as x_masked (same shape after unsqueeze)
-  - rescale continuous t to UGnet's discrete-step embedding range (×1000)
-  - slice the last H of UGnet's output (which spans T_p+T_h = 2H by design;
-    the trailing block corresponds to the "forecast" half).
-
-Notes:
-  - We import UGnet from third_party/DiffSTG (see THIRD_PARTY.md). The path
-    insertion is local to this module.
-  - Output is R̂₀ (Tweedie target), not ε. UGnet's architecture is reused
-  
-    unchanged; the difference is purely in the training loss target.
-  - X history conditioning is not used yet; it can be added later by widening
-    the channel dim of x_masked (F → 1 + extra_cond_channels).
+ugnet is vendored under third_party/DiffSTG (see git history / THIRD_PARTY notes).
+we predict R0 rather than the noise eps; the network is otherwise unchanged.
 """
 from __future__ import annotations
 
@@ -47,10 +33,8 @@ import easydict  # noqa: E402
 
 from algorithm.diffstg.ugnet import UGnet as _UGnet  # noqa: E402
 
-# Scale factor mapping continuous t ∈ [0, 1] to UGnet's discrete-step range.
-# UGnet's sinusoidal embedding (from DDPM) was designed for integer t in [0, N]
-# with N≈1000. We multiply by this scale so the cos/sin frequencies cover the
-# same range; the embedding does not require integer values.
+# ugnet's sinusoidal step embedding was made for integer steps up to ~1000.
+# our t is continuous in [0, 1], so we scale it into that range.
 T_EMBED_SCALE = 1000.0
 
 
@@ -63,14 +47,11 @@ def make_ugnet_config(
     n_blocks: int = 2,
     device: str = "cpu",
 ) -> easydict.EasyDict:
-    """Build the EasyDict UGnet expects."""
+    """build the easydict config ugnet expects."""
     return easydict.EasyDict({
         "d_h": d_h,
-        # UGnet's internal T = T_p + T_h is the per-input time length (before
-        # the concat with x_masked). We're feeding only the forecast horizon,
-        # so set T_p = H, T_h = 0; the concat with x_masked then produces 2H
-        # along time, and UGnet's final Linear(2T, T) = Linear(2H, H) restores
-        # the horizon dim.
+        # we feed only the H forecast steps, so T_p=H, T_h=0. ugnet concatenates
+        # x and x_masked along time (-> 2H) and projects back to H at the end.
         "T_p": H,
         "T_h": 0,
         "F": 1,
@@ -84,22 +65,12 @@ def make_ugnet_config(
 
 
 class R0Denoiser(nn.Module):
-    """Tweedie R₀ predictor for the GAD diffusion SDE.
+    """predicts the clean residual R0 for the gad diffusion sde.
 
-    Parameters
-    ----------
-    N : int
-        Number of sensors.
-    H : int
-        Forecast horizon.
-    adjacency : (N, N) array
-        Raw (asymmetric for road-graph datasets) adjacency matrix used by
-        UGnet's spatial graph convolution. Same convention as GWN backbone.
-    d_h : int
-        Hidden dim of UGnet residual blocks. Defaults to 32 (DiffSTG default).
-    channel_multipliers, n_blocks : architecture knobs.
-    device : str
-        Where UGnet places its adjacency supports.
+    N, H are the sensor count and forecast horizon. adjacency is the (N, N)
+    matrix ugnet uses for its spatial graph conv (same one as the gwn backbone).
+    d_h / channel_multipliers / n_blocks are ugnet architecture knobs; device is
+    where ugnet places its adjacency supports.
     """
 
     def __init__(
@@ -132,13 +103,9 @@ class R0Denoiser(nn.Module):
         t: torch.Tensor,
         Y_hat: torch.Tensor,
     ) -> torch.Tensor:
-        """Predict R₀ given R_t at diffusion time t, conditioned on Y_hat.
+        """predict R0 from R_t at time t, conditioned on Y_hat.
 
-        Shapes:
-          R_t   : (B, N, H)
-          t     : (B,) — continuous diffusion time
-          Y_hat : (B, N, H)
-          returns R̂_0 : (B, N, H)
+        R_t, Y_hat and the returned R0_hat are all (B, N, H); t is (B,).
         """
         if R_t.shape[-2:] != (self.N, self.H):
             raise ValueError(
@@ -155,8 +122,7 @@ class R0Denoiser(nn.Module):
 
         x = R_t.unsqueeze(1)          # (B, 1, N, H)
         x_masked = Y_hat.unsqueeze(1)  # (B, 1, N, H)
-        # pos_w, pos_d are unused inside UGnet's forward; pass 0-tensors of any
-        # shape — they're ignored.
+        # pos_w / pos_d are ignored by ugnet's forward; pass dummy zeros.
         c = (x_masked, torch.zeros(1, device=R_t.device), torch.zeros(1, device=R_t.device))
 
         t_scaled = t * T_EMBED_SCALE

@@ -1,39 +1,19 @@
-"""Extract GWN residuals in raw units. Implements Section 1.9 + §1.10 of the spec.
+"""extract the backbone residuals r = Y - Yhat for train/val/test.
 
-For each window s in S_split, with frozen θ*:
-    Yhat_z^(s) = f_{θ*}(X^(s))               (z-space network output, shape H×N)
-    Yhat^(s)   = σ * Yhat_z^(s) + μ          (raw-unit prediction, shape H×N)
-    r^(s)      = Y^(s) - Yhat^(s)            (raw-unit residual,   shape H×N)
-    R^(s)      = (r^(s))^T                   (reordered,           shape N×H)
+for each window we run the frozen backbone, undo the z-score to get Yhat in raw
+units, and take r = Y - Yhat reordered to (N, H) (so vec(R) is column-major over
+N and Cov(vec(R)) = Σ_T ⊗ Σ_S). stacked per split this is (B, N, H).
 
-Stacked across the split → R ∈ R^{B × N × H} (Kronecker convention
-Cov(vec(R)) = Σ_T ⊗ Σ_S, with vec column-major over the leading N axis).
+we also run a quick train-vs-val check on the per-horizon residual variance
+δ_h = masked mean of R[:, :, h]^2; it passes if |δ_h^val / δ_h^train - 1| < 0.10
+for every horizon h.
 
-The training-split residuals R_tr are the canonical artifact for the diffusion
-prior. Val and test residuals are extracted with the same θ* so we can run the
-§1.10 in-sample diagnostic and (later) report final-forecast metrics.
-
-§1.10 diagnostic. Per-horizon residual variance:
-    δ_h^(tr) = masked mean of (R_tr[:, :, h])^2
-    δ_h^(vl) = masked mean of (R_vl[:, :, h])^2
-Pass criterion: |δ_h^(vl)/δ_h^(tr) - 1| < 0.10 ∀ h.
-
-Usage:
+usage:
     python scripts/extract_residuals.py --dataset metrla --seed 0
-    python scripts/extract_residuals.py --dataset pemsbay --seed 0
-    python scripts/extract_residuals.py --dataset pems08f --seed 0
 
-Outputs:
-    results/residuals/gwn_{dataset}_{split}_seed{seed}.npz   (split=train|val|test)
-        residuals  float32  (B, N, H)   r^(s) = Y - Yhat, raw units, reordered N×H
-        y_pred     float32  (B, N, H)   Yhat in raw units (for Y_final composition)
-        y_true     float32  (B, N, H)   Y    in raw units
-        mask       bool     (B, N, H)   True = valid (METR-LA only; ones elsewhere)
-        mean       float32  scalar      μ used for backbone input z-score (provenance)
-        std        float32  scalar      σ used for backbone input z-score (provenance)
-
-    results/residuals/gwn_{dataset}_seed{seed}_diagnostic.json
-        Section 1.10 train-vs-val per-horizon variance ratios + pass/fail flag.
+outputs (under results/residuals/<dataset>/seed<seed>/, see src.utils.paths):
+    {split}.npz       residuals, y_pred, y_true, mask (all (B, N, H)), mean, std
+    diagnostic.json   the train-vs-val per-horizon variance check
 """
 import argparse
 import json
@@ -54,10 +34,9 @@ _BACKBONE = "gwn"
 
 
 def _to_BNH(arr: np.ndarray) -> np.ndarray:
-    """Drop GWN's trailing channel dim and reorder (B, H, N, 1) → (B, N, H).
+    """drop gwn's trailing channel dim and reorder (B, H, N, 1) -> (B, N, H).
 
-    The reorder matches the §1.9 spec: R^(s) = (r^(s))^T so that
-    vec(R) is column-major over the leading N axis and Σ = Σ_T ⊗ Σ_S.
+    putting N first makes vec(R) column-major over N, so Cov(vec(R)) = Σ_T ⊗ Σ_S.
     """
     if arr.ndim == 4 and arr.shape[-1] == 1:
         arr = arr[..., 0]              # (B, H, N)
@@ -72,22 +51,8 @@ def extract_one_split(
     device: torch.device,
     split_name: str,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Run inference on one split and return (residuals, y_pred, y_true, mask)
-    in raw units, reordered to (B, N, H) per §1.9.
-
-    Args:
-        model: Trained backbone wrapper (eval mode expected).
-        loader: DataLoader for the split.
-        mean, std: Scaler values for backbone inverse-transform (Yhat = σ Yhat_z + μ).
-        device: Compute device.
-        split_name: "train" | "val" | "test" — used only for the progress bar.
-
-    Returns:
-        residuals  float32  (B, N, H)   r = Y - Yhat in raw units
-        y_pred     float32  (B, N, H)   Yhat in raw units (post inverse-transform)
-        y_true     float32  (B, N, H)   Y    in raw units (as loaded from npz)
-        mask       bool     (B, N, H)   True = valid reading
-    """
+    """run the backbone on one split and return (residuals, y_pred, y_true, mask),
+    all (B, N, H) in raw units. mean/std undo the input z-score (Yhat = σ Yhat_z + μ)."""
     model.eval()
 
     preds_list: list[np.ndarray] = []
@@ -101,7 +66,7 @@ def extract_one_split(
             mask = batch["y_mask"].to(device)
 
             pred_norm = model(x)                 # (B, H, N, 1) z-space
-            pred_raw = pred_norm * std + mean    # raw units; matches §1.7 inverse
+            pred_raw = pred_norm * std + mean    # undo the z-score
 
             preds_list.append(pred_raw.cpu().numpy().astype(np.float32))
             y_list.append(y_raw.cpu().numpy().astype(np.float32))
@@ -118,14 +83,9 @@ def extract_one_split(
 def _masked_per_horizon_variance(
     residuals: np.ndarray, mask: np.ndarray,
 ) -> np.ndarray:
-    """δ_h = Σ_s,i M_h,i^(s) (R_i,h^(s))^2 / Σ_s,i M_h,i^(s), per spec §1.10.
+    """per-horizon masked second moment δ_h = masked mean of R[:, :, h]^2.
 
-    Args:
-        residuals: (B, N, H) float32, raw units.
-        mask:      (B, N, H) bool.
-
-    Returns:
-        (H,) float64 — per-horizon masked second moment about zero.
+    residuals and mask are (B, N, H); returns (H,) float64.
     """
     H = residuals.shape[-1]
     out = np.empty(H, dtype=np.float64)
@@ -190,7 +150,7 @@ def main() -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     # ------------------------------------------------------------------ #
-    # Extract each split; cache per-horizon variances for the §1.10 diagnostic.
+    # extract each split; cache per-horizon variances for the train-vs-val check.
     # ------------------------------------------------------------------ #
     delta_per_split: dict[str, np.ndarray] = {}
 
@@ -229,9 +189,9 @@ def main() -> None:
         print(f"  Missing fraction:        {1.0 - mask.mean():.4f}")
 
     # ------------------------------------------------------------------ #
-    # §1.10 in-sample-residuals diagnostic
+    # train-vs-val per-horizon variance check
     # ------------------------------------------------------------------ #
-    print("\n--- §1.10 train-vs-val per-horizon variance ---")
+    print("\n--- train-vs-val per-horizon variance ---")
     delta_tr = delta_per_split["train"]
     delta_vl = delta_per_split["val"]
     ratios = delta_vl / delta_tr - 1.0
@@ -260,7 +220,7 @@ def main() -> None:
     }, indent=2))
     print(f"  Saved {diag_path}")
 
-    print("\nDone. Residuals are in raw units, shape (B, N, H). Ready for H1–H5.")
+    print("\ndone. residuals saved as (B, N, H) in raw units.")
 
 
 if __name__ == "__main__":

@@ -1,13 +1,10 @@
-"""Dataset wrapping the cached residual .npz files for diffusion training.
+"""dataset over the cached residual files for diffusion training.
 
-Each split file at  results/residuals/gwn_{dataset}_{split}_seed{seed}.npz
-contains (residuals, y_pred, y_true, mask, mean, std) — produced by
-scripts/extract_residuals.py from the frozen backbone. For diffusion training
-we only need:
-
-    R_0   : residuals     shape (N, H), raw mph units
-    Y_hat : y_pred        shape (N, H), raw mph units (denoiser conditioning)
-    mask  : bool          shape (N, H), True where the observation is valid
+each split file (see src.utils.paths.residual_npz) holds residuals, y_pred,
+y_true, mask, mean, std from extract_residuals.py. for training we use:
+    R0     residuals  (N, H)
+    Y_hat  y_pred     (N, H), the denoiser conditioning
+    mask   bool       (N, H), true where the observation is valid
 """
 from __future__ import annotations
 

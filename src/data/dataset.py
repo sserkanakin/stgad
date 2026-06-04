@@ -1,5 +1,5 @@
-# PyTorch Dataset wrapping a preprocessed .npz file.
-# Normalisation is applied at load time (not save time) per DCRNN convention.
+# pytorch dataset over a preprocessed split .npz.
+# normalisation happens at load time (not save time), per the dcrnn convention.
 import numpy as np
 import torch
 from torch.utils.data import Dataset
@@ -7,30 +7,15 @@ from src.utils.config import load_config
 
 
 class TrafficDataset(Dataset):
-    """Wraps a raw (un-normalised) ``{dataset}_{split}.npz`` file.
+    """wraps a raw (un-normalised) split .npz.
 
-    At instantiation, z-score normalisation is applied to x's speed channel
-    (channel 0) only.  y stays in raw mph units throughout — never normalised.
-    The time_of_day channel (x[..., 1]) is also left as-is (already in [0, 1)).
-
-    Each item is a dict:
-        x        float32  (12, N, 2)   normalised-speed + time_of_day
-        y        float32  (12, N, 1)   raw speed in mph
-        x_mask   bool     (12, N, 1)   True = valid reading
-        y_mask   bool     (12, N, 1)
-
-    Attributes:
-        mean (float): Training-set speed mean used for normalisation.
-        std  (float): Training-set speed std used for normalisation.
+    on load we z-score x's speed channel (channel 0) with the saved scaler; the
+    time-of-day channel and y (raw units) are left untouched. each item is a dict
+    with x (12, N, 2), y (12, N, 1), x_mask, y_mask. exposes .mean and .std.
     """
 
     def __init__(self, npz_path: str, scaler_path: str) -> None:
-        """Load raw npz and apply normalisation to x speed channel.
-
-        Args:
-            npz_path: Path to the raw processed .npz file.
-            scaler_path: Path to ``{dataset}_scaler.yaml`` with mean/std.
-        """
+        """load the raw npz and z-score x's speed channel using scaler_path."""
         raw = np.load(npz_path)
         scaler = load_config(scaler_path)
         self.mean = float(scaler["mean"])

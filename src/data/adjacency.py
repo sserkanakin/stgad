@@ -49,21 +49,10 @@ def _load_adjacency_csv(path: Path, num_nodes: int) -> np.ndarray:
 
 
 def load_adjacency(dataset: str) -> np.ndarray:
-    """Load the adjacency matrix for the given dataset from ``data/raw/``.
+    """load the (N, N) adjacency for a dataset.
 
-    Dispatches by file extension: .pkl (DCRNN format, METR-LA / PEMS-BAY)
-    or .csv (STSGCN edge list, PEMS08F).
-
-    Args:
-        dataset: ``"metrla"`` (N=207), ``"pemsbay"`` (N=325), or
-                 ``"pems08f"`` (N=170).
-
-    Returns:
-        float32 ndarray of shape (N, N).
-
-    Raises:
-        ValueError: unknown dataset name.
-        FileNotFoundError: source file not present in ``data/raw/``.
+    dispatches by file type: .pkl for metr-la/pems-bay (dcrnn format), .csv for
+    pems08 (stsgcn edge list).
     """
     if dataset not in _NUM_NODES:
         raise ValueError(
@@ -85,21 +74,11 @@ def load_adjacency(dataset: str) -> np.ndarray:
 
 
 def compute_normalized_laplacian(adj: np.ndarray) -> np.ndarray:
-    """Symmetric normalised Laplacian L = I - D^{-1/2} A_sym D^{-1/2}.
+    """symmetric normalised laplacian L = I - D^{-1/2} A D^{-1/2}.
 
-    The DCRNN/PEMS-BAY adjacency matrices are directed (asymmetric) and
-    include self-loops (diagonal = 1).  We symmetrise and remove self-loops
-    before computing L, so eigenvalues are guaranteed in [0, 2].
-    Used in the Kronecker spatial prior and spectral analysis.
-
-    DESIGN DECISION: symmetrise + strip self-loops before Laplacian.
-    See DECISIONS.md for rationale.
-
-    Args:
-        adj: (N, N) adjacency matrix (may be directed and/or have self-loops).
-
-    Returns:
-        (N, N) float64 symmetric normalised Laplacian with eigenvalues in [0, 2].
+    the dcrnn adjacency matrices are directed and include self-loops, so we
+    symmetrise and strip the diagonal first; eigenvalues then lie in [0, 2].
+    used for the kronecker spatial prior. adj is (N, N); returns (N, N) float64.
     """
     adj = adj.astype(np.float64)
     np.fill_diagonal(adj, 0)               # remove self-loops
@@ -111,17 +90,7 @@ def compute_normalized_laplacian(adj: np.ndarray) -> np.ndarray:
 
 
 def compute_scaled_laplacian(adj: np.ndarray) -> np.ndarray:
-    """Scaled Laplacian for ChebConv: L_scaled = 2L / lambda_max - I.
-
-    Rescales eigenvalues from [0, 2] to [-1, 1] as required by
-    Chebyshev polynomial graph convolution.
-
-    Args:
-        adj: (N, N) non-negative adjacency matrix.
-
-    Returns:
-        (N, N) float64 scaled Laplacian with eigenvalues in [-1, 1].
-    """
+    """scaled laplacian for chebconv: 2L/λ_max - I, eigenvalues in [-1, 1]."""
     L = compute_normalized_laplacian(adj)
     lambda_max = np.linalg.eigvalsh(L).max()
     return (2.0 / lambda_max) * L - np.eye(L.shape[0])
@@ -130,20 +99,10 @@ def compute_scaled_laplacian(adj: np.ndarray) -> np.ndarray:
 def laplacian_eigendecomposition(
     L: np.ndarray, dataset: str, cache: bool = True
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Full eigendecomposition of the symmetric normalised Laplacian.
+    """eigendecompose the symmetric laplacian (ascending eigenvalues).
 
-    Uses scipy.linalg.eigh (guaranteed real eigenvalues for symmetric input).
-    Result cached to ``data/processed/{dataset}_laplacian_eigs.npz``.
-
-    Args:
-        L: (N, N) symmetric normalised Laplacian.
-        dataset: Dataset name, used as cache key.
-        cache: Read from / write to disk cache (default True).
-
-    Returns:
-        Tuple (eigenvalues, eigenvectors):
-            eigenvalues  float64  (N,)   sorted ascending, ∈ [0, 2]
-            eigenvectors float64  (N, N) columns are eigenvectors
+    cached per dataset (see src.utils.paths.laplacian_eigs). returns
+    (eigenvalues (N,), eigenvectors (N, N)).
     """
     cache_path = paths.laplacian_eigs(dataset)
 

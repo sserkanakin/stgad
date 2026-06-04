@@ -1,32 +1,19 @@
-"""Forward graph-aware OU SDE with FCPS scheduling, per GAD (Tan et al. 2024).
+"""forward graph-aware OU sde with the fcps schedule, from gad (rozada et al. 2025).
 
-GAD's forward dynamics:
-    dr = -c(t) · Q · r dt + sqrt(2 c(t)) · dW_t,   W_t ~ N(0, I_{NH} dt)
+the forward process is
+    dr = -c(t) Q r dt + sqrt(2 c(t)) dW,   W ~ N(0, I_{NH} dt)
+with precision Q = Q_T ⊗ Q_S, so its stationary covariance is Σ = Σ_T ⊗ Σ_S.
+c(t) is a time-dependent rate; fcps shapes it so the slow graph modes only mix
+near t=T.
 
-with Q = Σ^{-1} = Q_T ⊗ Q_S (so the stationary cov is Σ = Σ_T ⊗ Σ_S = Q^{-1}).
-The c(t) factor is a time-dependent drift coefficient; FCPS shapes it as a
-"floor-constrained" polynomial so the slow modes mix only near t=T.
+in the joint eigenbasis (θ_k = (λ_k + γ)/μ_h) the marginal is closed-form,
+    c_k(t) | c_k(0) ~ N( exp(-c̄(t) θ_k) c_k(0),  (1 - exp(-2 c̄(t) θ_k)) / θ_k ),
+where c̄(t) = ∫_0^t c(s) ds. the slowest mode mixes once 2 c̄(T) θ_min ≳ 5.
 
-Closed-form marginal in the joint eigenbasis U = V_S ⊗ V_T, with c_k(0) = (U^T r_0)_k
-and θ_k = (λ_k + γ)/μ_h:
-
-    c_k(t) | c_k(0) ~ N( exp(-c̄(t) θ_k) · c_k(0),  (1/θ_k)·(1 - exp(-2 c̄(t) θ_k)) )
-
-c̄(t) = ∫_0^t c(s) ds. The mixing condition for the slowest mode is
-2 · c̄(T) · θ_min ≳ 5 (mean attenuation < 1%).
-
-Two schedules:
-
-  FCPSSchedule (GAD §3.1): c(t) = c_min + k · u^α with u = t/T,
-                           k     = (c_0 - c_min·T)·(α+1)/T
-                           c̄(t)  = c_min·t + (c_0 - c_min·T)·u^(α+1)
-                           c̄(T)  = c_0
-
-  ULSchedule (baseline):   c(t) = c·t/T   (linear ramp from 0)
-                           c̄(t) = c · t² / (2T)
-                           c̄(T) = c/2
-
-The "c_0" / "c" naming follows the GAD paper.
+two schedules:
+  FCPSSchedule: c(t) = c_min + k u^α, c̄(t) = c_min t + (c_0 - c_min T) u^(α+1),
+                c̄(T) = c_0   (u = t/T)
+  ULSchedule:   c(t) = slope t/T, c̄(t) = slope t² / (2T)   (linear baseline)
 """
 from __future__ import annotations
 
@@ -44,7 +31,7 @@ from .prior import KroneckerPrior
 
 @dataclass(frozen=True)
 class FCPSSchedule:
-    """Floor-constrained polynomial scheduler per GAD (Tan et al. 2024)."""
+    """floor-constrained polynomial schedule from gad (rozada et al. 2025)."""
 
     c_min: float = 0.05
     c_0: float = 20_000.0
@@ -84,10 +71,8 @@ class FCPSSchedule:
         alpha: float = 7.0,
         T: float = 1.0,
     ) -> "FCPSSchedule":
-        """Pick c_0 so that 2·θ_min·c_0 ≥ mix_target · mix_margin.
-
-        Picks c_0 large enough to mix the slowest joint mode by t = T.
-        """
+        """pick c_0 large enough to mix the slowest mode by t=T
+        (so that 2 θ_min c_0 ≥ mix_target · mix_margin)."""
         theta_min = float(prior.theta.min())
         c_0 = max(c_min * T + 1.0, 0.5 * mix_target * mix_margin / theta_min)
         return cls(c_min=c_min, c_0=c_0, alpha=alpha, T=T)
@@ -95,11 +80,9 @@ class FCPSSchedule:
 
 @dataclass(frozen=True)
 class ULSchedule:
-    """Uniform linear scheduler (baseline). c(t) = slope · t / T, c̄(t) = slope · t² / (2T).
+    """linear baseline schedule: c(t) = slope t/T, c̄(t) = slope t²/(2T).
 
-    `slope` matches GAD's lowercase `c` in "c_t = c·t" (note: at t=T, c_t = slope; at
-    t=T the cumulative c̄(T) = slope/2). For parity with an FCPSSchedule at the same
-    `c_bar(T) = c_0`, set slope = 2·c_0.
+    for parity with an fcps schedule at the same c̄(T)=c_0, set slope = 2 c_0.
     """
 
     slope: float = 200.0
@@ -132,18 +115,10 @@ def sample_R_t_given_R0(
     schedule,
     rng: np.random.Generator,
 ) -> np.ndarray:
-    """Sample R_t ~ p(R_t | R_0) under the GAD forward SDE.
+    """sample R_t ~ p(R_t | R_0) under the forward sde (numpy).
 
-    Parameters
-    ----------
-    R0 : (..., N, H) ndarray, initial residual fields.
-    t  : float, diffusion time in [0, schedule.T].
-    prior, schedule : structure + scheduler.
-    rng : np.random.Generator.
-
-    Returns
-    -------
-    R_t : ndarray same shape as R0.
+    R0 is (..., N, H); t is a scalar time in [0, schedule.T]; the result has the
+    same shape as R0.
     """
     if R0.shape[-2:] != (prior.N, prior.H):
         raise ValueError(
@@ -167,10 +142,9 @@ def sample_prior(
     prior: KroneckerPrior,
     rng: np.random.Generator,
 ) -> np.ndarray:
-    """Draw from the stationary prior N(0, Σ_T ⊗ Σ_S) in eigenbasis.
+    """draw from the stationary prior N(0, Σ_T ⊗ Σ_S).
 
-    Equivalent to the t → ∞ limit of sample_R_t_given_R0; supplied separately
-    so callers don't need to fabricate a schedule.
+    same as the t→∞ limit of sample_R_t_given_R0, but without needing a schedule.
     """
     Z = rng.standard_normal(shape_batch + (prior.N, prior.H))
     Ct = np.sqrt(prior.sigma2) * Z
@@ -182,11 +156,8 @@ def sample_prior(
 
 @dataclass(frozen=True)
 class TorchPriorTensors:
-    """Pre-converted torch tensors for the prior (one device + dtype).
-
-    Construct once at the start of training; pass to sample_R_t_given_R0_torch
-    on every step to avoid converting V_S, V_T, theta from numpy each call.
-    """
+    """prior tensors pre-moved to one device/dtype, built once before training
+    so the per-step torch sampler doesn't re-convert from numpy each call."""
 
     V_S: torch.Tensor
     V_T: torch.Tensor
@@ -220,19 +191,10 @@ def sample_R_t_given_R0_torch(
     schedule: FCPSSchedule,
     generator: Optional[torch.Generator] = None,
 ) -> torch.Tensor:
-    """Sample R_t ~ p(R_t | R_0) under the GAD forward SDE — torch on-device.
+    """sample R_t ~ p(R_t | R_0) under the forward sde, on-device (torch).
 
-    Parameters
-    ----------
-    R0 : (B, N, H) torch tensor.
-    t  : (B,) torch tensor of per-sample diffusion times.
-    prior_t : pre-converted torch tensors from prior_to_torch.
-    schedule : FCPSSchedule (host-side floats; broadcasts to torch).
-    generator : optional torch.Generator for the noise term.
-
-    Returns
-    -------
-    R_t : (B, N, H) torch tensor on R0's device.
+    R0 is (B, N, H), t is (B,), prior_t comes from prior_to_torch; returns R_t
+    as (B, N, H) on R0's device.
     """
     if R0.ndim != 3:
         raise ValueError(f"R0 must be (B, N, H); got shape {tuple(R0.shape)}")
@@ -250,7 +212,6 @@ def sample_R_t_given_R0_torch(
     C0 = torch.einsum("ki,bih,hj->bkj", prior_t.V_S.T, R0, prior_t.V_T)
     Z = torch.randn(R0.shape, generator=generator, device=R0.device, dtype=R0.dtype)
     Ct = H_t * C0 + sigma2_t.sqrt() * Z
-    # Rotate back: V_S C V_T^T. Output index is `bij` (sum over the spatial mode
-    # k and the temporal mode h); writing `bih` would reuse h as the output time
-    # index and collapse V_T.T into a column-sum, scrambling the temporal basis.
+    # rotate back: V_S C V_T^T. the output index must be `bij`, not `bih` —
+    # reusing h would collapse V_T^T and scramble the temporal covariance.
     return torch.einsum("ik,bkh,hj->bij", prior_t.V_S, Ct, prior_t.V_T.T)

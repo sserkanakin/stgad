@@ -38,6 +38,7 @@ from src.utils.checkpoint import (
     restore_rng_states,
     save_checkpoint,
 )
+from src.utils import paths
 from src.utils.config import hash_config, load_config
 from src.utils.seed import set_seed
 from src.utils.wandb_setup import init_wandb
@@ -252,7 +253,7 @@ def main() -> None:  # noqa: C901
     _HASH_EXCLUDE = {"seed", "epochs", "batch_size", "lr", "weight_decay", "patience"}
     cfg_hash = hash_config({k: v for k, v in cfg.items() if k not in _HASH_EXCLUDE})
     run_id = f"{_BACKBONE}_{args.dataset}_seed{args.seed}_{cfg_hash}"
-    ckpt_dir = Path(f"results/checkpoints/{run_id}")
+    ckpt_dir = paths.backbone_dir(args.dataset, args.seed)
     ckpt_dir.mkdir(parents=True, exist_ok=True)
 
     if args.fresh and (ckpt_dir / "last.pt").exists():
@@ -272,14 +273,9 @@ def main() -> None:  # noqa: C901
     # Data
     # ------------------------------------------------------------------ #
     ds_name = args.dataset
-    train_ds = TrafficDataset(
-        f"data/processed/{ds_name}_train.npz",
-        f"data/processed/{ds_name}_scaler.yaml",
-    )
-    val_ds = TrafficDataset(
-        f"data/processed/{ds_name}_val.npz",
-        f"data/processed/{ds_name}_scaler.yaml",
-    )
+    scaler_path = paths.scaler_yaml(ds_name)
+    train_ds = TrafficDataset(paths.split_npz(ds_name, "train"), scaler_path)
+    val_ds = TrafficDataset(paths.split_npz(ds_name, "val"), scaler_path)
 
     mean = train_ds.mean
     std = train_ds.std
@@ -426,10 +422,7 @@ def main() -> None:  # noqa: C901
     # Post-training test-set evaluation (skipped in smoke mode)
     # ------------------------------------------------------------------ #
     if not args.smoke:
-        test_ds = TrafficDataset(
-            f"data/processed/{ds_name}_test.npz",
-            f"data/processed/{ds_name}_scaler.yaml",
-        )
+        test_ds = TrafficDataset(paths.split_npz(ds_name, "test"), scaler_path)
         test_loader = DataLoader(
             test_ds, batch_size=batch_size, shuffle=False,
             num_workers=0, pin_memory=pin,

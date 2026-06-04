@@ -37,7 +37,6 @@ Outputs:
 """
 import argparse
 import json
-from pathlib import Path
 
 import numpy as np
 import torch
@@ -45,13 +44,13 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from src.backbones import load_backbone
-
-_BACKBONE = "gwn"
 from src.data.adjacency import load_adjacency
 from src.data.dataset import TrafficDataset
+from src.utils import paths
 from src.utils.checkpoint import load_checkpoint
-from src.utils.config import hash_config, load_config
 from src.utils.seed import set_seed
+
+_BACKBONE = "gwn"
 
 
 def _to_BNH(arr: np.ndarray) -> np.ndarray:
@@ -148,23 +147,9 @@ def main() -> None:
     args = parser.parse_args()
 
     # ------------------------------------------------------------------ #
-    # Config + checkpoint path
+    # Checkpoint path
     # ------------------------------------------------------------------ #
-    backbone_cfg = load_config(f"configs/backbone/{_BACKBONE}.yaml")
-    data_cfg = load_config(f"configs/data/{args.dataset}.yaml")
-    cfg = {
-        "backbone": _BACKBONE,
-        "dataset": args.dataset,
-        "seed": args.seed,
-        **backbone_cfg,
-        **data_cfg,
-    }
-    # Keep this exclusion list in sync with scripts/train_backbone.py.
-    _HASH_EXCLUDE = {"seed", "epochs", "batch_size", "lr", "weight_decay", "patience"}
-    cfg_hash = hash_config({k: v for k, v in cfg.items() if k not in _HASH_EXCLUDE})
-    run_id = f"{_BACKBONE}_{args.dataset}_seed{args.seed}_{cfg_hash}"
-    ckpt_dir = Path(f"results/checkpoints/{run_id}")
-    best_ckpt = ckpt_dir / "best.pt"
+    best_ckpt = paths.backbone_dir(args.dataset, args.seed) / "best.pt"
 
     if not best_ckpt.exists():
         raise FileNotFoundError(
@@ -196,12 +181,12 @@ def main() -> None:
     # Data
     # ------------------------------------------------------------------ #
     ds_name = args.dataset
-    scaler_path = f"data/processed/{ds_name}_scaler.yaml"
-    train_ds = TrafficDataset(f"data/processed/{ds_name}_train.npz", scaler_path)
+    scaler_path = paths.scaler_yaml(ds_name)
+    train_ds = TrafficDataset(paths.split_npz(ds_name, "train"), scaler_path)
     mean = train_ds.mean
     std = train_ds.std
 
-    out_dir = Path("results/residuals")
+    out_dir = paths.residual_dir(ds_name, args.seed)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     # ------------------------------------------------------------------ #
@@ -211,7 +196,7 @@ def main() -> None:
 
     for split in ("train", "val", "test"):
         print(f"\nExtracting {split} split ...")
-        ds = TrafficDataset(f"data/processed/{ds_name}_{split}.npz", scaler_path)
+        ds = TrafficDataset(paths.split_npz(ds_name, split), scaler_path)
         loader = DataLoader(
             ds, batch_size=args.batch_size, shuffle=False, num_workers=0
         )
@@ -220,7 +205,7 @@ def main() -> None:
             model, loader, mean, std, eff_device, split
         )
 
-        out_path = out_dir / f"{_BACKBONE}_{ds_name}_{split}_seed{args.seed}.npz"
+        out_path = paths.residual_npz(ds_name, split, args.seed)
         np.savez_compressed(
             out_path,
             residuals=residuals,
@@ -261,7 +246,7 @@ def main() -> None:
     print(f"  pass criterion |vl/tr - 1| < 0.10 ∀ h: "
           f"{'PASS' if overall_pass else 'FAIL'}")
 
-    diag_path = out_dir / f"{_BACKBONE}_{ds_name}_seed{args.seed}_diagnostic.json"
+    diag_path = out_dir / "diagnostic.json"
     diag_path.write_text(json.dumps({
         "dataset": ds_name,
         "seed": args.seed,

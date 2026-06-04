@@ -12,11 +12,7 @@ import pickle
 from pathlib import Path
 import numpy as np
 
-_ADJ_PATHS = {
-    "metrla":  "data/raw/adj_mx_metrla.pkl",
-    "pemsbay": "data/raw/adj_mx_pemsbay.pkl",
-    "pems08f": "data/raw/pems08/PEMS08.csv",
-}
+from src.utils import paths
 
 _NUM_NODES = {
     "metrla":  207,
@@ -69,11 +65,11 @@ def load_adjacency(dataset: str) -> np.ndarray:
         ValueError: unknown dataset name.
         FileNotFoundError: source file not present in ``data/raw/``.
     """
-    if dataset not in _ADJ_PATHS:
+    if dataset not in _NUM_NODES:
         raise ValueError(
-            f"Unknown dataset '{dataset}'. Choose from {list(_ADJ_PATHS)}."
+            f"Unknown dataset '{dataset}'. Choose from {list(_NUM_NODES)}."
         )
-    path = Path(_ADJ_PATHS[dataset])
+    path = paths.raw_adj(dataset)
     if not path.exists():
         raise FileNotFoundError(
             f"Adjacency file not found: {path}\n"
@@ -149,7 +145,7 @@ def laplacian_eigendecomposition(
             eigenvalues  float64  (N,)   sorted ascending, ∈ [0, 2]
             eigenvectors float64  (N, N) columns are eigenvectors
     """
-    cache_path = Path(f"data/processed/{dataset}_laplacian_eigs.npz")
+    cache_path = paths.laplacian_eigs(dataset)
 
     if cache and cache_path.exists():
         data = np.load(cache_path)

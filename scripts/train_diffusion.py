@@ -51,6 +51,7 @@ from src.diffusion.forward_fcps import (
     sample_R_t_given_R0_torch,
 )
 from src.diffusion.prior import load_prior
+from src.utils import paths
 from src.utils.checkpoint import (
     find_latest_checkpoint,
     get_rng_states,
@@ -63,6 +64,9 @@ from src.utils.seed import set_seed
 from src.utils.wandb_setup import init_wandb
 
 _BACKBONE = "gwn"
+# only the kronecker prior is wired up so far; the isotropic-baseline arm
+# comes with the methodology change and will turn this into a cli flag.
+_PRIOR = "kronecker"
 
 # Config keys whose value should NOT contribute to the hash — varying them
 # should NOT trigger a fresh wandb run / fresh checkpoint dir.
@@ -170,11 +174,11 @@ def main() -> None:
 
     cfg = vars(args).copy()
     cfg["backbone"] = _BACKBONE
-    cfg["prior"] = "kronecker-gad"
+    cfg["prior"] = _PRIOR
     cfg_hash = hash_config({k: v for k, v in cfg.items() if k not in _CFG_HASH_EXCLUDE})
     run_id = f"diff_{_BACKBONE}_{args.dataset}_seed{args.seed}_{cfg_hash}"
 
-    ckpt_dir = Path("results/checkpoints/diffusion") / run_id
+    ckpt_dir = paths.diffusion_dir(args.dataset, _PRIOR, args.seed)
     if args.fresh and ckpt_dir.exists():
         import shutil
         shutil.rmtree(ckpt_dir)

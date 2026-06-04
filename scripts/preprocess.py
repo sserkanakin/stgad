@@ -35,20 +35,13 @@ from src.data.preprocessing import (
     compute_time_of_day,
     split_timestamps,
 )
+from src.utils import paths
 from src.utils.config import load_config
 
 X_OFFSETS = np.arange(-11, 1, 1)   # [-11, -10, ..., 0]  — 12 input steps
 Y_OFFSETS = np.arange(1, 13, 1)    # [1, 2, ..., 12]     — 12 target steps
 
 _DATASETS = ("metrla", "pemsbay", "pems08f")
-
-# Source file paths — kept here so a missing file produces a clear error
-# message before we try to read the data config.
-_RAW_PATHS = {
-    "metrla":  "data/raw/metr-la.h5",
-    "pemsbay": "data/raw/pems-bay.h5",
-    "pems08f": "data/raw/pems08/PEMS08.npz",
-}
 
 # Approximate expected window counts for sanity check.
 # METR-LA / PEMS-BAY: DCRNN reference numbers (70/10/20).
@@ -95,7 +88,7 @@ def main() -> None:
     args = parser.parse_args()
     dataset = args.dataset
 
-    raw_path = Path(_RAW_PATHS[dataset])
+    raw_path = paths.raw_primary(dataset)
     if not raw_path.exists():
         sys.exit(
             f"ERROR: {raw_path} not found.\n"
@@ -110,7 +103,7 @@ def main() -> None:
     channel = int(cfg.get("channel", 0))   # only used for .npz source
     mask_missing = bool(cfg.get("mask_missing", True))  # h5 datasets: 0 = missing; pems08: complete
 
-    out_dir = Path("data/processed")
+    out_dir = paths.processed_dir(dataset)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     # ------------------------------------------------------------------
@@ -148,7 +141,7 @@ def main() -> None:
     scaler = compute_scaler(primary[:n_train])
     print(f"  Scaler: mean={scaler['mean']:.4f}, std={scaler['std']:.4f}")
 
-    scaler_path = out_dir / f"{dataset}_scaler.yaml"
+    scaler_path = paths.scaler_yaml(dataset)
     with open(scaler_path, "w") as f:
         yaml.dump(scaler, f, default_flow_style=False)
     print(f"  Saved scaler → {scaler_path}")
@@ -173,7 +166,7 @@ def main() -> None:
             x_mask = np.ones_like(x[..., :1], dtype=bool)
             y_mask = np.ones_like(y, dtype=bool)
 
-        out_path = out_dir / f"{dataset}_{split_name}.npz"
+        out_path = paths.split_npz(dataset, split_name)
         np.savez_compressed(out_path, x=x, y=y, x_mask=x_mask, y_mask=y_mask)
 
         n_windows = len(x)

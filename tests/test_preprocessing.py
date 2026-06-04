@@ -19,6 +19,7 @@ from src.data.preprocessing import (
     split_timestamps,
 )
 from src.data.adjacency import compute_normalized_laplacian
+from src.utils import paths
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -28,11 +29,11 @@ X_OFFSETS = np.arange(-11, 1, 1)   # [-11..0]
 Y_OFFSETS = np.arange(1, 13, 1)    # [1..12]
 
 _DATA_PRESENT = {
-    "metrla":  Path("data/raw/adj_mx_metrla.pkl").exists(),
-    "pemsbay": Path("data/raw/adj_mx_pemsbay.pkl").exists(),
+    "metrla":  paths.raw_adj("metrla").exists(),
+    "pemsbay": paths.raw_adj("pemsbay").exists(),
 }
-_PROCESSED_METRLA  = Path("data/processed/metrla_train.npz").exists()
-_PROCESSED_PEMSBAY = Path("data/processed/pemsbay_train.npz").exists()
+_PROCESSED_METRLA  = paths.split_npz("metrla", "train").exists()
+_PROCESSED_PEMSBAY = paths.split_npz("pemsbay", "train").exists()
 
 
 def _make_synthetic_data(T: int = 200, N: int = 10, seed: int = 0) -> np.ndarray:
@@ -315,7 +316,7 @@ def test_pemsbay_adjacency_shape():
 @pytest.mark.skipif(not _PROCESSED_METRLA, reason="metrla_train.npz not present")
 def test_metrla_processed_x_shape():
     """Processed train file must have 2-channel x."""
-    raw = np.load("data/processed/metrla_train.npz")
+    raw = np.load(paths.split_npz("metrla", "train"))
     assert raw["x"].shape[1] == 12
     assert raw["x"].shape[3] == 2, "x must have 2 channels (speed + tod)"
     assert raw["y"].shape[3] == 1, "y must have 1 channel (speed only)"
@@ -324,7 +325,7 @@ def test_metrla_processed_x_shape():
 @pytest.mark.skipif(not _PROCESSED_METRLA, reason="metrla_train.npz not present")
 def test_metrla_processed_window_count():
     """Train window count should be within 1% of expected ~23,974."""
-    raw = np.load("data/processed/metrla_train.npz")
+    raw = np.load(paths.split_npz("metrla", "train"))
     n = raw["x"].shape[0]
     assert abs(n - 23974) / 23974 < 0.01, f"Train windows: expected ~23974, got {n}"
 
@@ -354,7 +355,7 @@ def test_pemsbay_laplacian_eigenvalue_range():
 @pytest.mark.skipif(not _PROCESSED_PEMSBAY, reason="pemsbay_train.npz not present")
 def test_pemsbay_processed_x_shape():
     """PEMS-BAY processed train file must have 2-channel x, 1-channel y."""
-    raw = np.load("data/processed/pemsbay_train.npz")
+    raw = np.load(paths.split_npz("pemsbay", "train"))
     assert raw["x"].shape[1] == 12
     assert raw["x"].shape[3] == 2, "x must have 2 channels (speed + tod)"
     assert raw["y"].shape[3] == 1, "y must have 1 channel (speed only)"
@@ -363,7 +364,7 @@ def test_pemsbay_processed_x_shape():
 @pytest.mark.skipif(not _PROCESSED_PEMSBAY, reason="pemsbay_train.npz not present")
 def test_pemsbay_processed_window_count():
     """PEMS-BAY train window count should be within 1% of expected ~36,481."""
-    raw = np.load("data/processed/pemsbay_train.npz")
+    raw = np.load(paths.split_npz("pemsbay", "train"))
     n = raw["x"].shape[0]
     assert abs(n - 36481) / 36481 < 0.01, f"Train windows: expected ~36481, got {n}"
 
@@ -371,7 +372,7 @@ def test_pemsbay_processed_window_count():
 @pytest.mark.skipif(not _PROCESSED_METRLA, reason="metrla_train.npz not present")
 def test_metrla_y_not_normalised():
     """y in stored .npz must be raw mph — mean should be well above 0."""
-    raw = np.load("data/processed/metrla_train.npz")
+    raw = np.load(paths.split_npz("metrla", "train"))
     y_mean = float(raw["y"].mean())
     assert y_mean > 10.0, f"y mean = {y_mean:.2f} — looks normalised (expect raw mph ~54)"
 
@@ -379,7 +380,7 @@ def test_metrla_y_not_normalised():
 @pytest.mark.skipif(not _PROCESSED_METRLA, reason="metrla_train.npz not present")
 def test_metrla_tod_channel_in_range():
     """x[..., 1] (time-of-day) must be float in [0, 1), not an integer index."""
-    raw = np.load("data/processed/metrla_train.npz")
+    raw = np.load(paths.split_npz("metrla", "train"))
     tod = raw["x"][..., 1]
     assert tod.min() >= 0.0, f"tod min = {tod.min()}"
     assert tod.max() < 1.0, f"tod max = {tod.max()}"

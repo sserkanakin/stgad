@@ -17,6 +17,8 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
+from src.utils import paths
+
 
 class ResidualDataset(Dataset):
     """In-memory wrapper around a residuals .npz."""
@@ -40,4 +42,4 @@ class ResidualDataset(Dataset):
 
 def residual_path(dataset: str, split: str, seed: int = 0) -> Path:
     """Canonical path for the residual npz file."""
-    return Path("results/residuals") / f"gwn_{dataset}_{split}_seed{seed}.npz"
+    return paths.residual_npz(dataset, split, seed)

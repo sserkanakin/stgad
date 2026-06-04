@@ -20,9 +20,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from functools import lru_cache
-from pathlib import Path
 
 import numpy as np
+
+from src.utils import paths
 
 # ── locked γ⋆ per dataset (geomean of energy-match and spectral-match;
 # ── see results/section3/SUMMARY.md, locked 2026-05-21).
@@ -31,9 +32,6 @@ GAMMA_LOCKED: dict[str, float] = {
     "pemsbay": 0.21271054104199358,
     "pems08f": 0.9239103283128737,
 }
-
-ROOT = Path(__file__).resolve().parents[2]
-
 
 @dataclass(frozen=True)
 class KroneckerPrior:
@@ -86,14 +84,12 @@ class KroneckerPrior:
 
 
 def _load_residuals_train(dataset: str) -> tuple[np.ndarray, np.ndarray]:
-    p = ROOT / "results" / "residuals" / f"gwn_{dataset}_train_seed0.npz"
-    d = np.load(p)
+    d = np.load(paths.residual_npz(dataset, "train", 0))
     return d["residuals"].astype(np.float64), d["mask"].astype(bool)
 
 
 def _load_laplacian_eig(dataset: str) -> tuple[np.ndarray, np.ndarray]:
-    p = ROOT / "data" / "processed" / f"{dataset}_laplacian_eigs.npz"
-    d = np.load(p)
+    d = np.load(paths.laplacian_eigs(dataset))
     return d["eigenvalues"].astype(np.float64), d["eigenvectors"].astype(np.float64)
 
 

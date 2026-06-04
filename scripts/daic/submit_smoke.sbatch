@@ -25,4 +25,10 @@ source "${PROJECT_DIR}/scripts/daic/_common.sh"
 
 : "${DATASET:=metrla}"
 
+export STAGE="smoke"
+RUN_NAME="smoke_${DATASET}"
+scontrol update job="${SLURM_JOB_ID}" JobName="${RUN_NAME}" 2>/dev/null || true
+
+log_run_header "${DAIC_PYTHON} scripts/daic/smoke_test.py --dataset ${DATASET}"
+
 srun --export=ALL "${DAIC_PYTHON}" scripts/daic/smoke_test.py --dataset "${DATASET}"

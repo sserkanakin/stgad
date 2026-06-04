@@ -55,17 +55,16 @@ export PYTHONUNBUFFERED=1
 
 cd "${PROJECT_DIR}"
 
-# Symlink large artefact directories on first run (idempotent).
-# Ensure the symlink targets exist first — otherwise the link is dangling and
-# any downstream `mkdir -p` on the link path fails with "File exists" because
-# Python's exist_ok=True only swallows the error when the path is a directory.
+# symlink the big artefact dirs to the data dir on first run (idempotent).
+# create the targets first so the links aren't dangling.
 mkdir -p data results
-mkdir -p "${DAIC_DATA_DIR}"/{raw,processed,checkpoints,residuals}
+mkdir -p "${DAIC_DATA_DIR}"/{raw,processed,backbone,diffusion,residuals,eval}
 [ -e data/raw          ] || ln -sfn "${DAIC_DATA_DIR}/raw"          data/raw
 [ -e data/processed    ] || ln -sfn "${DAIC_DATA_DIR}/processed"    data/processed
-[ -e results/checkpoints  ] || ln -sfn "${DAIC_DATA_DIR}/checkpoints"  results/checkpoints
-[ -e results/residuals    ] || ln -sfn "${DAIC_DATA_DIR}/residuals"    results/residuals
-# results/prior_params stays in git (small YAMLs); do not symlink it.
+[ -e results/backbone  ] || ln -sfn "${DAIC_DATA_DIR}/backbone"     results/backbone
+[ -e results/diffusion ] || ln -sfn "${DAIC_DATA_DIR}/diffusion"    results/diffusion
+[ -e results/residuals ] || ln -sfn "${DAIC_DATA_DIR}/residuals"    results/residuals
+[ -e results/eval      ] || ln -sfn "${DAIC_DATA_DIR}/eval"         results/eval
 
 # Diagnostics so the slurm log starts with reproducibility info.
 echo "─── job env ─────────────────────────────────────────────────────"
@@ -78,3 +77,19 @@ echo "python:   $(which python)  $(python --version 2>&1)"
 echo "git:      $(cd "${PROJECT_DIR}" && git rev-parse --short HEAD 2>/dev/null || echo 'no-git')"
 nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv,noheader 2>/dev/null || true
 echo "─────────────────────────────────────────────────────────────────"
+
+
+# print a run-identity block. an sbatch calls this after STAGE / DATASET / SEED /
+# PRIOR / RUN_NAME are set, passing the command it will run. makes every slurm
+# log self-identifying: which stage, dataset, seed, prior, wandb group, command.
+log_run_header() {
+  local group="${STAGE:-?}-${DATASET:-?}"
+  [ -n "${PRIOR:-}" ] && group="${group}-${PRIOR}"
+  echo "─── run ─────────────────────────────────────────────────────────"
+  echo "stage:    ${STAGE:-?}"
+  echo "dataset:  ${DATASET:-?}    seed: ${SEED:-?}    prior: ${PRIOR:-n/a}"
+  echo "run name: ${RUN_NAME:-?}"
+  echo "wandb:    project=thesis-diffusion  group=${group}  name=${RUN_NAME:-?}"
+  echo "command:  $*"
+  echo "─────────────────────────────────────────────────────────────────"
+}

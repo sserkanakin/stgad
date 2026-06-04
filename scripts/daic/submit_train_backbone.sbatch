@@ -15,12 +15,12 @@
 #   sbatch --job-name=backbone_metrla_seed0 --export=DATASET=metrla,SEED=0 \
 #          scripts/daic/submit_train_backbone.sbatch
 #
-# the --time below (2h) is the full-run default. a quick smoke needs minutes, so
-# request a short walltime to backfill into the queue much faster (cli --time
-# overrides the directive):
-#   sbatch --time=00:20:00 --job-name=backbone_metrla_seed0 \
-#          --export=DATASET=metrla,SEED=0,EPOCHS=2 \
-#          scripts/daic/submit_train_backbone.sbatch
+# resources are sized for this small model: any gpu (gpu:1), 2 cpus, 8g, and a
+# short 10-min walltime, so smokes backfill into the queue fast. cli flags
+# override these directives, so for the full 100-epoch run give it more time:
+#   sbatch --time=01:00:00 --job-name=backbone_metrla_seed0 \
+#          --export=DATASET=metrla,SEED=0 scripts/daic/submit_train_backbone.sbatch
+# pin a specific gpu only if you need to: --gres=gpu:a40:1
 #
 # --job-name makes the log file run-named; squeue shows the run name either way.
 

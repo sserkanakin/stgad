@@ -1,13 +1,14 @@
 #!/bin/bash
-#SBATCH --job-name=gwn-extract
+#SBATCH --job-name=residuals
 #SBATCH --partition=general
 #SBATCH --qos=short
-#SBATCH --time=00:5:00
-#SBATCH --gres=gpu:a40:1
+#SBATCH --time=00:30:00
+#SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=2
-#SBATCH --mem=24G
-# 24G was chosen so PEMS-BAY (36k windows × 325 sensors × 12 horizons) fits
-# comfortably; 8G OOM-killed there. PEMS08F runs in ~3G.
+#SBATCH --mem=16G
+# residual extraction holds a whole split's predictions in memory before saving;
+# pems-bay peaks ~9g, so 16g leaves headroom (8g OOM-killed there). any gpu is
+# fine - this is short inference, not training.
 #SBATCH --output=logs/residuals/%x-%j.out
 #SBATCH --error=logs/residuals/%x-%j.err
 #SBATCH --mail-user=sserkanakin@icloud.com

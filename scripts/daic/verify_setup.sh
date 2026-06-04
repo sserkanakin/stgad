@@ -138,11 +138,14 @@ else
 fi
 
 echo
-echo "── unit tests ──────────────────────────────────────────────────"
-if pytest -q tests/ 2>&1 | tail -5; then
-  ok "tests/ pass"
+echo "── unit tests (collect only) ───────────────────────────────────"
+# the login node kills heavy processes, so here we only confirm the suite
+# imports + collects cleanly. run the full suite on a compute node, e.g.:
+#   srun --mem=8G --cpus-per-task=2 --time=00:10:00 pytest -q tests/
+if pytest -q --collect-only tests/ >/dev/null 2>&1; then
+  ok "tests collect cleanly (run the full suite on a compute node)"
 else
-  fail "unit tests failed"
+  fail "test collection failed — run: pytest --collect-only tests/"
 fi
 
 echo

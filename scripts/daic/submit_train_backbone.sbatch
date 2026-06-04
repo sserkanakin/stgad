@@ -3,9 +3,9 @@
 #SBATCH --partition=general
 #SBATCH --qos=short
 #SBATCH --time=00:10:00
-#SBATCH --gres=gpu:a40:1
-#SBATCH --cpus-per-task=4
-#SBATCH --mem=16G
+#SBATCH --gres=gpu:1
+#SBATCH --cpus-per-task=2
+#SBATCH --mem=8G
 #SBATCH --output=logs/backbone/%x-%j.out
 #SBATCH --error=logs/backbone/%x-%j.err
 #SBATCH --mail-user=sserkanakin@icloud.com

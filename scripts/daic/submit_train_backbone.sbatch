@@ -12,12 +12,17 @@
 #SBATCH --mail-type=END,FAIL
 #
 # train the gwn backbone on one dataset / seed.
-#   sbatch --export=DATASET=metrla,SEED=0 scripts/daic/submit_train_backbone.sbatch
-#
-# for a run-named log file, also pass --job-name (optional; squeue shows the
-# run name either way via the scontrol rename below):
 #   sbatch --job-name=backbone_metrla_seed0 --export=DATASET=metrla,SEED=0 \
 #          scripts/daic/submit_train_backbone.sbatch
+#
+# the --time below (2h) is the full-run default. a quick smoke needs minutes, so
+# request a short walltime to backfill into the queue much faster (cli --time
+# overrides the directive):
+#   sbatch --time=00:20:00 --job-name=backbone_metrla_seed0 \
+#          --export=DATASET=metrla,SEED=0,EPOCHS=2 \
+#          scripts/daic/submit_train_backbone.sbatch
+#
+# --job-name makes the log file run-named; squeue shows the run name either way.
 
 set -euo pipefail
 mkdir -p logs/backbone

@@ -108,6 +108,7 @@ def main() -> None:
     test_frac = 1.0 - float(cfg.get("split_val", 0.8))
     tod_size = int(cfg.get("tod_size", 288))
     channel = int(cfg.get("channel", 0))   # only used for .npz source
+    mask_missing = bool(cfg.get("mask_missing", True))  # h5 datasets: 0 = missing; pems08: complete
 
     out_dir = Path("data/processed")
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -163,9 +164,14 @@ def main() -> None:
 
     for split_name, data_split in splits.items():
         x, y = build_windows(data_split, X_OFFSETS, Y_OFFSETS)
-        # Mask from raw primary channel (index 0) — before any normalisation
-        x_mask = compute_mask(x[..., :1])   # (N_windows, 12, N, 1) bool
-        y_mask = compute_mask(y)             # (N_windows, 12, N, 1) bool
+        # validity mask. for h5 datasets a 0 reading means missing, so mask it.
+        # pems08 is complete (flow == 0 is valid), so everything is valid.
+        if mask_missing:
+            x_mask = compute_mask(x[..., :1])   # (N_windows, 12, N, 1) bool
+            y_mask = compute_mask(y)             # (N_windows, 12, N, 1) bool
+        else:
+            x_mask = np.ones_like(x[..., :1], dtype=bool)
+            y_mask = np.ones_like(y, dtype=bool)
 
         out_path = out_dir / f"{dataset}_{split_name}.npz"
         np.savez_compressed(out_path, x=x, y=y, x_mask=x_mask, y_mask=y_mask)

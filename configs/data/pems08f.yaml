@@ -10,3 +10,5 @@ stride: 1
 split_train: 0.6
 split_val: 0.8      # cumulative (0.6 train, 0.2 val, 0.2 test)
 tod_size: 288       # 5-min slots per day; synthesised from sample index (no timestamps in npz)
+mask_missing: false # pems08 is complete data; flow == 0 is a valid reading, not missing
+                    # (matches astgcn/stsgcn/diffstg — zeros only excluded at metric time via null_val=0)

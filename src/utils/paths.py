@@ -85,3 +85,28 @@ def run_name(stage, dataset, seed, prior=None):
         parts.append(prior)
     parts.append(f"seed{seed}")
     return "_".join(parts)
+
+
+# --- preflight helpers ---
+# call these at the very top of a job so it fails in the first seconds with a
+# clear message, never deep into a long run or on a missing output directory.
+
+def ensure_dirs(*dirs):
+    """mkdir -p every directory passed in."""
+    for d in dirs:
+        Path(d).mkdir(parents=True, exist_ok=True)
+
+
+def require_inputs(items):
+    """check required input files exist; exit cleanly if any are missing.
+
+    items is a list of (path, hint) pairs; hint says how to produce the file.
+    raises SystemExit (no traceback) listing everything that's missing.
+    """
+    missing = [(Path(p), hint) for p, hint in items if not Path(p).exists()]
+    if missing:
+        lines = ["[preflight] cannot start - missing required inputs:"]
+        for p, hint in missing:
+            lines.append(f"  - {p}")
+            lines.append(f"      -> {hint}")
+        raise SystemExit("\n".join(lines))

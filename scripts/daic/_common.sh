@@ -66,6 +66,9 @@ mkdir -p "${DAIC_DATA_DIR}"/{raw,processed,backbone,diffusion,residuals,eval}
 [ -e results/residuals ] || ln -sfn "${DAIC_DATA_DIR}/residuals"    results/residuals
 [ -e results/eval      ] || ln -sfn "${DAIC_DATA_DIR}/eval"         results/eval
 
+# wandb writes its run buffer here; make sure it exists.
+mkdir -p "${WANDB_DIR:-${PROJECT_DIR}/wandb}"
+
 # Diagnostics so the slurm log starts with reproducibility info.
 echo "─── job env ─────────────────────────────────────────────────────"
 echo "host:     $(hostname)"

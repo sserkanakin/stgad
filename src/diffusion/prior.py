@@ -65,12 +65,27 @@ class KroneckerPrior:
 
 
 def _load_residuals_train(dataset: str) -> tuple[np.ndarray, np.ndarray]:
+    paths.require_inputs([(
+        paths.residual_npz(dataset, "train", 0),
+        f"run scripts/extract_residuals.py --dataset {dataset} --seed 0 first",
+    )])
     d = np.load(paths.residual_npz(dataset, "train", 0))
     return d["residuals"].astype(np.float64), d["mask"].astype(bool)
 
 
 def _load_laplacian_eig(dataset: str) -> tuple[np.ndarray, np.ndarray]:
-    d = np.load(paths.laplacian_eigs(dataset))
+    # self-healing: if the eig cache isn't there yet, build it from the
+    # adjacency and cache it, so a missing file never crashes a run.
+    cache = paths.laplacian_eigs(dataset)
+    if not cache.exists():
+        from src.data.adjacency import (
+            compute_normalized_laplacian,
+            laplacian_eigendecomposition,
+            load_adjacency,
+        )
+        L = compute_normalized_laplacian(load_adjacency(dataset))
+        laplacian_eigendecomposition(L, dataset, cache=True)
+    d = np.load(cache)
     return d["eigenvalues"].astype(np.float64), d["eigenvectors"].astype(np.float64)
 
 

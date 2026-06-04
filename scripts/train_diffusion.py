@@ -180,6 +180,14 @@ def main() -> None:
 
     set_seed(args.seed)
 
+    # ── Preflight: fail fast (not hours in) if an input is missing.
+    _ex = f"run scripts/extract_residuals.py --dataset {args.dataset} --seed {args.seed} first"
+    paths.require_inputs([
+        (paths.residual_npz(args.dataset, "train", args.seed), _ex),
+        (paths.residual_npz(args.dataset, "val", args.seed), _ex),
+        (paths.raw_adj(args.dataset), "sync raw data here (scripts/daic/sync_to_daic.sh --raw)"),
+    ])
+
     # ── Data
     train_ds = ResidualDataset(residual_path(args.dataset, "train", args.seed))
     val_ds = ResidualDataset(residual_path(args.dataset, "val", args.seed))

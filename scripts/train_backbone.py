@@ -243,6 +243,17 @@ def main() -> None:  # noqa: C901
     # ------------------------------------------------------------------ #
     ds_name = args.dataset
     scaler_path = paths.scaler_yaml(ds_name)
+
+    # preflight: fail in the first seconds with a clear message, not mid-run.
+    _pp = f"run scripts/preprocess.py --dataset {ds_name}"
+    paths.require_inputs([
+        (paths.split_npz(ds_name, "train"), _pp),
+        (paths.split_npz(ds_name, "val"), _pp),
+        (paths.split_npz(ds_name, "test"), _pp),
+        (scaler_path, _pp),
+        (paths.raw_adj(ds_name), "sync raw data here (scripts/daic/sync_to_daic.sh --raw)"),
+    ])
+
     train_ds = TrafficDataset(paths.split_npz(ds_name, "train"), scaler_path)
     val_ds = TrafficDataset(paths.split_npz(ds_name, "val"), scaler_path)
 

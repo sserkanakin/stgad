@@ -111,12 +111,12 @@ def main() -> None:
     # ------------------------------------------------------------------ #
     best_ckpt = paths.backbone_dir(args.dataset, args.seed) / "best.pt"
 
-    if not best_ckpt.exists():
-        raise FileNotFoundError(
-            f"Best checkpoint not found: {best_ckpt}\n"
-            f"Run training first: python scripts/train_backbone.py "
-            f"--dataset {args.dataset} --seed {args.seed}"
-        )
+    # preflight: fail fast with a clear message if an input is missing.
+    paths.require_inputs([
+        (best_ckpt, f"run scripts/train_backbone.py --dataset {args.dataset} --seed {args.seed} first"),
+        (paths.split_npz(args.dataset, "train"), f"run scripts/preprocess.py --dataset {args.dataset}"),
+        (paths.scaler_yaml(args.dataset), f"run scripts/preprocess.py --dataset {args.dataset}"),
+    ])
 
     # ------------------------------------------------------------------ #
     # Device + model

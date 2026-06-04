@@ -90,8 +90,8 @@ def init_wandb(
         tags.append(prior)
 
     run = wandb.init(
-        project="thesis-diffusion",
-        entity="tud-thesis",
+        project=os.environ.get("WANDB_PROJECT", "thesis-diffusion"),
+        entity=os.environ.get("WANDB_ENTITY", "tud-thesis"),
         id=unique_id,
         name=name,
         group=group,

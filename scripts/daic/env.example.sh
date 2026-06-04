@@ -47,5 +47,6 @@ export DAIC_GPU_TYPE="a40"
 # ~/.netrc via `wandb login` (setup_env.sh prompts for this). Online mode
 # gives live loss curves / GPU util in the wandb dashboard during the run.
 export WANDB_DIR="${DAIC_DATA_DIR}/wandb"
-export WANDB_MODE="online"      # "offline" if compute nodes are firewalled
+export WANDB_MODE="online"        # "offline" if compute nodes are firewalled
 export WANDB_PROJECT="thesis-diffusion"
+export WANDB_ENTITY="tud-thesis"  # your wandb team or username; must be one you can post to

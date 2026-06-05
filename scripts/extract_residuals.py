@@ -12,7 +12,8 @@ usage:
     python scripts/extract_residuals.py --dataset metrla --seed 0
 
 outputs (under results/residuals/<dataset>/seed<seed>/, see src.utils.paths):
-    {split}.npz       residuals, y_pred, y_true, mask (all (B, N, H)), mean, std
+    {split}.npz       residuals, y_pred, mask (all (B, N, H)), mean, std
+                      (y_true is not stored - it's exactly y_pred + residuals)
     diagnostic.json   the train-vs-val per-horizon variance check
 """
 import argparse
@@ -166,11 +167,12 @@ def main() -> None:
         )
 
         out_path = paths.residual_npz(ds_name, split, args.seed)
+        # note: y_true is NOT saved - it's exactly y_pred + residuals, and only
+        # residuals / y_pred / mask are read downstream. saves ~1/3 of the disk.
         np.savez_compressed(
             out_path,
             residuals=residuals,
             y_pred=y_pred,
-            y_true=y_true,
             mask=mask,
             mean=np.float32(mean),
             std=np.float32(std),

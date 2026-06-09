@@ -36,12 +36,13 @@ export STAGE="diffusion"
 RUN_NAME="diffusion_${DATASET}_${PRIOR}_seed${SEED}"
 scontrol update job="${SLURM_JOB_ID}" JobName="${RUN_NAME}" 2>/dev/null || true
 
-log_run_header "${DAIC_PYTHON} scripts/train_diffusion.py --dataset ${DATASET} --seed ${SEED} \
+log_run_header "${DAIC_PYTHON} scripts/train_diffusion.py --dataset ${DATASET} --prior ${PRIOR} --seed ${SEED} \
 --epochs ${EPOCHS} --batch-size ${BATCH_SIZE} --lr ${LR} --d-h ${D_H} --c-0 ${C_0} --alpha ${ALPHA} ${EXTRA_FLAGS}"
 
 # shellcheck disable=SC2086
 srun --export=ALL "${DAIC_PYTHON}" scripts/train_diffusion.py \
     --dataset "${DATASET}" \
+    --prior "${PRIOR}" \
     --seed "${SEED}" \
     --epochs "${EPOCHS}" \
     --batch-size "${BATCH_SIZE}" \

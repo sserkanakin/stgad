@@ -106,13 +106,41 @@ def _fit_sigma_T(R: np.ndarray, mask: np.ndarray) -> tuple[np.ndarray, np.ndarra
     return delta_h, R_H, Sigma_T
 
 
-@lru_cache(maxsize=4)
-def load_prior(dataset: str) -> KroneckerPrior:
-    """Fit and cache the Kronecker prior for a dataset.
-
-    First call fits Σ_T from training residuals; subsequent calls return
-    the cached instance.
+def _build_isotropic_prior(dataset: str) -> KroneckerPrior:
+    """Scale-matched white-noise baseline: Σ = σ²·I, σ² = masked variance of the
+    training residuals. identity eigenbasis (no spatial/temporal structure) with
+    a constant per-mode precision θ = 1/σ², so the stationary variance is σ²
+    everywhere. strips all structure but keeps the overall noise energy, so the
+    comparison against the kronecker prior isolates the effect of structure.
     """
+    R, mask = _load_residuals_train(dataset)
+    sigma2 = float(R[mask].var())
+    _, N, H = R.shape
+    return KroneckerPrior(
+        dataset=dataset,
+        gamma=0.0,                              # not meaningful for white noise
+        V_S=np.eye(N),                          # identity basis -> no spatial structure
+        lam_S=np.zeros(N),
+        V_T=np.eye(H),                          # identity basis -> no temporal structure
+        mu_T=np.full(H, sigma2),
+        theta=np.full((N, H), 1.0 / sigma2),    # stationary variance 1/θ = σ² everywhere
+        delta_h=np.full(H, sigma2),
+        R_H=np.eye(H),
+    )
+
+
+@lru_cache(maxsize=8)
+def load_prior(dataset: str, prior: str = "kronecker") -> KroneckerPrior:
+    """Fit and cache the diffusion noise prior for a dataset.
+
+    prior="kronecker": structured Σ = Σ_T ⊗ Σ_S (graph + temporal correlations),
+    fit from training residuals on first call.
+    prior="isotropic": scale-matched white noise Σ = σ²·I (the ablation baseline).
+    """
+    if prior == "isotropic":
+        return _build_isotropic_prior(dataset)
+    if prior != "kronecker":
+        raise ValueError(f"unknown prior {prior!r}; use 'kronecker' or 'isotropic'")
     if dataset not in GAMMA_LOCKED:
         raise KeyError(f"no locked γ for dataset {dataset!r}; valid: {sorted(GAMMA_LOCKED)}")
     gamma = GAMMA_LOCKED[dataset]

@@ -54,9 +54,6 @@ from src.utils.seed import set_seed
 from src.utils.wandb_setup import init_wandb
 
 _BACKBONE = "gwn"
-# only the kronecker prior is wired up so far; the isotropic-baseline arm
-# comes with the methodology change and will turn this into a cli flag.
-_PRIOR = "kronecker"
 
 # Config keys whose value should NOT contribute to the hash — varying them
 # should NOT trigger a fresh wandb run / fresh checkpoint dir.
@@ -348,6 +345,8 @@ def _log_reconstruction(epoch: int, res: dict, alpha: float, *, to_wandb: bool) 
 def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--dataset", choices=("metrla", "pemsbay", "pems08f"), required=True)
+    p.add_argument("--prior", choices=("kronecker", "isotropic"), default="kronecker",
+                   help="noise prior: structured kronecker, or the isotropic σ²I baseline")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--epochs", type=int, default=200)
     p.add_argument("--batch-size", type=int, default=32)
@@ -404,11 +403,11 @@ def main() -> None:
 
     cfg = vars(args).copy()
     cfg["backbone"] = _BACKBONE
-    cfg["prior"] = _PRIOR
+    cfg["prior"] = args.prior
     cfg_hash = hash_config({k: v for k, v in cfg.items() if k not in _CFG_HASH_EXCLUDE})
     run_id = f"diff_{_BACKBONE}_{args.dataset}_seed{args.seed}_{cfg_hash}"
 
-    ckpt_dir = paths.diffusion_dir(args.dataset, _PRIOR, args.seed)
+    ckpt_dir = paths.diffusion_dir(args.dataset, args.prior, args.seed)
     if args.fresh and ckpt_dir.exists():
         import shutil
         shutil.rmtree(ckpt_dir)
@@ -447,7 +446,7 @@ def main() -> None:
     )
 
     # ── Prior + schedule
-    prior = load_prior(args.dataset)
+    prior = load_prior(args.dataset, args.prior)
     prior_t = prior_to_torch(prior, device=device, dtype=torch.float32)
     schedule = FCPSSchedule(c_min=args.c_min, c_0=args.c_0, alpha=args.alpha, T=1.0)
     print(
@@ -489,7 +488,7 @@ def main() -> None:
     if os.environ.get("WANDB_MODE", "online") != "disabled":
         init_wandb(
             cfg, stage="diffusion", dataset=args.dataset, seed=args.seed,
-            prior=_PRIOR, backbone=_BACKBONE,
+            prior=args.prior, backbone=_BACKBONE,
         )
     import wandb  # safe — always installed
 

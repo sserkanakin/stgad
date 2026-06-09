@@ -32,6 +32,13 @@ hdf = [
     "tables",
 ]
 
+# interactive residual/graph/diagnostic dashboard (scripts/analysis/dashboard.py).
+# local-dev only; never needed on DAIC. install via:  pip install -e ".[viz]"
+viz = [
+    "streamlit",
+    "plotly",
+]
+
 dev = [
     "pytest",
     "jupyter",

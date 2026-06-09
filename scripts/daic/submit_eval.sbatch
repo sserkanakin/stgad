@@ -10,8 +10,11 @@
 #SBATCH --mail-type=END,FAIL
 #
 # evaluate trained diffusion checkpoints on the test split.
-#   sbatch --partition=all --gres=gpu:nvidia_l40:1 scripts/daic/submit_eval.sbatch
-# pass eval flags via EXTRA_FLAGS, e.g. EXTRA_FLAGS="--k 50 --n-steps 100".
+#   # all 6 sequentially in one job:
+#   sbatch --partition=all --gres=gpu:nvidia_a40:1 scripts/daic/submit_eval.sbatch
+#   # one checkpoint per job (fan out 6 in parallel):
+#   EVAL_ARGS="--dataset metrla --prior kronecker" sbatch ... scripts/daic/submit_eval.sbatch
+# EVAL_ARGS defaults to --all; add extra eval flags (e.g. --k 50) right in it.
 
 set -euo pipefail
 mkdir -p logs/eval
@@ -19,8 +22,8 @@ export PROJECT_DIR="${SLURM_SUBMIT_DIR:-$PWD}"
 export STAGE="eval"
 source "${PROJECT_DIR}/scripts/daic/_common.sh"
 
-EXTRA_FLAGS="${EXTRA_FLAGS:-}"
-log_run_header "${DAIC_PYTHON} scripts/eval_diffusion.py --all ${EXTRA_FLAGS}"
+EVAL_ARGS="${EVAL_ARGS:---all}"
+log_run_header "${DAIC_PYTHON} scripts/eval_diffusion.py ${EVAL_ARGS}"
 
 # shellcheck disable=SC2086
-srun --export=ALL "${DAIC_PYTHON}" scripts/eval_diffusion.py --all ${EXTRA_FLAGS}
+srun --export=ALL "${DAIC_PYTHON}" scripts/eval_diffusion.py ${EVAL_ARGS}

@@ -91,10 +91,16 @@ def evaluate(dataset, prior, seed, *, device, k, n_steps, eta, alpha,
     # don't OOM: process chunk windows at a time with chunk*k <= gen_batch.
     chunk = max(1, gen_batch // k)
 
+    import time
+    nchunks = (n_total + chunk - 1) // chunk
+    print(f"[eval] {dataset}/{prior}: {n_total} test windows, k={k}, chunk={chunk}, "
+          f"{nchunks} chunks", flush=True)
+    t0 = time.time()
+
     # ── point accuracy + Winkler: K samples per window, chunked over windows ──
     mae_n = torch.zeros(H); mse_n = torch.zeros(H); cnt = torch.zeros(H)
     wink_n = torch.zeros(H); cov_n = torch.zeros(H)
-    for start in range(0, n_total, chunk):
+    for ci, start in enumerate(range(0, n_total, chunk)):
         end = min(start + chunk, n_total)
         R0 = R0_all[start:end].to(device)
         Y = Y_all[start:end].to(device)
@@ -114,6 +120,14 @@ def evaluate(dataset, prior, seed, *, device, k, n_steps, eta, alpha,
         inside = ((R0 >= lo) & (R0 <= hi)).float()
         sn, _ = _masked_sums(inside, Mk);  cov_n += sn.cpu()
 
+        if ci % max(1, nchunks // 10) == 0 or ci == nchunks - 1:
+            el = time.time() - t0
+            eta = el / (ci + 1) * (nchunks - ci - 1)
+            print(f"  [{dataset}/{prior}] point {ci+1}/{nchunks} "
+                  f"({100*(ci+1)/nchunks:.0f}%)  elapsed={el:.0f}s  eta={eta:.0f}s", flush=True)
+
+    print(f"  [{dataset}/{prior}] point done in {time.time()-t0:.0f}s; computing W1/energy...",
+          flush=True)
     cnt = cnt.clamp(min=1.0)
     mae_h = (mae_n / cnt); mse_h = (mse_n / cnt)
     wink_h = (wink_n / cnt); cov_h = (cov_n / cnt)

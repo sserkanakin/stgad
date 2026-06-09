@@ -39,6 +39,7 @@ from src.diffusion.forward_fcps import (
 )
 from src.diffusion.prior import load_prior
 from src.diffusion.reverse import reverse_sample
+from src.eval.distribution import energy_distance, sliced_wasserstein1
 from src.eval.intervals import masked_winkler_per_horizon
 from src.utils import paths
 from src.utils.checkpoint import (
@@ -241,6 +242,79 @@ def reconstruction_eval(
     }
 
 
+@torch.no_grad()
+def generative_fidelity_eval(
+    R0: torch.Tensor,
+    Y_hat: torch.Tensor,
+    *,
+    denoiser: R0Denoiser,
+    prior,
+    schedule: FCPSSchedule,
+    device: torch.device,
+    n_steps: int,
+    n_samples: int,
+    n_proj: int,
+    eta: float,
+    generator: Optional[torch.Generator],
+) -> dict:
+    """W1 generative-fidelity check (global, distributional).
+
+    R0 / Y_hat are a fixed subsample of fully-observed val windows (complete
+    case, so the R^N node vectors are clean - no masked garbage). we draw
+    `n_samples` pure-prior samples per window through the full stochastic
+    reverse sde (eta=1 by default), then per horizon compare the generated
+    residual cloud against the true cloud in node-space via sliced wasserstein-1
+    and energy distance. this asks whether the generative chain produces
+    realistic residuals, not whether it can locally undo a small perturbation.
+    """
+    denoiser.eval()
+    R0 = R0.to(device)
+    Y_hat = Y_hat.to(device)
+    W, N, H = R0.shape
+
+    # generate: pure prior -> full reverse sde, n_samples draws per window.
+    Y_hat_rep = Y_hat.repeat(n_samples, 1, 1)                  # (S*W, N, H)
+    gen_flat, _ = reverse_sample(
+        prior, schedule, denoiser, Y_hat_rep, n_steps=n_steps,
+        eta=eta, R_T=None, generator=generator,
+    )
+    gen = gen_flat.view(n_samples, W, N, H)                    # (S, W, N, H)
+
+    w1_h, ed_h = [], []
+    for h in range(H):
+        true_cloud = R0[:, :, h]                               # (W, N)
+        gen_cloud = gen[:, :, :, h].reshape(n_samples * W, N)  # (S*W, N)
+        w1_h.append(sliced_wasserstein1(gen_cloud, true_cloud, n_proj, generator))
+        ed_h.append(energy_distance(gen_cloud, true_cloud))
+
+    return {
+        "w1_h": w1_h,
+        "ed_h": ed_h,
+        "w1": float(sum(w1_h) / len(w1_h)),
+        "ed": float(sum(ed_h) / len(ed_h)),
+        "n_windows": W,
+        "n_samples": n_samples,
+    }
+
+
+def _log_w1(epoch: int, res: dict, frac: float, *, to_wandb: bool) -> None:
+    """print the W1 generative-fidelity result and optionally push to wandb."""
+    horizons = [h for h in _HL_HORIZONS if h <= len(res["w1_h"])]
+    hl = ", ".join(f"h{h}=W1:{res['w1_h'][h - 1]:.3f}/ED:{res['ed_h'][h - 1]:.3f}"
+                   for h in horizons)
+    print(f"  [w1] {res['n_windows']} clean windows x{res['n_samples']} "
+          f"(={frac:.2f} of val)  mean W1={res['w1']:.3f} ED={res['ed']:.3f}  ({hl})",
+          flush=True)
+    if not to_wandb:
+        return
+    import wandb
+    log = {"w1/swd": res["w1"], "w1/energy": res["ed"], "epoch": epoch}
+    for h in horizons:
+        log[f"w1/swd_h{h}"] = res["w1_h"][h - 1]
+        log[f"w1/energy_h{h}"] = res["ed_h"][h - 1]
+    wandb.log(log)
+
+
 def _log_reconstruction(epoch: int, res: dict, alpha: float, *, to_wandb: bool) -> None:
     """print the reconstruction-eval result and optionally push scalars to wandb."""
     pct = int(round((1.0 - alpha) * 100))
@@ -298,6 +372,17 @@ def main() -> None:
                    help="miscoverage for the winkler interval (0.1 -> central 90%%)")
     p.add_argument("--recon-log-every", type=int, default=25,
                    help="record the reconstruction mae/mse every this many reverse steps")
+    # ── W1 generative-fidelity eval (fixed subsample of clean val windows)
+    p.add_argument("--w1-every", type=int, default=20,
+                   help="run the W1 (sliced wasserstein + energy) eval every N epochs (0 disables)")
+    p.add_argument("--w1-windows", type=int, default=512,
+                   help="number of fully-observed val windows in the W1 cloud")
+    p.add_argument("--w1-samples", type=int, default=1,
+                   help="prior-seeded samples generated per window for the W1 cloud")
+    p.add_argument("--w1-proj", type=int, default=128,
+                   help="random projections for the sliced wasserstein-1")
+    p.add_argument("--w1-eta", type=float, default=1.0,
+                   help="reverse-sde noise level for W1 sampling (1.0 = full stochastic sde)")
     p.add_argument("--smoke", action="store_true", help="1 epoch, tiny batch, wandb disabled")
     p.add_argument("--fresh", action="store_true", help="delete existing checkpoint dir + restart")
     p.add_argument("--max-train-batches", type=int, default=0,
@@ -308,10 +393,13 @@ def main() -> None:
         args.epochs = 1
         args.batch_size = 8
         args.max_train_batches = max(args.max_train_batches, 5)
-        # exercise the recon eval cheaply on the single smoke epoch
+        # exercise the recon + w1 evals cheaply on the single smoke epoch
         args.recon_every = 1
         args.recon_steps = 20
         args.recon_samples = 4
+        args.w1_every = 1
+        args.w1_windows = 16
+        args.w1_proj = 16
         os.environ.setdefault("WANDB_MODE", "disabled")
 
     cfg = vars(args).copy()
@@ -430,6 +518,36 @@ def main() -> None:
             to_wandb=os.environ.get("WANDB_MODE", "online") != "disabled",
         )
 
+    # ── W1 cloud: a fixed subsample of fully-observed (complete-case) val
+    # windows, so the per-horizon R^N node vectors carry no masked garbage.
+    if args.w1_every:
+        full_valid = val_ds.mask.reshape(len(val_ds), -1).all(dim=1)   # (Nval,)
+        valid_idx = full_valid.nonzero(as_tuple=True)[0]
+        w1_frac = float(full_valid.float().mean())
+        n_w1 = min(args.w1_windows, valid_idx.numel())
+        sel = valid_idx[:n_w1]
+        w1_R0, w1_Yhat = val_ds.R0[sel], val_ds.Y_hat[sel]
+        print(f"[train_diffusion] W1 cloud: {n_w1} clean windows "
+              f"({w1_frac:.2f} of val fully observed)", flush=True)
+    else:
+        w1_R0 = w1_Yhat = None
+        w1_frac = 0.0
+
+    def _maybe_w1(epoch: int, is_last: bool) -> None:
+        if not args.w1_every or w1_R0 is None or w1_R0.shape[0] == 0:
+            return
+        if epoch % args.w1_every != 0 and not is_last:
+            return
+        res = generative_fidelity_eval(
+            w1_R0, w1_Yhat, denoiser=denoiser, prior=prior, schedule=schedule,
+            device=device, n_steps=args.recon_steps, n_samples=args.w1_samples,
+            n_proj=args.w1_proj, eta=args.w1_eta, generator=recon_gen,
+        )
+        _log_w1(
+            epoch, res, w1_frac,
+            to_wandb=os.environ.get("WANDB_MODE", "online") != "disabled",
+        )
+
     # ── Train
     for epoch in range(start_epoch, args.epochs):
         denoiser.train()
@@ -465,6 +583,7 @@ def main() -> None:
             wandb.log({"train/loss": train_loss, "val/loss": val_loss, "epoch": epoch})
 
         _maybe_recon(epoch, is_last=(epoch == args.epochs - 1))
+        _maybe_w1(epoch, is_last=(epoch == args.epochs - 1))
 
         improved = val_loss < best_val
         if improved:

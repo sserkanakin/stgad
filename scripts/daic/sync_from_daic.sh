@@ -31,7 +31,7 @@ for arg in "$@"; do
   esac
 done
 
-REMOTE="${DAIC_NETID}@login.daic.tudelft.nl"
+REMOTE="${DAIC_NETID}@${DAIC_LOGIN_HOST}"
 RSYNC_BASE=(rsync --progress -avz --no-perms)
 
 # rsync exits 23 (some files vanished) or 24 (source dir doesn't exist) when

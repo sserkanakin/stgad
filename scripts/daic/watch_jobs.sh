@@ -17,7 +17,7 @@ if [ -z "${DAIC_NETID:-}" ]; then
   exit 1
 fi
 
-REMOTE="${DAIC_NETID}@login.daic.tudelft.nl"
+REMOTE="${DAIC_NETID}@${DAIC_LOGIN_HOST}"
 LOGS_DIR="${DAIC_PROJECT_DIR}/logs"
 
 FOLLOW=false

@@ -52,7 +52,7 @@ elif [ -n "${1:-}" ]; then
   done
 fi
 
-REMOTE="${DAIC_NETID}@login.daic.tudelft.nl"
+REMOTE="${DAIC_NETID}@${DAIC_LOGIN_HOST}"
 RSYNC_BASE=(rsync --progress -avz --no-perms \
             -e 'ssh -o ServerAliveInterval=30 -o ServerAliveCountMax=10')
 

@@ -1,9 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=diffusion
-#SBATCH --partition=general
-#SBATCH --qos=medium
 #SBATCH --time=24:00:00
-#SBATCH --gres=gpu:a40:1
+# partition / qos / gres are injected per-cluster by submit.sh.
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32G
 #SBATCH --output=logs/diffusion/%x-%j.out

@@ -15,9 +15,9 @@ cd "${PROJECT_DIR}"
 # create them, so make sure they exist (they're gitignored and easy to wipe).
 mkdir -p logs/{backbone,residuals,diffusion,smoke,eval}
 
-if [ -z "${DAIC_CONDA_ENV:-}" ]; then
-  echo "FAIL: env.sh not sourced or out of date (DAIC_CONDA_ENV unset)." >&2
-  echo "      Regenerate from env.example.sh and edit your NetID + DATA_DIR." >&2
+if [ -z "${DAIC_CLUSTER:-}" ]; then
+  echo "FAIL: env.sh not sourced or out of date (DAIC_CLUSTER unset)." >&2
+  echo "      Run: source scripts/daic/env.sh   (it sources clusters.sh)." >&2
   exit 1
 fi
 
@@ -31,7 +31,7 @@ fail() { echo -e "  ${FAIL} $1"; PASS=false; }
 
 echo
 echo "── env vars ────────────────────────────────────────────────────"
-for v in DAIC_NETID DAIC_PROJECT_DIR DAIC_DATA_DIR DAIC_CONDA_ENV DAIC_CUDA_MODULE DAIC_GPU_TYPE; do
+for v in DAIC_NETID DAIC_CLUSTER DAIC_LOGIN_HOST DAIC_PROJECT_DIR DAIC_DATA_DIR DAIC_CUDA_MODULE DAIC_PARTITION; do
   if [ -n "${!v:-}" ] && [ "${!v}" != "CHANGE_ME" ]; then
     ok "${v}=${!v}"
   else
@@ -40,38 +40,51 @@ for v in DAIC_NETID DAIC_PROJECT_DIR DAIC_DATA_DIR DAIC_CONDA_ENV DAIC_CUDA_MODU
 done
 
 echo
-echo "── modules ─────────────────────────────────────────────────────"
-module use /opt/insy/modulefiles 2>/dev/null || true
-if module load "${DAIC_CUDA_MODULE}" 2>/dev/null; then
-  ok "loaded ${DAIC_CUDA_MODULE}"
-else
-  fail "could not load ${DAIC_CUDA_MODULE} (run \`module avail cuda\` to list)"
-fi
-# cuDNN is optional — PyTorch wheels bundle it.
-if [ -n "${DAIC_CUDNN_MODULE:-}" ]; then
-  if module load "${DAIC_CUDNN_MODULE}" 2>/dev/null; then
-    ok "loaded ${DAIC_CUDNN_MODULE} (optional)"
+echo "── modules + python (cluster: ${DAIC_CLUSTER}) ─────────────────"
+if [ "${DAIC_PYTHON_KIND}" = "conda" ]; then
+  # stable DAIC: insy modulefiles + conda.
+  module use "${DAIC_MODULE_USE}" 2>/dev/null || true
+  if module load "${DAIC_CUDA_MODULE}" 2>/dev/null; then
+    ok "loaded ${DAIC_CUDA_MODULE}"
   else
-    warn "${DAIC_CUDNN_MODULE} not loadable — PyTorch's bundled cuDNN will be used"
+    fail "could not load ${DAIC_CUDA_MODULE} (run \`module avail cuda\` to list)"
   fi
-fi
-
-echo
-echo "── conda env ───────────────────────────────────────────────────"
-module load miniconda/3 2>/dev/null || true
-# conda.sh references $PS1, which is unset in non-interactive shells
-# under `set -u`. Define it as empty to silence the unbound-variable error.
-: "${PS1:=}"
-# shellcheck source=/dev/null
-source "$(conda info --base)/etc/profile.d/conda.sh"
-DAIC_CONDA_PATH="${HOME}/.conda/envs/${DAIC_CONDA_ENV}"
-if [ -x "${DAIC_CONDA_PATH}/bin/python" ]; then
-  conda activate "${DAIC_CONDA_PATH}"
-  ok "conda env activated: ${DAIC_CONDA_PATH}"
-  ok "python: $(python --version 2>&1)  ($(which python))"
+  if [ -n "${DAIC_CUDNN_MODULE:-}" ]; then
+    module load "${DAIC_CUDNN_MODULE}" 2>/dev/null \
+      && ok "loaded ${DAIC_CUDNN_MODULE} (optional)" \
+      || warn "${DAIC_CUDNN_MODULE} not loadable — PyTorch's bundled cuDNN will be used"
+  fi
+  module load "${DAIC_CONDA_MODULE}" 2>/dev/null || true
+  : "${PS1:=}"
+  # shellcheck source=/dev/null
+  source "$(conda info --base)/etc/profile.d/conda.sh"
+  if [ -x "${DAIC_CONDA_PREFIX}/bin/python" ]; then
+    conda activate "${DAIC_CONDA_PREFIX}"
+    ok "conda env activated: ${DAIC_CONDA_PREFIX}"
+    ok "python: $(python --version 2>&1)  ($(which python))"
+  else
+    fail "conda env not found at ${DAIC_CONDA_PREFIX} — run setup_env.sh"
+    exit 1
+  fi
 else
-  fail "conda env not found at ${DAIC_CONDA_PATH} — run setup_env.sh"
-  exit 1
+  # experimental DAIC: 2025 Lmod tree + venv overlay.
+  for m in "${DAIC_MODULE_TREE}" "${DAIC_PYTHON_MODULE}" "${DAIC_TORCH_MODULE}"; do
+    module load "$m" 2>/dev/null && ok "loaded $m" || fail "could not load $m"
+  done
+  [ -n "${DAIC_CUDNN_MODULE:-}" ] && { module load "${DAIC_CUDNN_MODULE}" 2>/dev/null \
+    && ok "loaded ${DAIC_CUDNN_MODULE} (optional)" \
+    || warn "${DAIC_CUDNN_MODULE} not loadable — torch ships its own cuDNN"; }
+  if [ -x "${DAIC_VENV_DIR}/bin/python" ]; then
+    # shellcheck source=/dev/null
+    source "${DAIC_VENV_DIR}/bin/activate"
+    # venv deps must win over the module py-* packages on PYTHONPATH.
+    export PYTHONPATH="${DAIC_VENV_DIR}/lib/python${DAIC_PYTHON_VERSION}/site-packages:${PYTHONPATH:-}"
+    ok "venv activated: ${DAIC_VENV_DIR}"
+    ok "python: $(python --version 2>&1)  ($(which python))"
+  else
+    fail "venv not found at ${DAIC_VENV_DIR} — run setup_env.sh"
+    exit 1
+  fi
 fi
 
 echo

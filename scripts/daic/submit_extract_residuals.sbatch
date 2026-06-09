@@ -1,9 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=residuals
-#SBATCH --partition=general
-#SBATCH --qos=short
 #SBATCH --time=00:30:00
-#SBATCH --gres=gpu:1
+# partition / qos / gres are injected per-cluster by submit.sh.
 #SBATCH --cpus-per-task=2
 #SBATCH --mem=16G
 # residual extraction holds a whole split's predictions in memory before saving;

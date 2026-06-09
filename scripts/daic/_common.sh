@@ -22,24 +22,43 @@ fi
 # shellcheck source=/dev/null
 source "${ENV_FILE}"
 
-module use /opt/insy/modulefiles
-module load "${DAIC_CUDA_MODULE}"
-# cuDNN is bundled in PyTorch's cu121 wheels, so the system module isn't
-# required. Load it only if env.sh pinned a version that exists.
-if [ -n "${DAIC_CUDNN_MODULE:-}" ]; then
-  module load "${DAIC_CUDNN_MODULE}" 2>/dev/null || echo \
-    "  [warn] could not load ${DAIC_CUDNN_MODULE}; relying on PyTorch's bundled cuDNN"
+# load modules + activate the project python, branching on the cluster.
+# clusters.sh (sourced via env.sh) set DAIC_PYTHON_KIND + the module names.
+if [ "${DAIC_PYTHON_KIND}" = "conda" ]; then
+  # stable DAIC: insy modulefiles + a conda env on NFS home.
+  module use "${DAIC_MODULE_USE}"
+  module load "${DAIC_CUDA_MODULE}"
+  if [ -n "${DAIC_CUDNN_MODULE:-}" ]; then
+    module load "${DAIC_CUDNN_MODULE}" 2>/dev/null || echo \
+      "  [warn] could not load ${DAIC_CUDNN_MODULE}; relying on PyTorch's bundled cuDNN"
+  fi
+  module load "${DAIC_CONDA_MODULE}"
+  # conda.sh references $PS1, which is unset under `set -u` in sbatch jobs.
+  : "${PS1:=}"
+  # shellcheck source=/dev/null
+  source "$(conda info --base)/etc/profile.d/conda.sh"
+  conda activate "${DAIC_CONDA_PREFIX}"
+else
+  # experimental DAIC: 2025 Lmod tree (python 3.11 + cuda torch) + a venv
+  # overlay for our pure-python deps. the venv is built with
+  # --system-site-packages so it reuses the module's torch.
+  module load "${DAIC_MODULE_TREE}"
+  module load "${DAIC_PYTHON_MODULE}"
+  module load "${DAIC_TORCH_MODULE}"
+  [ -n "${DAIC_CUDNN_MODULE:-}" ] && module load "${DAIC_CUDNN_MODULE}" 2>/dev/null || true
+  if [ ! -x "${DAIC_VENV_DIR}/bin/python" ]; then
+    echo "ERROR: venv not found at ${DAIC_VENV_DIR} — run setup_env.sh first." >&2
+    exit 1
+  fi
+  # shellcheck source=/dev/null
+  source "${DAIC_VENV_DIR}/bin/activate"
+  # the 2025 py-* modules put their site-packages on PYTHONPATH, which would
+  # otherwise shadow the newer versions we pip-installed into the venv (e.g.
+  # wandb needs a newer typing_extensions than the module ships). put the venv
+  # site-packages first so our deps win; module-only packages (torch) still
+  # resolve further down PYTHONPATH.
+  export PYTHONPATH="${DAIC_VENV_DIR}/lib/python${DAIC_PYTHON_VERSION}/site-packages:${PYTHONPATH:-}"
 fi
-module load miniconda/3
-
-# Activate the project conda env. The env lives at a fixed path under
-# $HOME/.conda/envs/<name> (NFS home — required for pip's rename ops to
-# work). Activate by full prefix path.
-# conda.sh references $PS1, which is unset under `set -u` in sbatch jobs.
-: "${PS1:=}"
-# shellcheck source=/dev/null
-source "$(conda info --base)/etc/profile.d/conda.sh"
-conda activate "${HOME}/.conda/envs/${DAIC_CONDA_ENV}"
 
 # Absolute python path. srun on DAIC's Slurm strips PATH, so `srun python`
 # fails with "No such file or directory". sbatch scripts use $DAIC_PYTHON

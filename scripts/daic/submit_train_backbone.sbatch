@@ -1,9 +1,9 @@
 #!/bin/bash
 #SBATCH --job-name=backbone
-#SBATCH --partition=general
-#SBATCH --qos=short
 #SBATCH --time=00:10:00
-#SBATCH --gres=gpu:1
+# partition / qos / gres are injected per-cluster by submit.sh (they differ
+# between stable and experimental DAIC, and #SBATCH lines can't read env vars).
+# submit directly only with explicit --partition/--gres for your cluster.
 #SBATCH --cpus-per-task=2
 #SBATCH --mem=8G
 #SBATCH --output=logs/backbone/%x-%j.out

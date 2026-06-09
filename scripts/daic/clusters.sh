@@ -77,7 +77,11 @@ case "$DAIC_CLUSTER" in
     export DAIC_QOS_SHORT=""
     export DAIC_QOS_MEDIUM=""
     export DAIC_QOS_LONG=""
-    export DAIC_GRES_GPU="gpu:1"
+    # default to A40 (sm_86, 12 cards) NOT generic gpu:1: the cluster's 36 idle
+    # RTX PRO 6000 are Blackwell (sm_120) and crash py-torch/2.5.1 (sm_80/sm_90),
+    # so a plain gpu:1 can land on one and die. pin gpu:nvidia_l40:1 for a faster
+    # supported card. see [[daic-cluster-reference]].
+    export DAIC_GRES_GPU="gpu:nvidia_a40:1"
     export DAIC_GRES_GPU_TYPED="gpu:nvidia_a40:1"
     ;;
 

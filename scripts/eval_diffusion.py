@@ -23,9 +23,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from typing import Optional
 
 import numpy as np
+
+# reduce fragmentation for the big-N generation batches (set before torch init)
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 import torch
 
 from src.data.adjacency import load_adjacency
@@ -75,13 +79,17 @@ def load_run(dataset, prior, seed, device):
 
 @torch.no_grad()
 def evaluate(dataset, prior, seed, *, device, k, n_steps, eta, alpha,
-             w1_windows, w1_samples, w1_proj, chunk, max_windows, generator):
+             w1_windows, w1_samples, w1_proj, gen_batch, max_windows, generator):
     denoiser, prior_obj, schedule, cfg, ckpt_epoch = load_run(dataset, prior, seed, device)
     N, H = prior_obj.N, prior_obj.H
 
     test = ResidualDataset(residual_path(dataset, "test", seed))
     R0_all, Y_all, M_all = test.R0, test.Y_hat, test.mask
     n_total = R0_all.shape[0] if not max_windows else min(max_windows, R0_all.shape[0])
+
+    # cap trajectories per reverse_sample call so big-N datasets (pemsbay N=325)
+    # don't OOM: process chunk windows at a time with chunk*k <= gen_batch.
+    chunk = max(1, gen_batch // k)
 
     # ── point accuracy + Winkler: K samples per window, chunked over windows ──
     mae_n = torch.zeros(H); mse_n = torch.zeros(H); cnt = torch.zeros(H)
@@ -118,11 +126,17 @@ def evaluate(dataset, prior, seed, *, device, k, n_steps, eta, alpha,
     sel = vidx[:n_w1]
     w1_frac = float(valid.float().mean())
     R0v = R0_all[sel].to(device); Yv = Y_all[sel].to(device)
-    gen, _ = reverse_sample(
-        prior_obj, schedule, denoiser, Yv.repeat(w1_samples, 1, 1),
-        n_steps=n_steps, eta=eta, R_T=None, generator=generator,
-    )
-    gen = gen.view(w1_samples, n_w1, N, H)
+    # sub-batch windows so w1_samples * sub <= gen_batch (same OOM guard)
+    wb = max(1, gen_batch // w1_samples)
+    gen_parts = []
+    for s in range(0, n_w1, wb):
+        e = min(s + wb, n_w1)
+        g, _ = reverse_sample(
+            prior_obj, schedule, denoiser, Yv[s:e].repeat(w1_samples, 1, 1),
+            n_steps=n_steps, eta=eta, R_T=None, generator=generator,
+        )
+        gen_parts.append(g.view(w1_samples, e - s, N, H))
+    gen = torch.cat(gen_parts, dim=1)              # (w1_samples, n_w1, N, H)
     w1_h, ed_h = [], []
     for h in range(H):
         true_c = R0v[:, :, h]
@@ -200,7 +214,8 @@ def main():
     p.add_argument("--w1-windows", type=int, default=512)
     p.add_argument("--w1-samples", type=int, default=4)
     p.add_argument("--w1-proj", type=int, default=128)
-    p.add_argument("--chunk", type=int, default=64, help="windows per generation batch")
+    p.add_argument("--gen-batch", type=int, default=1024,
+                   help="max trajectories per reverse_sample call (caps gpu memory)")
     p.add_argument("--max-windows", type=int, default=0, help="cap test windows (0=all)")
     args = p.parse_args()
 
@@ -221,8 +236,8 @@ def main():
     for ds, pr in jobs:
         res = evaluate(ds, pr, args.seed, device=device, k=args.k, n_steps=args.n_steps,
                        eta=args.eta, alpha=args.alpha, w1_windows=args.w1_windows,
-                       w1_samples=args.w1_samples, w1_proj=args.w1_proj, chunk=args.chunk,
-                       max_windows=args.max_windows, generator=g)
+                       w1_samples=args.w1_samples, w1_proj=args.w1_proj,
+                       gen_batch=args.gen_batch, max_windows=args.max_windows, generator=g)
         _print_one(res)
         print(f"  wrote {_save(res)}")
         results.append(res)

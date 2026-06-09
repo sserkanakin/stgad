@@ -38,6 +38,8 @@ from src.diffusion.forward_fcps import (
     sample_R_t_given_R0_torch,
 )
 from src.diffusion.prior import load_prior
+from src.diffusion.reverse import reverse_sample
+from src.eval.intervals import masked_winkler_per_horizon
 from src.utils import paths
 from src.utils.checkpoint import (
     find_latest_checkpoint,
@@ -67,6 +69,22 @@ def masked_mse(pred: torch.Tensor, target: torch.Tensor, mask: torch.Tensor) -> 
     """Masked mean squared error. pred/target/mask all (B, N, H)."""
     err2 = (pred - target).pow(2) * mask.float()
     return err2.sum() / (mask.float().sum() + 1e-8)
+
+
+def masked_mae(pred: torch.Tensor, target: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+    """Masked mean absolute error. pred/target/mask all (B, N, H)."""
+    err = (pred - target).abs() * mask.float()
+    return err.sum() / (mask.float().sum() + 1e-8)
+
+
+def masked_mae_per_h(
+    pred: torch.Tensor, target: torch.Tensor, mask: torch.Tensor
+) -> torch.Tensor:
+    """Masked mean absolute error per horizon. inputs (B, N, H) -> (H,)."""
+    err = (pred - target).abs() * mask.float()
+    num = err.sum(dim=(0, 1))
+    den = mask.float().sum(dim=(0, 1)).clamp(min=1.0)
+    return num / den
 
 
 # ─── Training step ───────────────────────────────────────────────────────────
@@ -128,6 +146,128 @@ def validate(
     return total / max(n, 1)
 
 
+# ─── End-to-end reconstruction / generation eval ─────────────────────────────
+
+
+_HL_HORIZONS = (3, 6, 12)  # horizons highlighted in the printout (1-indexed)
+
+
+@torch.no_grad()
+def reconstruction_eval(
+    batch: dict[str, torch.Tensor],
+    *,
+    denoiser: R0Denoiser,
+    prior,
+    prior_t,
+    schedule: FCPSSchedule,
+    device: torch.device,
+    n_steps: int,
+    n_samples: int,
+    alpha: float,
+    log_every: int,
+    generator: Optional[torch.Generator],
+) -> dict:
+    """end-to-end check that the reverse process actually works, on one val batch.
+
+    all metrics are in mph: forecast_err = (Y_hat + R0_hat) - (Y_hat + R0_true)
+    = R0_hat - R0_true, so the backbone term cancels and we score residuals.
+
+    two diagnostics:
+      1. reconstruction curve - forward-noise the true R0 to t≈T (almost fully
+         noised), then reverse-denoise back to t≈0 with the deterministic (eta=0)
+         sampler, logging masked mae/mse every `log_every` steps. mae should drop
+         as t -> 0 if the denoiser is inverting the forward process.
+      2. generative metric - draw `n_samples` prior-seeded samples, report mae/mse
+         of the sample mean and the winkler interval score at level alpha.
+    """
+    denoiser.eval()
+    R0 = batch["R0"].to(device)
+    Y_hat = batch["Y_hat"].to(device)
+    mask = batch["mask"].to(device)
+    B = R0.shape[0]
+
+    # ── 1. reconstruction curve from a noised true R0 ──────────────────────
+    t_top = torch.full((B,), schedule.T, device=device, dtype=R0.dtype)
+    R_T = sample_R_t_given_R0_torch(R0, t_top, prior_t, schedule, generator=generator)
+
+    curve: list[tuple[float, float, float]] = []  # (t, mae, mse) along the trajectory
+
+    def _record(i: int, t_cur: float, R0_hat: torch.Tensor) -> None:
+        if i % log_every == 0:
+            curve.append((t_cur, float(masked_mae(R0_hat, R0, mask)),
+                          float(masked_mse(R0_hat, R0, mask))))
+
+    R0_recon, _ = reverse_sample(
+        prior, schedule, denoiser, Y_hat, n_steps=n_steps,
+        eta=0.0, R_T=R_T, generator=generator, step_callback=_record,
+    )
+    curve.append((0.0, float(masked_mae(R0_recon, R0, mask)),
+                  float(masked_mse(R0_recon, R0, mask))))
+    recon_mae = curve[-1][1]
+    recon_mse = curve[-1][2]
+
+    # ── 2. generative samples from the prior (one batched reverse pass) ─────
+    Y_hat_rep = Y_hat.repeat(n_samples, 1, 1)                      # (K*B, N, H)
+    samples_flat, _ = reverse_sample(
+        prior, schedule, denoiser, Y_hat_rep, n_steps=n_steps,
+        eta=0.0, R_T=None, generator=generator,
+    )
+    samples = samples_flat.view(n_samples, B, prior.N, prior.H)    # (K, B, N, H)
+
+    sample_mean = samples.mean(dim=0)                              # (B, N, H)
+    gen_mae_h = masked_mae_per_h(sample_mean, R0, mask)            # (H,)
+    gen_mae = float(masked_mae(sample_mean, R0, mask))
+    gen_mse = float(masked_mse(sample_mean, R0, mask))
+
+    lo = torch.quantile(samples, alpha / 2.0, dim=0)              # (B, N, H)
+    hi = torch.quantile(samples, 1.0 - alpha / 2.0, dim=0)
+    wi_h = masked_winkler_per_horizon(R0, lo, hi, mask, alpha)    # (H,)
+    wi = float(wi_h.mean())
+    # empirical coverage of the interval (should be ~ 1 - alpha if calibrated)
+    inside = ((R0 >= lo) & (R0 <= hi) & mask).float().sum()
+    coverage = float(inside / mask.float().sum().clamp(min=1.0))
+
+    denoiser.train()
+    return {
+        "curve": curve,
+        "recon_mae": recon_mae,
+        "recon_mse": recon_mse,
+        "gen_mae": gen_mae,
+        "gen_mse": gen_mse,
+        "gen_mae_h": gen_mae_h.tolist(),
+        "wi": wi,
+        "wi_h": wi_h.tolist(),
+        "coverage": coverage,
+    }
+
+
+def _log_reconstruction(epoch: int, res: dict, alpha: float, *, to_wandb: bool) -> None:
+    """print the reconstruction-eval result and optionally push scalars to wandb."""
+    pct = int(round((1.0 - alpha) * 100))
+    horizons = [h for h in _HL_HORIZONS if h <= len(res["gen_mae_h"])]
+    print(f"  [recon] curve mae (t->0): "
+          + " ".join(f"{t:.2f}:{mae:.3f}" for t, mae, _ in res["curve"]), flush=True)
+    hl = ", ".join(f"h{h}={res['gen_mae_h'][h - 1]:.3f}" for h in horizons)
+    print(f"  [recon] gen mae={res['gen_mae']:.3f} mse={res['gen_mse']:.3f} "
+          f"({hl})  WI{pct}={res['wi']:.3f}  cov={res['coverage']:.3f}", flush=True)
+    if not to_wandb:
+        return
+    import wandb
+    log = {
+        "recon/recon_mae": res["recon_mae"],
+        "recon/recon_mse": res["recon_mse"],
+        "recon/gen_mae": res["gen_mae"],
+        "recon/gen_mse": res["gen_mse"],
+        "recon/wi": res["wi"],
+        "recon/coverage": res["coverage"],
+        "epoch": epoch,
+    }
+    for h in horizons:
+        log[f"recon/gen_mae_h{h}"] = res["gen_mae_h"][h - 1]
+        log[f"recon/wi_h{h}"] = res["wi_h"][h - 1]
+    wandb.log(log)
+
+
 # ─── Main ────────────────────────────────────────────────────────────────────
 
 
@@ -147,6 +287,17 @@ def main() -> None:
     p.add_argument("--c-0", type=float, default=20000.0)
     p.add_argument("--alpha", type=float, default=7.0)
     p.add_argument("--t-eps", type=float, default=1e-3, help="lower bound on t to avoid σ²=0")
+    # ── end-to-end reconstruction / generation eval (one val batch)
+    p.add_argument("--recon-every", type=int, default=10,
+                   help="run the reconstruction+WI eval every N epochs (0 disables)")
+    p.add_argument("--recon-steps", type=int, default=100,
+                   help="reverse-sampler steps for the reconstruction eval")
+    p.add_argument("--recon-samples", type=int, default=20,
+                   help="K prior-seeded samples for the generative mae + winkler interval")
+    p.add_argument("--recon-alpha", type=float, default=0.1,
+                   help="miscoverage for the winkler interval (0.1 -> central 90%%)")
+    p.add_argument("--recon-log-every", type=int, default=25,
+                   help="record the reconstruction mae/mse every this many reverse steps")
     p.add_argument("--smoke", action="store_true", help="1 epoch, tiny batch, wandb disabled")
     p.add_argument("--fresh", action="store_true", help="delete existing checkpoint dir + restart")
     p.add_argument("--max-train-batches", type=int, default=0,
@@ -157,6 +308,10 @@ def main() -> None:
         args.epochs = 1
         args.batch_size = 8
         args.max_train_batches = max(args.max_train_batches, 5)
+        # exercise the recon eval cheaply on the single smoke epoch
+        args.recon_every = 1
+        args.recon_steps = 20
+        args.recon_samples = 4
         os.environ.setdefault("WANDB_MODE", "disabled")
 
     cfg = vars(args).copy()
@@ -250,6 +405,31 @@ def main() -> None:
         )
     import wandb  # safe — always installed
 
+    # ── Reconstruction eval: one fixed val batch + a dedicated rng so the
+    # diagnostic is comparable across epochs. mps can't drive randn from a
+    # device generator, so fall back to the global rng there (cuda in prod).
+    recon_batch = next(iter(val_loader)) if args.recon_every else None
+    recon_gen = (
+        None if device.type == "mps"
+        else torch.Generator(device=device.type).manual_seed(args.seed + 999)
+    )
+
+    def _maybe_recon(epoch: int, is_last: bool) -> None:
+        if not args.recon_every:
+            return
+        if epoch % args.recon_every != 0 and not is_last:
+            return
+        res = reconstruction_eval(
+            recon_batch, denoiser=denoiser, prior=prior, prior_t=prior_t,
+            schedule=schedule, device=device, n_steps=args.recon_steps,
+            n_samples=args.recon_samples, alpha=args.recon_alpha,
+            log_every=args.recon_log_every, generator=recon_gen,
+        )
+        _log_reconstruction(
+            epoch, res, args.recon_alpha,
+            to_wandb=os.environ.get("WANDB_MODE", "online") != "disabled",
+        )
+
     # ── Train
     for epoch in range(start_epoch, args.epochs):
         denoiser.train()
@@ -283,6 +463,8 @@ def main() -> None:
         )
         if os.environ.get("WANDB_MODE", "online") != "disabled":
             wandb.log({"train/loss": train_loss, "val/loss": val_loss, "epoch": epoch})
+
+        _maybe_recon(epoch, is_last=(epoch == args.epochs - 1))
 
         improved = val_loss < best_val
         if improved:

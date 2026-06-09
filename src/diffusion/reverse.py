@@ -78,14 +78,17 @@ def reverse_sample(
     R_T: Optional[torch.Tensor] = None,
     return_trace: bool = False,
     generator: Optional[torch.Generator] = None,
+    step_callback: Optional[Callable[[int, float, torch.Tensor], None]] = None,
 ) -> tuple[torch.Tensor, Optional[ReverseTrace]]:
     """reverse-sample from t=T down to t=0.
 
     denoiser is callable(R_t, t_batch, Y_hat) -> R0_hat. Y_hat (B, N, H) is the
     backbone forecast used as conditioning. n_steps is the number of uniform
     reverse steps. eta in [0, 1] mixes in ancestral noise (0 = deterministic).
-    R_T is the starting sample at t=T (drawn from the prior if None). returns
-    (R0, trace), where trace is per-step diagnostics or None.
+    R_T is the starting sample at t=T (drawn from the prior if None).
+    step_callback, if given, is called as step_callback(i, t_cur, R0_hat) each
+    step with the denoiser's R0 estimate (used for trajectory diagnostics).
+    returns (R0, trace), where trace is per-step diagnostics or None.
     """
     if not (0.0 <= eta <= 1.0):
         raise ValueError(f"eta must lie in [0, 1]; got {eta}")
@@ -128,6 +131,9 @@ def reverse_sample(
         # Denoiser predicts R̂_0 in physical space.
         t_batch = torch.full((B,), t_cur, device=device, dtype=dtype)
         R0_hat = denoiser(R_t, t_batch, Y_hat)                              # (B, N, H)
+
+        if step_callback is not None:
+            step_callback(i, t_cur, R0_hat)
 
         # Rotate to eigenbasis.
         C_t = _rotate_to_eig_torch(R_t, V_S, V_T)

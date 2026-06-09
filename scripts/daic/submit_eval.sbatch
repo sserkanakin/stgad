@@ -25,5 +25,7 @@ source "${PROJECT_DIR}/scripts/daic/_common.sh"
 EVAL_ARGS="${EVAL_ARGS:---all}"
 log_run_header "${DAIC_PYTHON} scripts/eval_diffusion.py ${EVAL_ARGS}"
 
+# --unbuffered + python -u so the per-chunk progress is written to the log live
+# (otherwise srun buffers job stdout and the log looks frozen mid-run).
 # shellcheck disable=SC2086
-srun --export=ALL "${DAIC_PYTHON}" scripts/eval_diffusion.py ${EVAL_ARGS}
+srun --unbuffered --export=ALL "${DAIC_PYTHON}" -u scripts/eval_diffusion.py ${EVAL_ARGS}

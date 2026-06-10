@@ -57,7 +57,8 @@ _BACKBONE = "gwn"
 
 # Config keys whose value should NOT contribute to the hash — varying them
 # should NOT trigger a fresh wandb run / fresh checkpoint dir.
-_CFG_HASH_EXCLUDE = {"seed", "epochs", "batch_size", "lr", "weight_decay", "patience"}
+_CFG_HASH_EXCLUDE = {"seed", "epochs", "batch_size", "lr", "weight_decay", "patience",
+                     "exp", "lr_find", "lr_find_min", "lr_find_max"}
 
 
 # ─── Loss / metrics ──────────────────────────────────────────────────────────
@@ -407,6 +408,9 @@ def main() -> None:
     p.add_argument("--dataset", choices=("metrla", "pemsbay", "pems08f"), required=True)
     p.add_argument("--prior", choices=("kronecker", "isotropic"), default="kronecker",
                    help="noise prior: structured kronecker, or the isotropic σ²I baseline")
+    p.add_argument("--exp", default="dev",
+                   help="experiment tag; namespaces checkpoints + wandb group "
+                        "(results/diffusion/<exp>/..., wandb group <exp>-<dataset>)")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--epochs", type=int, default=200)
     p.add_argument("--batch-size", type=int, default=32)
@@ -473,7 +477,7 @@ def main() -> None:
     cfg_hash = hash_config({k: v for k, v in cfg.items() if k not in _CFG_HASH_EXCLUDE})
     run_id = f"diff_{_BACKBONE}_{args.dataset}_seed{args.seed}_{cfg_hash}"
 
-    ckpt_dir = paths.diffusion_dir(args.dataset, args.prior, args.seed)
+    ckpt_dir = paths.diffusion_dir(args.dataset, args.prior, args.seed, exp=args.exp)
     if args.fresh and ckpt_dir.exists():
         import shutil
         shutil.rmtree(ckpt_dir)
@@ -570,7 +574,7 @@ def main() -> None:
     if os.environ.get("WANDB_MODE", "online") != "disabled":
         init_wandb(
             cfg, stage="diffusion", dataset=args.dataset, seed=args.seed,
-            prior=args.prior, backbone=_BACKBONE,
+            prior=args.prior, backbone=_BACKBONE, exp=args.exp,
         )
     import wandb  # safe — always installed
 

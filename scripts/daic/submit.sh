@@ -49,12 +49,15 @@ case "$STAGE" in
   *) echo "stage must be: smoke | backbone | residuals | diffusion | eval" >&2; exit 2 ;;
 esac
 
-# per-run log subdir so resubmits of the same run group together instead of
-# piling up flat in logs/<stage>/. slurm opens the --output file before the job
-# body, so the dir must exist now (the mkdir inside the sbatch is too late).
-mkdir -p "logs/${STAGE}/${RUN_NAME}"
+# everything namespaces under the experiment tag EXP so a fresh launch is fully
+# separate in logs (and wandb/results, via the python --exp). default 'dev'.
+EXP="${EXP:-dev}"
+LOGDIR="logs/${EXP}/${STAGE}/${RUN_NAME}"
+# per-run log subdir so resubmits of the same run group together. slurm opens the
+# --output file before the job body, so the dir must exist now.
+mkdir -p "${LOGDIR}"
 
-EXPORTS="ALL,DATASET=${DATASET}"
+EXPORTS="ALL,DATASET=${DATASET},EXP=${EXP}"
 [ "${STAGE}" != "smoke" ] && EXPORTS="${EXPORTS},SEED=${SEED}"
 [ -n "${EPOCHS:-}" ] && EXPORTS="${EXPORTS},EPOCHS=${EPOCHS}"
 [ -n "${PRIOR:-}" ]  && EXPORTS="${EXPORTS},PRIOR=${PRIOR}"
@@ -70,6 +73,6 @@ RES=(--partition="${DAIC_PARTITION}" --gres="${DAIC_GRES_GPU}")
 
 set -x
 sbatch --job-name="${RUN_NAME}" --export="${EXPORTS}" \
-       --output="logs/${STAGE}/${RUN_NAME}/%j.out" \
-       --error="logs/${STAGE}/${RUN_NAME}/%j.err" \
+       --output="${LOGDIR}/%j.out" \
+       --error="${LOGDIR}/%j.err" \
        "${RES[@]}" "$@" "scripts/daic/${SBATCH}"

@@ -48,18 +48,23 @@ def init_wandb(
     prior: str | None = None,
     backbone: str = "gwn",
     resume: str = "allow",
+    exp: str | None = None,
 ):
     """start a wandb run with consistent naming and grouping.
 
-    grouping in the dashboard:
+    grouping in the dashboard (with an exp tag, the clean scheme):
       project   thesis-diffusion
       job_type  the stage (backbone / diffusion / eval)
-      group     "{stage}-{dataset}" (prior appended for diffusion/eval), so
-                multi-seed runs of the same config collapse together
-      name      run_name(stage, dataset, seed, prior) — matches the results
-                folder and the slurm log file
-      tags      dataset, backbone, prior, seed — to filter on
+      group     diffusion: "{exp}-{dataset}" — BOTH priors and ALL seeds live in
+                one per-dataset group, so the UI can group-by `prior` and average
+                over seeds, and kron-vs-iso is a one-click compare. other stages
+                get "{exp}-{dataset}-{stage}" so they don't pollute it. a new exp
+                tag => brand new groups (re-runs are fully separate).
+      name      "{exp}-{stage}_{dataset}_{prior}_seed{seed}"
+      config    includes exp/dataset/prior/seed so the dashboard can group+average
+      tags      dataset, backbone, prior, seed, exp — to filter on
 
+    without exp, the legacy "{stage}-{dataset}(-prior)" grouping is kept.
     the run id is the name plus the slurm job id, so each manual sbatch gets a
     fresh dashboard entry while slurm's own preempt/requeue (same job id)
     resumes the existing one. falls back to offline mode (loudly) if there is
@@ -69,8 +74,12 @@ def init_wandb(
 
     _load_dotenv()
 
-    name = paths.run_name(stage, dataset, seed, prior)
-    group = f"{stage}-{dataset}" + (f"-{prior}" if prior else "")
+    if exp:
+        name = f"{exp}-" + paths.run_name(stage, dataset, seed, prior)
+        group = f"{exp}-{dataset}" if stage == "diffusion" else f"{exp}-{dataset}-{stage}"
+    else:
+        name = paths.run_name(stage, dataset, seed, prior)
+        group = f"{stage}-{dataset}" + (f"-{prior}" if prior else "")
 
     job_suffix = os.environ.get("SLURM_JOB_ID") or f"local{os.getpid()}"
     unique_id = f"{name}__{job_suffix}"
@@ -88,6 +97,8 @@ def init_wandb(
     tags = [dataset, backbone, f"seed{seed}"]
     if prior:
         tags.append(prior)
+    if exp:
+        tags.append(exp)
 
     run = wandb.init(
         project=os.environ.get("WANDB_PROJECT", "thesis-diffusion"),
@@ -97,7 +108,7 @@ def init_wandb(
         group=group,
         job_type=stage,
         resume=resume,
-        config={**cfg, "_slurm_job_id": job_suffix},
+        config={**cfg, "_slurm_job_id": job_suffix, "exp": exp},
         mode=mode,
         tags=tags,
     )

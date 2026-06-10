@@ -1,6 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=backbone
-#SBATCH --time=00:10:00
+# default sized for a full ~100-epoch GWN run; override with --time for a quick test.
+#SBATCH --time=02:00:00
 # partition / qos / gres are injected per-cluster by submit.sh (they differ
 # between stable and experimental DAIC, and #SBATCH lines can't read env vars).
 # submit directly only with explicit --partition/--gres for your cluster.
@@ -31,15 +32,17 @@ source "${PROJECT_DIR}/scripts/daic/_common.sh"
 
 : "${DATASET:?Set DATASET=metrla|pemsbay|pems08f via --export}"
 : "${SEED:?Set SEED=<int> via --export}"
+EXP="${EXP:-dev}"
 EPOCHS="${EPOCHS:-100}"
 
 export STAGE="backbone"
 RUN_NAME="backbone_${DATASET}_seed${SEED}"
 scontrol update job="${SLURM_JOB_ID}" JobName="${RUN_NAME}" 2>/dev/null || true
 
-log_run_header "${DAIC_PYTHON} scripts/train_backbone.py --dataset ${DATASET} --seed ${SEED} --epochs ${EPOCHS}"
+log_run_header "${DAIC_PYTHON} scripts/train_backbone.py --dataset ${DATASET} --exp ${EXP} --seed ${SEED} --epochs ${EPOCHS}"
 
 srun --export=ALL "${DAIC_PYTHON}" scripts/train_backbone.py \
     --dataset "${DATASET}" \
+    --exp "${EXP}" \
     --seed "${SEED}" \
     --epochs "${EPOCHS}"

@@ -74,8 +74,8 @@ def empirical_crps(samples, y):
 # ─── load a trained run ──────────────────────────────────────────────────────
 
 
-def load_run(dataset, prior, seed, device):
-    ckpt_dir = paths.diffusion_dir(dataset, prior, seed)
+def load_run(dataset, prior, seed, exp, device):
+    ckpt_dir = paths.diffusion_dir(dataset, prior, seed, exp=exp)
     cfg = json.loads((ckpt_dir / "config.json").read_text())
     ckpt = torch.load(ckpt_dir / "best.pt", map_location=device, weights_only=False)
 
@@ -95,9 +95,9 @@ def load_run(dataset, prior, seed, device):
 
 
 @torch.no_grad()
-def evaluate(dataset, prior, seed, *, device, k, n_steps, eta, alpha,
+def evaluate(dataset, prior, seed, *, exp, device, k, n_steps, eta, alpha,
              w1_windows, w1_samples, w1_proj, gen_batch, max_windows, generator):
-    denoiser, prior_obj, schedule, cfg, ckpt_epoch = load_run(dataset, prior, seed, device)
+    denoiser, prior_obj, schedule, cfg, ckpt_epoch = load_run(dataset, prior, seed, exp, device)
     N, H = prior_obj.N, prior_obj.H
 
     sigma_r = train_residual_sigma(dataset, seed)        # same scalar used in training
@@ -178,7 +178,7 @@ def evaluate(dataset, prior, seed, *, device, k, n_steps, eta, alpha,
         ed_h.append(energy_distance(gen_c, true_c))
 
     return {
-        "dataset": dataset, "prior": prior, "seed": seed, "ckpt_epoch": ckpt_epoch,
+        "dataset": dataset, "prior": prior, "seed": seed, "exp": exp, "ckpt_epoch": ckpt_epoch,
         "n_test_windows": int(n_total), "k_samples": k, "n_steps": n_steps,
         "eta": eta, "alpha": alpha,
         "mae": overall(mae_n), "mse": overall(mse_n),
@@ -192,7 +192,7 @@ def evaluate(dataset, prior, seed, *, device, k, n_steps, eta, alpha,
 
 
 def _save(res):
-    out = paths.eval_dir(res["dataset"], res["prior"], res["seed"])
+    out = paths.eval_dir(res["dataset"], res["prior"], res["seed"], exp=res.get("exp"))
     out.mkdir(parents=True, exist_ok=True)
     path = out / "test_metrics.json"
     path.write_text(json.dumps(res, indent=2))
@@ -239,6 +239,7 @@ def main():
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--dataset", choices=("metrla", "pemsbay", "pems08f"))
     p.add_argument("--prior", choices=("kronecker", "isotropic"))
+    p.add_argument("--exp", default="dev", help="experiment tag (matches training --exp)")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--all", action="store_true", help="eval all datasets x both priors")
     p.add_argument("--k", type=int, default=50, help="samples per window for MAE/MSE/Winkler")
@@ -268,10 +269,11 @@ def main():
     print(f"[eval] device={device}  k={args.k}  n_steps={args.n_steps}  eta={args.eta}")
     results = []
     for ds, pr in jobs:
-        res = evaluate(ds, pr, args.seed, device=device, k=args.k, n_steps=args.n_steps,
-                       eta=args.eta, alpha=args.alpha, w1_windows=args.w1_windows,
-                       w1_samples=args.w1_samples, w1_proj=args.w1_proj,
-                       gen_batch=args.gen_batch, max_windows=args.max_windows, generator=g)
+        res = evaluate(ds, pr, args.seed, exp=args.exp, device=device, k=args.k,
+                       n_steps=args.n_steps, eta=args.eta, alpha=args.alpha,
+                       w1_windows=args.w1_windows, w1_samples=args.w1_samples,
+                       w1_proj=args.w1_proj, gen_batch=args.gen_batch,
+                       max_windows=args.max_windows, generator=g)
         _print_one(res)
         print(f"  wrote {_save(res)}")
         results.append(res)

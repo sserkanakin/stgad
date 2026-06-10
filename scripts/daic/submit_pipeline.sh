@@ -1,49 +1,61 @@
 #!/usr/bin/env bash
-# submit the backbone -> residuals chain for one dataset, with a slurm
-# dependency so residual extraction starts only after the backbone finishes
-# *successfully* (afterok). optionally chain diffusion after that too.
+# submit the FULL per-seed pipeline for one dataset, chained with slurm afterok
+# dependencies so each stage starts only after the previous one *succeeds*:
 #
-#   scripts/daic/submit_pipeline.sh metrla 0
-#   scripts/daic/submit_pipeline.sh pemsbay 0
-#   scripts/daic/submit_pipeline.sh metrla 0 --with-diffusion
+#   backbone -> residuals -> { kron diffusion -> kron eval }
+#                         \-> { iso  diffusion -> iso  eval }
 #
-# walltimes default from the 2-epoch smoke timings; override via env if needed:
-#   BB_TIME  RES_TIME  DIFF_TIME
+# everything namespaces under EXP (wandb group <EXP>-<dataset>, results/logs under
+# <EXP>). backbone + residuals are shared per (dataset, seed), so re-running the
+# pipeline for the same seed reuses them unless you clear them first.
 #
-# note: if the backbone job fails, the dependent jobs are never satisfied and
-# slurm cancels them - exactly what we want (no residuals off a failed model).
+#   EXP=20260610 scripts/daic/submit_pipeline.sh metrla 42
+#
+# walltimes default sensibly; override via env: BB_TIME RES_TIME DIFF_TIME EVAL_TIME.
+# if any stage fails, its dependents are auto-cancelled (no eval off a failed train).
 set -euo pipefail
 
-DATASET="${1:?usage: submit_pipeline.sh <dataset> <seed> [--with-diffusion]}"
+DATASET="${1:?usage: submit_pipeline.sh <dataset> <seed>}"
 SEED="${2:?seed}"
-WITH_DIFF="${3:-}"
+export EXP="${EXP:-dev}"
 
 # backbone walltime per dataset (pemsbay is the slowest at ~76 s/epoch).
 case "$DATASET" in
   pemsbay) BB_TIME="${BB_TIME:-03:00:00}" ;;
   metrla)  BB_TIME="${BB_TIME:-01:30:00}" ;;
-  *)       BB_TIME="${BB_TIME:-00:45:00}" ;;
+  *)       BB_TIME="${BB_TIME:-01:00:00}" ;;
 esac
 RES_TIME="${RES_TIME:-00:30:00}"
-DIFF_TIME="${DIFF_TIME:-12:00:00}"
+DIFF_TIME="${DIFF_TIME:-06:00:00}"
+EVAL_TIME="${EVAL_TIME:-03:00:00}"
+# full test set (no --max-windows), CRPS auto. k/steps kept light enough to fit.
+EVAL_CFG="--exp ${EXP} --seed ${SEED} --k 30 --n-steps 50 --gen-batch 1024 --w1-samples 4"
 
 jobid_of() { awk '/Submitted batch job/{print $NF}'; }
 
+echo "===== pipeline ${EXP} / ${DATASET} / seed ${SEED} ====="
+
 echo "== backbone (${BB_TIME}) =="
-BB_JID=$(bash scripts/daic/submit.sh backbone "$DATASET" "$SEED" --time="$BB_TIME" | tee /dev/stderr | jobid_of)
-: "${BB_JID:?failed to submit backbone}"
+BB=$(bash scripts/daic/submit.sh backbone "$DATASET" "$SEED" --time="$BB_TIME" | tee /dev/stderr | jobid_of)
+: "${BB:?failed to submit backbone}"
 
-echo "== residuals (${RES_TIME}, after backbone ${BB_JID} succeeds) =="
-RES_JID=$(bash scripts/daic/submit.sh residuals "$DATASET" "$SEED" \
-            --time="$RES_TIME" --dependency=afterok:"$BB_JID" | tee /dev/stderr | jobid_of)
-: "${RES_JID:?failed to submit residuals}"
+echo "== residuals (${RES_TIME}, after backbone ${BB}) =="
+RS=$(bash scripts/daic/submit.sh residuals "$DATASET" "$SEED" \
+       --time="$RES_TIME" --dependency=afterok:"$BB" | tee /dev/stderr | jobid_of)
+: "${RS:?failed to submit residuals}"
 
-if [ "$WITH_DIFF" = "--with-diffusion" ]; then
-  echo "== diffusion (${DIFF_TIME}, after residuals ${RES_JID} succeeds) =="
-  bash scripts/daic/submit.sh diffusion "$DATASET" "$SEED" \
-       --time="$DIFF_TIME" --dependency=afterok:"$RES_JID" | tee /dev/stderr | jobid_of >/dev/null
-fi
+for PR in kronecker isotropic; do
+  echo "== diffusion ${PR} (${DIFF_TIME}, after residuals ${RS}) =="
+  DJ=$(PRIOR="$PR" bash scripts/daic/submit.sh diffusion "$DATASET" "$SEED" \
+         --time="$DIFF_TIME" --dependency=afterok:"$RS" | tee /dev/stderr | jobid_of)
+  : "${DJ:?failed to submit diffusion ${PR}}"
+
+  echo "== eval ${PR} (${EVAL_TIME}, after diffusion ${DJ}) =="
+  PRIOR="$PR" EVAL_ARGS="--dataset ${DATASET} --prior ${PR} ${EVAL_CFG}" \
+    bash scripts/daic/submit.sh eval "$DATASET" "$SEED" \
+      --time="$EVAL_TIME" --dependency=afterok:"$DJ" | tee /dev/stderr | jobid_of >/dev/null
+done
 
 echo
-echo "chain submitted for ${DATASET} seed ${SEED}. watch with: squeue --me"
-echo "(the residual job sits in PENDING with reason (Dependency) until the backbone finishes)"
+echo "submitted full chain for ${EXP}/${DATASET}/seed${SEED}. watch: squeue --me"
+echo "(dependent jobs sit PENDING with reason (Dependency) until their parent finishes)"

@@ -160,6 +160,9 @@ def main() -> None:  # noqa: C901
     """Entry point."""
     parser = argparse.ArgumentParser(description="Train the Graph WaveNet backbone.")
     parser.add_argument("--dataset", choices=["metrla", "pemsbay", "pems08f"], required=True)
+    parser.add_argument("--exp", default="dev",
+                        help="experiment tag for wandb grouping (backbone artefacts "
+                             "stay shared per dataset/seed, not namespaced by exp)")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--epochs", type=int, default=None,
                         help="Override epoch count from backbone config.")
@@ -315,7 +318,7 @@ def main() -> None:  # noqa: C901
     if not args.smoke:
         run = init_wandb(
             cfg, stage="backbone", dataset=args.dataset, seed=args.seed,
-            backbone=_BACKBONE,
+            backbone=_BACKBONE, exp=args.exp,
         )
         if latest_ckpt is not None and not args.fresh:
             import wandb

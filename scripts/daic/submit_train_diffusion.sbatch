@@ -1,9 +1,9 @@
 #!/bin/bash
 #SBATCH --job-name=diffusion
-# early stopping (patience 25) ends runs in ~1-2h, and best.pt is saved on every
-# improvement, so even a walltime kill keeps the best model. 4h is a generous cap
-# that backfills fast. override per-job with --time=HH:MM:SS if ever needed.
-#SBATCH --time=04:00:00
+# 200 epochs / patience 15 finishes in ~1-2h; best.pt is saved on every
+# improvement, so even a walltime kill keeps the best model. 6h is a safe cap
+# (covers a slow no-early-stop pemsbay run). override with --time=HH:MM:SS.
+#SBATCH --time=06:00:00
 # partition / qos / gres are injected per-cluster by submit.sh.
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32G
@@ -27,6 +27,7 @@ source "${PROJECT_DIR}/scripts/daic/_common.sh"
 : "${DATASET:?Set DATASET=metrla|pemsbay|pems08f via --export}"
 : "${SEED:?Set SEED=<int> via --export}"
 export PRIOR="${PRIOR:-kronecker}"
+EXP="${EXP:-dev}"
 EPOCHS="${EPOCHS:-200}"
 BATCH_SIZE="${BATCH_SIZE:-32}"
 LR="${LR:-1e-3}"
@@ -39,13 +40,14 @@ export STAGE="diffusion"
 RUN_NAME="diffusion_${DATASET}_${PRIOR}_seed${SEED}"
 scontrol update job="${SLURM_JOB_ID}" JobName="${RUN_NAME}" 2>/dev/null || true
 
-log_run_header "${DAIC_PYTHON} scripts/train_diffusion.py --dataset ${DATASET} --prior ${PRIOR} --seed ${SEED} \
+log_run_header "${DAIC_PYTHON} scripts/train_diffusion.py --dataset ${DATASET} --prior ${PRIOR} --exp ${EXP} --seed ${SEED} \
 --epochs ${EPOCHS} --batch-size ${BATCH_SIZE} --lr ${LR} --d-h ${D_H} --c-0 ${C_0} --alpha ${ALPHA} ${EXTRA_FLAGS}"
 
 # shellcheck disable=SC2086
 srun --export=ALL "${DAIC_PYTHON}" scripts/train_diffusion.py \
     --dataset "${DATASET}" \
     --prior "${PRIOR}" \
+    --exp "${EXP}" \
     --seed "${SEED}" \
     --epochs "${EPOCHS}" \
     --batch-size "${BATCH_SIZE}" \

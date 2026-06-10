@@ -1,14 +1,22 @@
 """builds the kronecker prior Σ = Σ_T ⊗ Σ_S used by the diffusion sde.
 
-  Σ_S = (L + γ I)^{-1}, with a per-dataset γ (locked below). the laplacian
-        eigendecomposition is read from the cached file (see src.utils.paths).
   Σ_T = D_H^{1/2} R_H D_H^{1/2}, fit from the training residuals:
-        D_H[h] = (1.4826 · MAD_h)^2   (robust per-horizon variance)
-        R_H    = corrcoef of the residuals   (empirical correlation)
+        D_H[h] = mean(r_h^2)   (true per-horizon variance / second moment)
+        R_H    = corrcoef of the residuals   (empirical horizon correlation)
+        then the eigenvalues of Σ_T are capped so cond(Σ_T) <= KAPPA_CAP (the
+        "γ for time": a deliberate regulariser that keeps the noise schedule
+        trainable without throwing away the real horizon correlation).
+  Σ_S   the spatial factor. by default flattened to I (SPATIAL_FLATTEN): GWN
+        residuals are rough (Dirichlet energy ≈ 0.75), so the (L + γI)^{-1}
+        smoothness prior is misspecified. set SPATIAL_FLATTEN=False to use the
+        structured Σ_S = (L + γI)^{-1} (for the structured-spatial A/B).
+  τ²    a thin scale calibration (= N / tr(Σ_S)) so flattening or structuring
+        the spatial factor does not shift the overall variance. the *scale* is
+        set by the true-variance D_H above; τ² only trims it (τ² = 1 when flat).
 
 residuals have shape (N, H) with vec(R)[h·N + i] = R[i, h], so np.kron(Σ_T, Σ_S)
-matches numpy's vec. the precision Q = Σ^{-1} has eigenvalues θ[k,h] = (λ_k + γ)/μ_h
-in the V_S ⊗ V_T basis.
+matches numpy's vec. the precision Q = Σ^{-1} has eigenvalues θ[k,h] = q_S[k]/(τ² μ_h)
+in the V_S ⊗ V_T basis, where q_S[k] = 1 (flat) or λ_k + γ (structured).
 """
 from __future__ import annotations
 
@@ -20,11 +28,25 @@ import numpy as np
 from src.utils import paths
 
 # locked per-dataset γ, fit once from the residual spectrum (see git history).
+# only used when SPATIAL_FLATTEN is False (the structured-spatial arm).
 GAMMA_LOCKED: dict[str, float] = {
     "metrla": 0.15755546019980676,
     "pemsbay": 0.21271054104199358,
     "pems08f": 0.9239103283128737,
 }
+
+# cap on cond(Σ_T) — the temporal twin of γ, locked 2026-06-10 from the hygiene
+# analysis. κ=40 only bites pems-bay (cond 157→40); metr-la (37) and pems08f (17)
+# keep their real horizon correlation untouched. NOT data-optimal shrinkage
+# (ledoit-wolf returns δ≈1e-5 here — the stiffness is real structure, not noise);
+# this is a deliberate distortion to keep the per-mode schedule trainable.
+KAPPA_CAP = 40.0
+
+# flatten the spatial factor (Σ_S → I). residuals of a frozen GWN are the rough
+# leftover (Dirichlet energy ≈ 0.75), so a graph-smoothness prior is misspecified,
+# and the small γ also drives c0 up. keep the temporal correlation, drop the
+# spatial smoothness. set False for the structured-spatial A/B (on a repaired graph).
+SPATIAL_FLATTEN = True
 
 @dataclass(frozen=True)
 class KroneckerPrior:
@@ -34,10 +56,10 @@ class KroneckerPrior:
       gamma            laplacian shift, locked per dataset
       V_S, lam_S       eigenvectors/eigenvalues of the normalised laplacian (N)
       V_T, mu_T        eigenvectors/eigenvalues of Σ_T (H)
-      theta            (N, H) precision eigenvalues (λ_k + γ)/μ_h; the stationary
+      theta            (N, H) precision eigenvalues q_S[k]/(τ² μ_h); the stationary
                        variance per mode is 1/theta
-      delta_h          (H,) per-horizon MAD variance (diagonal of D_H)
-      R_H              (H, H) empirical horizon correlation
+      delta_h          (H,) per-horizon true variance (diagonal of D_H, pre-cap)
+      R_H              (H, H) empirical horizon correlation (pre-cap)
     """
 
     dataset: str
@@ -65,12 +87,21 @@ class KroneckerPrior:
 
 
 def _load_residuals_train(dataset: str) -> tuple[np.ndarray, np.ndarray]:
+    """Train residuals in unit-variance space, with the mask.
+
+    divides by the single global train std (same scalar ResidualDataset uses), so
+    the prior is fit in the same unit space the diffusion runs in. the de-norm
+    back to physical units happens at the output (r_raw = r_unit * sigma_r).
+    """
     paths.require_inputs([(
         paths.residual_npz(dataset, "train", 0),
         f"run scripts/extract_residuals.py --dataset {dataset} --seed 0 first",
     )])
     d = np.load(paths.residual_npz(dataset, "train", 0))
-    return d["residuals"].astype(np.float64), d["mask"].astype(bool)
+    R = d["residuals"].astype(np.float64)
+    mask = d["mask"].astype(bool)
+    sigma_r = R[mask].std()                       # global train residual std
+    return R / sigma_r, mask
 
 
 def _load_laplacian_eig(dataset: str) -> tuple[np.ndarray, np.ndarray]:
@@ -90,15 +121,20 @@ def _load_laplacian_eig(dataset: str) -> tuple[np.ndarray, np.ndarray]:
 
 
 def _fit_sigma_T(R: np.ndarray, mask: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Return (delta_h, R_H, Sigma_T). MAD-based D_H, empirical R_H."""
+    """Return (delta_h, R_H, Sigma_T).
+
+    D_H is the true per-horizon variance (second moment). this replaced the old
+    MAD estimator, which undercounts the variance 4-11x on these heavy-tailed
+    residuals (excess kurtosis 19-40) and flattens the real horizon growth.
+    R_H is the empirical horizon correlation.
+    """
     B, N, H = R.shape
     R_flat = R.reshape(B * N, H)
     M_flat = mask.reshape(B * N, H)
     keep = M_flat.all(axis=1)
     R_valid = R_flat[keep]
 
-    mad_h = np.median(np.abs(R_valid - np.median(R_valid, axis=0)), axis=0)
-    delta_h = (1.4826 * mad_h) ** 2
+    delta_h = (R_valid ** 2).mean(axis=0)        # true per-horizon variance
     R_H = np.corrcoef(R_valid.T)
 
     D_sqrt = np.sqrt(delta_h)
@@ -143,16 +179,31 @@ def load_prior(dataset: str, prior: str = "kronecker") -> KroneckerPrior:
         raise ValueError(f"unknown prior {prior!r}; use 'kronecker' or 'isotropic'")
     if dataset not in GAMMA_LOCKED:
         raise KeyError(f"no locked γ for dataset {dataset!r}; valid: {sorted(GAMMA_LOCKED)}")
-    gamma = GAMMA_LOCKED[dataset]
 
-    lam_S, V_S = _load_laplacian_eig(dataset)
     R, mask = _load_residuals_train(dataset)
+    _, N, H = R.shape
     delta_h, R_H, Sigma_T = _fit_sigma_T(R, mask)
 
     mu_T, V_T = np.linalg.eigh(Sigma_T)
     mu_T = np.clip(mu_T, a_min=1e-12, a_max=None)
+    # deliberate condition cap: floor the small eigenvalues so cond(Σ_T) <= KAPPA_CAP
+    mu_T = np.maximum(mu_T, mu_T.max() / KAPPA_CAP)
 
-    theta = (lam_S[:, None] + gamma) / mu_T[None, :]
+    # spatial factor: flat (Σ_S = I) by default, else structured (L + γI)^{-1}
+    if SPATIAL_FLATTEN:
+        gamma = 0.0
+        V_S = np.eye(N)
+        lam_S = np.zeros(N)
+        q_S = np.ones(N)                          # spatial precision = 1 (Σ_S = I)
+    else:
+        gamma = GAMMA_LOCKED[dataset]
+        lam_S, V_S = _load_laplacian_eig(dataset)
+        q_S = lam_S + gamma                       # spatial precision = L + γI
+
+    # τ²: trace-calibrate so Σ_S's average eigenvalue doesn't shift the variance
+    # (= 1 exactly when flat; the true-variance D_H already carries the scale).
+    tau2 = N / (1.0 / q_S).sum()
+    theta = q_S[:, None] / (tau2 * mu_T[None, :])
 
     return KroneckerPrior(
         dataset=dataset,

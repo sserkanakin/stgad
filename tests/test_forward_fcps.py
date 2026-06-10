@@ -116,7 +116,7 @@ def test_eigenbasis_sample_matches_direct_multivariate_normal():
 
 @pytest.mark.parametrize("dataset", ["metrla"])
 def test_real_data_per_coord_variance(dataset):
-    """Per-coordinate empirical variance of stationary samples ≈ (Σ_T)_hh·(Σ_S)_ii."""
+    """Per-coordinate empirical variance of stationary samples ≈ diag of Σ = V(1/θ)Vᵀ."""
     # needs the residual cache; the pipeline regenerates it, so skip when absent
     from src.utils import paths
     if not paths.residual_npz(dataset, "train", 0).exists():
@@ -127,10 +127,11 @@ def test_real_data_per_coord_variance(dataset):
 
     samples = sample_prior((n,), prior=prior, rng=rng)  # (n, N, H)
 
-    # Analytic per-coord variance: diag(Σ_S)[i] · diag(Σ_T)[h].
-    Sigma_S_diag = (prior.V_S ** 2 @ (1.0 / (prior.lam_S + prior.gamma)))  # (N,)
-    Sigma_T_diag = (prior.V_T ** 2 @ prior.mu_T)                            # (H,)
-    var_true = Sigma_S_diag[:, None] * Sigma_T_diag[None, :]               # (N, H)
+    # Analytic per-coord variance = diagonal of the stationary covariance
+    # V_S (1/θ) V_Tᵀ, read straight off the prior so it holds for any spatial
+    # form (flat Σ_S=I, structured (L+γI)⁻¹, or isotropic).
+    sigma2_modes = 1.0 / prior.theta                              # (N, H) per-mode var
+    var_true = (prior.V_S ** 2) @ sigma2_modes @ (prior.V_T ** 2).T   # (N, H)
 
     var_emp = samples.var(axis=0, ddof=1)                                   # (N, H)
     rel = np.abs(var_emp - var_true) / var_true

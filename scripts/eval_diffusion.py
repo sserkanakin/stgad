@@ -33,7 +33,7 @@ os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 import torch
 
 from src.data.adjacency import load_adjacency
-from src.data.residual_dataset import ResidualDataset, residual_path
+from src.data.residual_dataset import ResidualDataset, residual_path, train_residual_sigma
 from src.diffusion.denoiser import R0Denoiser
 from src.diffusion.forward_fcps import FCPSSchedule, prior_to_torch
 from src.diffusion.prior import load_prior
@@ -83,7 +83,8 @@ def evaluate(dataset, prior, seed, *, device, k, n_steps, eta, alpha,
     denoiser, prior_obj, schedule, cfg, ckpt_epoch = load_run(dataset, prior, seed, device)
     N, H = prior_obj.N, prior_obj.H
 
-    test = ResidualDataset(residual_path(dataset, "test", seed))
+    sigma_r = train_residual_sigma(dataset, seed)        # same scalar used in training
+    test = ResidualDataset(residual_path(dataset, "test", seed), sigma_r)
     R0_all, Y_all, M_all = test.R0, test.Y_hat, test.mask
     n_total = R0_all.shape[0] if not max_windows else min(max_windows, R0_all.shape[0])
 
@@ -102,15 +103,15 @@ def evaluate(dataset, prior, seed, *, device, k, n_steps, eta, alpha,
     wink_n = torch.zeros(H); cov_n = torch.zeros(H)
     for ci, start in enumerate(range(0, n_total, chunk)):
         end = min(start + chunk, n_total)
-        R0 = R0_all[start:end].to(device)
-        Y = Y_all[start:end].to(device)
+        R0 = R0_all[start:end].to(device) * sigma_r       # de-normalize to raw units
+        Y = Y_all[start:end].to(device)                   # conditioning stays z-scored
         Mk = M_all[start:end].to(device)
         b = R0.shape[0]
         samp, _ = reverse_sample(
             prior_obj, schedule, denoiser, Y.repeat(k, 1, 1),
             n_steps=n_steps, eta=eta, R_T=None, generator=generator,
         )
-        samp = samp.view(k, b, N, H)
+        samp = samp.view(k, b, N, H) * sigma_r            # de-normalize to raw units
         mean = samp.mean(dim=0)
         sn, cn = _masked_sums((mean - R0).abs(), Mk);  mae_n += sn.cpu(); cnt += cn.cpu()
         sn, _ = _masked_sums((mean - R0).pow(2), Mk);  mse_n += sn.cpu()
@@ -122,9 +123,9 @@ def evaluate(dataset, prior, seed, *, device, k, n_steps, eta, alpha,
 
         if ci % max(1, nchunks // 10) == 0 or ci == nchunks - 1:
             el = time.time() - t0
-            eta = el / (ci + 1) * (nchunks - ci - 1)
+            remaining = el / (ci + 1) * (nchunks - ci - 1)   # don't shadow the sde `eta`
             print(f"  [{dataset}/{prior}] point {ci+1}/{nchunks} "
-                  f"({100*(ci+1)/nchunks:.0f}%)  elapsed={el:.0f}s  eta={eta:.0f}s", flush=True)
+                  f"({100*(ci+1)/nchunks:.0f}%)  elapsed={el:.0f}s  eta={remaining:.0f}s", flush=True)
 
     print(f"  [{dataset}/{prior}] point done in {time.time()-t0:.0f}s; computing W1/energy...",
           flush=True)
@@ -139,7 +140,7 @@ def evaluate(dataset, prior, seed, *, device, k, n_steps, eta, alpha,
     n_w1 = min(w1_windows, vidx.numel())
     sel = vidx[:n_w1]
     w1_frac = float(valid.float().mean())
-    R0v = R0_all[sel].to(device); Yv = Y_all[sel].to(device)
+    R0v = R0_all[sel].to(device) * sigma_r; Yv = Y_all[sel].to(device)   # de-norm R0 to raw
     # sub-batch windows so w1_samples * sub <= gen_batch (same OOM guard)
     wb = max(1, gen_batch // w1_samples)
     gen_parts = []
@@ -150,7 +151,7 @@ def evaluate(dataset, prior, seed, *, device, k, n_steps, eta, alpha,
             n_steps=n_steps, eta=eta, R_T=None, generator=generator,
         )
         gen_parts.append(g.view(w1_samples, e - s, N, H))
-    gen = torch.cat(gen_parts, dim=1)              # (w1_samples, n_w1, N, H)
+    gen = torch.cat(gen_parts, dim=1) * sigma_r    # (w1_samples, n_w1, N, H), raw units
     w1_h, ed_h = [], []
     for h in range(H):
         true_c = R0v[:, :, h]

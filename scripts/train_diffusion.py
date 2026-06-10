@@ -30,7 +30,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 
 from src.data.adjacency import load_adjacency
-from src.data.residual_dataset import ResidualDataset, residual_path
+from src.data.residual_dataset import ResidualDataset, residual_path, train_residual_sigma
 from src.diffusion.denoiser import R0Denoiser, num_parameters
 from src.diffusion.forward_fcps import (
     FCPSSchedule,
@@ -163,12 +163,16 @@ def reconstruction_eval(
     n_samples: int,
     alpha: float,
     log_every: int,
+    sigma_r: float,
     generator: Optional[torch.Generator],
 ) -> dict:
     """end-to-end check that the reverse process actually works, on one val batch.
 
-    all metrics are in mph: forecast_err = (Y_hat + R0_hat) - (Y_hat + R0_true)
-    = R0_hat - R0_true, so the backbone term cancels and we score residuals.
+    sampling runs in unit space (R0, prior, schedule all unit); metrics are
+    de-normalized back to physical units (× sigma_r) so the numbers are in mph /
+    veh and comparable to the backbone and the isotropic baseline. the backbone
+    term cancels (forecast_err = (Y_hat+R0_hat) - (Y_hat+R0_true) = R0_hat-R0_true),
+    so Y_hat never enters the metric and only the residual scaler matters here.
 
     two diagnostics:
       1. reconstruction curve - forward-noise the true R0 to t≈T (almost fully
@@ -179,10 +183,11 @@ def reconstruction_eval(
          of the sample mean and the winkler interval score at level alpha.
     """
     denoiser.eval()
-    R0 = batch["R0"].to(device)
+    R0 = batch["R0"].to(device)                                   # unit space
     Y_hat = batch["Y_hat"].to(device)
     mask = batch["mask"].to(device)
     B = R0.shape[0]
+    R0_phys = R0 * sigma_r                                        # for metrics (raw units)
 
     # ── 1. reconstruction curve from a noised true R0 ──────────────────────
     t_top = torch.full((B,), schedule.T, device=device, dtype=R0.dtype)
@@ -192,15 +197,15 @@ def reconstruction_eval(
 
     def _record(i: int, t_cur: float, R0_hat: torch.Tensor) -> None:
         if i % log_every == 0:
-            curve.append((t_cur, float(masked_mae(R0_hat, R0, mask)),
-                          float(masked_mse(R0_hat, R0, mask))))
+            curve.append((t_cur, float(masked_mae(R0_hat * sigma_r, R0_phys, mask)),
+                          float(masked_mse(R0_hat * sigma_r, R0_phys, mask))))
 
     R0_recon, _ = reverse_sample(
         prior, schedule, denoiser, Y_hat, n_steps=n_steps,
         eta=0.0, R_T=R_T, generator=generator, step_callback=_record,
     )
-    curve.append((0.0, float(masked_mae(R0_recon, R0, mask)),
-                  float(masked_mse(R0_recon, R0, mask))))
+    curve.append((0.0, float(masked_mae(R0_recon * sigma_r, R0_phys, mask)),
+                  float(masked_mse(R0_recon * sigma_r, R0_phys, mask))))
     recon_mae = curve[-1][1]
     recon_mse = curve[-1][2]
 
@@ -210,19 +215,19 @@ def reconstruction_eval(
         prior, schedule, denoiser, Y_hat_rep, n_steps=n_steps,
         eta=0.0, R_T=None, generator=generator,
     )
-    samples = samples_flat.view(n_samples, B, prior.N, prior.H)    # (K, B, N, H)
+    samples = samples_flat.view(n_samples, B, prior.N, prior.H) * sigma_r   # raw units
 
-    sample_mean = samples.mean(dim=0)                              # (B, N, H)
-    gen_mae_h = masked_mae_per_h(sample_mean, R0, mask)            # (H,)
-    gen_mae = float(masked_mae(sample_mean, R0, mask))
-    gen_mse = float(masked_mse(sample_mean, R0, mask))
+    sample_mean = samples.mean(dim=0)                             # (B, N, H), raw
+    gen_mae_h = masked_mae_per_h(sample_mean, R0_phys, mask)       # (H,)
+    gen_mae = float(masked_mae(sample_mean, R0_phys, mask))
+    gen_mse = float(masked_mse(sample_mean, R0_phys, mask))
 
-    lo = torch.quantile(samples, alpha / 2.0, dim=0)              # (B, N, H)
+    lo = torch.quantile(samples, alpha / 2.0, dim=0)              # (B, N, H), raw
     hi = torch.quantile(samples, 1.0 - alpha / 2.0, dim=0)
-    wi_h = masked_winkler_per_horizon(R0, lo, hi, mask, alpha)    # (H,)
+    wi_h = masked_winkler_per_horizon(R0_phys, lo, hi, mask, alpha)   # (H,)
     wi = float(wi_h.mean())
     # empirical coverage of the interval (should be ~ 1 - alpha if calibrated)
-    inside = ((R0 >= lo) & (R0 <= hi) & mask).float().sum()
+    inside = ((R0_phys >= lo) & (R0_phys <= hi) & mask).float().sum()
     coverage = float(inside / mask.float().sum().clamp(min=1.0))
 
     denoiser.train()
@@ -252,6 +257,7 @@ def generative_fidelity_eval(
     n_samples: int,
     n_proj: int,
     eta: float,
+    sigma_r: float,
     generator: Optional[torch.Generator],
 ) -> dict:
     """W1 generative-fidelity check (global, distributional).
@@ -275,11 +281,12 @@ def generative_fidelity_eval(
         prior, schedule, denoiser, Y_hat_rep, n_steps=n_steps,
         eta=eta, R_T=None, generator=generator,
     )
-    gen = gen_flat.view(n_samples, W, N, H)                    # (S, W, N, H)
+    gen = gen_flat.view(n_samples, W, N, H) * sigma_r          # (S, W, N, H), raw units
+    R0_phys = R0 * sigma_r                                     # raw units for the true cloud
 
     w1_h, ed_h = [], []
     for h in range(H):
-        true_cloud = R0[:, :, h]                               # (W, N)
+        true_cloud = R0_phys[:, :, h]                          # (W, N)
         gen_cloud = gen[:, :, :, h].reshape(n_samples * W, N)  # (S*W, N)
         w1_h.append(sliced_wasserstein1(gen_cloud, true_cloud, n_proj, generator))
         ed_h.append(energy_distance(gen_cloud, true_cloud))
@@ -430,10 +437,12 @@ def main() -> None:
         (paths.raw_adj(args.dataset), "sync raw data here (scripts/daic/sync_to_daic.sh --raw)"),
     ])
 
-    # ── Data
-    train_ds = ResidualDataset(residual_path(args.dataset, "train", args.seed))
-    val_ds = ResidualDataset(residual_path(args.dataset, "val", args.seed))
-    print(f"[train_diffusion] train={len(train_ds)}  val={len(val_ds)}", flush=True)
+    # ── Data (modeled in unit space; sigma_r from train, reused for val)
+    sigma_r = train_residual_sigma(args.dataset, args.seed)
+    train_ds = ResidualDataset(residual_path(args.dataset, "train", args.seed), sigma_r)
+    val_ds = ResidualDataset(residual_path(args.dataset, "val", args.seed), sigma_r)
+    print(f"[train_diffusion] train={len(train_ds)}  val={len(val_ds)}  "
+          f"sigma_r={sigma_r:.4f} (residuals modeled in unit space)", flush=True)
 
     pin = device.type == "cuda"
     train_loader = DataLoader(
@@ -448,7 +457,11 @@ def main() -> None:
     # ── Prior + schedule
     prior = load_prior(args.dataset, args.prior)
     prior_t = prior_to_torch(prior, device=device, dtype=torch.float32)
-    schedule = FCPSSchedule(c_min=args.c_min, c_0=args.c_0, alpha=args.alpha, T=1.0)
+    # c_0 is auto-derived from the fitted prior (5/θ_min), never a CLI number -
+        # the human-typed-c_0 footgun bites the same at 35 as at 27000. --c-0 is ignored.
+    schedule = FCPSSchedule.for_prior(prior, c_min=args.c_min, alpha=args.alpha, T=1.0)
+    print(f"[train_diffusion] schedule c_0 auto-derived = {schedule.c_0:.1f} "
+          f"(--c-0 ignored)", flush=True)
     print(
         f"[train_diffusion] prior N={prior.N} H={prior.H} γ={prior.gamma:.4f}  "
         f"θ_min={float(prior.theta.min()):.4f}  θ_max={float(prior.theta.max()):.2f}",
@@ -510,7 +523,7 @@ def main() -> None:
             recon_batch, denoiser=denoiser, prior=prior, prior_t=prior_t,
             schedule=schedule, device=device, n_steps=args.recon_steps,
             n_samples=args.recon_samples, alpha=args.recon_alpha,
-            log_every=args.recon_log_every, generator=recon_gen,
+            log_every=args.recon_log_every, sigma_r=sigma_r, generator=recon_gen,
         )
         _log_reconstruction(
             epoch, res, args.recon_alpha,
@@ -540,7 +553,7 @@ def main() -> None:
         res = generative_fidelity_eval(
             w1_R0, w1_Yhat, denoiser=denoiser, prior=prior, schedule=schedule,
             device=device, n_steps=args.recon_steps, n_samples=args.w1_samples,
-            n_proj=args.w1_proj, eta=args.w1_eta, generator=recon_gen,
+            n_proj=args.w1_proj, eta=args.w1_eta, sigma_r=sigma_r, generator=recon_gen,
         )
         _log_w1(
             epoch, res, w1_frac,

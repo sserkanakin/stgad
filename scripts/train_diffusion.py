@@ -518,7 +518,7 @@ def main() -> None:
     )
 
     # ── Prior + schedule
-    prior = load_prior(args.dataset, args.prior)
+    prior = load_prior(args.dataset, args.prior, args.seed)
     prior_t = prior_to_torch(prior, device=device, dtype=torch.float32)
     # c_0 is auto-derived from the fitted prior (5/θ_min), never a CLI number -
         # the human-typed-c_0 footgun bites the same at 35 as at 27000. --c-0 is ignored.

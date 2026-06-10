@@ -86,7 +86,7 @@ class KroneckerPrior:
         return 1.0 / self.theta
 
 
-def _load_residuals_train(dataset: str) -> tuple[np.ndarray, np.ndarray]:
+def _load_residuals_train(dataset: str, seed: int = 0) -> tuple[np.ndarray, np.ndarray]:
     """Train residuals in unit-variance space, with the mask.
 
     divides by the single global train std (same scalar ResidualDataset uses), so
@@ -94,10 +94,10 @@ def _load_residuals_train(dataset: str) -> tuple[np.ndarray, np.ndarray]:
     back to physical units happens at the output (r_raw = r_unit * sigma_r).
     """
     paths.require_inputs([(
-        paths.residual_npz(dataset, "train", 0),
-        f"run scripts/extract_residuals.py --dataset {dataset} --seed 0 first",
+        paths.residual_npz(dataset, "train", seed),
+        f"run scripts/extract_residuals.py --dataset {dataset} --seed {seed} first",
     )])
-    d = np.load(paths.residual_npz(dataset, "train", 0))
+    d = np.load(paths.residual_npz(dataset, "train", seed))
     R = d["residuals"].astype(np.float64)
     mask = d["mask"].astype(bool)
     sigma_r = R[mask].std()                       # global train residual std
@@ -142,14 +142,14 @@ def _fit_sigma_T(R: np.ndarray, mask: np.ndarray) -> tuple[np.ndarray, np.ndarra
     return delta_h, R_H, Sigma_T
 
 
-def _build_isotropic_prior(dataset: str) -> KroneckerPrior:
+def _build_isotropic_prior(dataset: str, seed: int = 0) -> KroneckerPrior:
     """Scale-matched white-noise baseline: Σ = σ²·I, σ² = masked variance of the
     training residuals. identity eigenbasis (no spatial/temporal structure) with
     a constant per-mode precision θ = 1/σ², so the stationary variance is σ²
     everywhere. strips all structure but keeps the overall noise energy, so the
     comparison against the kronecker prior isolates the effect of structure.
     """
-    R, mask = _load_residuals_train(dataset)
+    R, mask = _load_residuals_train(dataset, seed)
     sigma2 = float(R[mask].var())
     _, N, H = R.shape
     return KroneckerPrior(
@@ -165,8 +165,8 @@ def _build_isotropic_prior(dataset: str) -> KroneckerPrior:
     )
 
 
-@lru_cache(maxsize=8)
-def load_prior(dataset: str, prior: str = "kronecker") -> KroneckerPrior:
+@lru_cache(maxsize=32)
+def load_prior(dataset: str, prior: str = "kronecker", seed: int = 0) -> KroneckerPrior:
     """Fit and cache the diffusion noise prior for a dataset.
 
     prior="kronecker": structured Σ = Σ_T ⊗ Σ_S (graph + temporal correlations),
@@ -174,13 +174,13 @@ def load_prior(dataset: str, prior: str = "kronecker") -> KroneckerPrior:
     prior="isotropic": scale-matched white noise Σ = σ²·I (the ablation baseline).
     """
     if prior == "isotropic":
-        return _build_isotropic_prior(dataset)
+        return _build_isotropic_prior(dataset, seed)
     if prior != "kronecker":
         raise ValueError(f"unknown prior {prior!r}; use 'kronecker' or 'isotropic'")
     if dataset not in GAMMA_LOCKED:
         raise KeyError(f"no locked γ for dataset {dataset!r}; valid: {sorted(GAMMA_LOCKED)}")
 
-    R, mask = _load_residuals_train(dataset)
+    R, mask = _load_residuals_train(dataset, seed)
     _, N, H = R.shape
     delta_h, R_H, Sigma_T = _fit_sigma_T(R, mask)
 

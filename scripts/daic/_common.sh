@@ -113,8 +113,10 @@ echo "────────────────────────�
 # PRIOR / RUN_NAME are set, passing the command it will run. makes every slurm
 # log self-identifying: which stage, dataset, seed, prior, wandb group, command.
 log_run_header() {
-  local group="${STAGE:-?}-${DATASET:-?}"
-  [ -n "${PRIOR:-}" ] && group="${group}-${PRIOR}"
+  # mirror wandb_setup's exp-based grouping: diffusion -> "<exp>-<dataset>"
+  # (both priors + all seeds together), other stages -> "<exp>-<dataset>-<stage>".
+  local group="${EXP:-dev}-${DATASET:-?}"
+  [ "${STAGE:-}" != "diffusion" ] && group="${group}-${STAGE:-?}"
   echo "─── run ─────────────────────────────────────────────────────────"
   echo "stage:    ${STAGE:-?}"
   echo "dataset:  ${DATASET:-?}    seed: ${SEED:-?}    prior: ${PRIOR:-n/a}"

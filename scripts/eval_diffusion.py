@@ -79,7 +79,7 @@ def load_run(dataset, prior, seed, exp, device):
     cfg = json.loads((ckpt_dir / "config.json").read_text())
     ckpt = torch.load(ckpt_dir / "best.pt", map_location=device, weights_only=False)
 
-    prior_obj = load_prior(dataset, prior)
+    prior_obj = load_prior(dataset, prior, seed)
     schedule = FCPSSchedule(c_min=cfg["c_min"], c_0=cfg["c_0"], alpha=cfg["alpha"], T=1.0)
     denoiser = R0Denoiser(
         N=prior_obj.N, H=prior_obj.H, adjacency=load_adjacency(dataset),

@@ -169,14 +169,20 @@ def main() -> None:
         out_path = paths.residual_npz(ds_name, split, args.seed)
         # note: y_true is NOT saved - it's exactly y_pred + residuals, and only
         # residuals / y_pred / mask are read downstream. saves ~1/3 of the disk.
-        np.savez_compressed(
-            out_path,
-            residuals=residuals,
-            y_pred=y_pred,
-            mask=mask,
-            mean=np.float32(mean),
-            std=np.float32(std),
-        )
+        # write atomically (temp file + rename): if the disk fills mid-write, the
+        # partial lands on a .tmp and the real .npz is never a truncated half-file
+        # that later passes an existence check but fails to load.
+        tmp_path = out_path.with_name(out_path.name + ".tmp")
+        with open(tmp_path, "wb") as fh:
+            np.savez_compressed(
+                fh,
+                residuals=residuals,
+                y_pred=y_pred,
+                mask=mask,
+                mean=np.float32(mean),
+                std=np.float32(std),
+            )
+        tmp_path.replace(out_path)
         print(f"  Saved {out_path}  shape={residuals.shape}  (B, N, H)")
 
         # Sanity prints (mask-aware, raw units).

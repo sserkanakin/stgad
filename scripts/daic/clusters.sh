@@ -95,6 +95,10 @@ esac
 
 # --- common (cluster-independent) -------------------------------------------
 export DAIC_PYTHON_VERSION="3.11"
-export WANDB_DIR="${DAIC_DATA_DIR}/wandb"
+# wandb local run cache lives OFF the tight data quota: the data share (windowshome,
+# 8G) holds the ~3.6G residuals, and wandb grows ~30M/run, so it used to fill the
+# quota and crash residual/checkpoint writes. node-local /tmp is disposable (wandb
+# syncs to the cloud live), so it never touches any persistent quota.
+export WANDB_DIR="${WANDB_DIR:-/tmp/wandb-${USER:-sakin}}"
 export WANDB_MODE="${WANDB_MODE:-online}"
 export WANDB_PROJECT="${WANDB_PROJECT:-thesis-diffusion}"

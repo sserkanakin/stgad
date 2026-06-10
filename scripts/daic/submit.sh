@@ -24,7 +24,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=/dev/null
 source "${HERE}/env.sh"
 
-STAGE="${1:?usage: submit.sh <smoke|backbone|residuals|diffusion> <dataset> [seed] [sbatch args]}"
+STAGE="${1:?usage: submit.sh <smoke|backbone|residuals|diffusion|eval> <dataset> [seed] [sbatch args]}"
 DATASET="${2:?dataset}"
 
 # qos tier per stage (empty string on clusters without a qos, e.g. exp).
@@ -43,10 +43,16 @@ case "$STAGE" in
     SEED="${3:?seed}"; SBATCH=submit_train_diffusion.sbatch
     RUN_NAME="diffusion_${DATASET}_${PRIOR:-kronecker}_seed${SEED}"
     QOS="${DAIC_QOS_MEDIUM}"; shift 3 ;;
-  *) echo "stage must be: smoke | backbone | residuals | diffusion" >&2; exit 2 ;;
+  eval)
+    SEED="${3:?seed}"; SBATCH=submit_eval.sbatch
+    RUN_NAME="eval_${DATASET}_${PRIOR:-kronecker}_seed${SEED}"; shift 3 ;;
+  *) echo "stage must be: smoke | backbone | residuals | diffusion | eval" >&2; exit 2 ;;
 esac
 
-mkdir -p "logs/${STAGE}"   # the fix: dir exists before slurm opens the log file
+# per-run log subdir so resubmits of the same run group together instead of
+# piling up flat in logs/<stage>/. slurm opens the --output file before the job
+# body, so the dir must exist now (the mkdir inside the sbatch is too late).
+mkdir -p "logs/${STAGE}/${RUN_NAME}"
 
 EXPORTS="ALL,DATASET=${DATASET}"
 [ "${STAGE}" != "smoke" ] && EXPORTS="${EXPORTS},SEED=${SEED}"
@@ -60,4 +66,6 @@ RES=(--partition="${DAIC_PARTITION}" --gres="${DAIC_GRES_GPU}")
 
 set -x
 sbatch --job-name="${RUN_NAME}" --export="${EXPORTS}" \
+       --output="logs/${STAGE}/${RUN_NAME}/%j.out" \
+       --error="logs/${STAGE}/${RUN_NAME}/%j.err" \
        "${RES[@]}" "$@" "scripts/daic/${SBATCH}"

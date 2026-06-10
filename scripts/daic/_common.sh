@@ -42,6 +42,14 @@ else
   # experimental DAIC: 2025 Lmod tree (python 3.11 + cuda torch) + a venv
   # overlay for our pure-python deps. the venv is built with
   # --system-site-packages so it reuses the module's torch.
+  #
+  # the lmod user cache lives on the network home (XDG_CACHE_HOME -> linuxhome)
+  # and is shared across nodes; when the cluster updates its modulefiles the
+  # cache goes stale and `module load 2025/gpu` then fails with "unknown module"
+  # even though it exists. ignore the cache so jobs read modulefiles fresh, and
+  # purge first for a clean env (daic docs guidance).
+  export LMOD_IGNORE_CACHE=1
+  module purge 2>/dev/null || true
   module load "${DAIC_MODULE_TREE}"
   module load "${DAIC_PYTHON_MODULE}"
   module load "${DAIC_TORCH_MODULE}"

@@ -63,6 +63,10 @@ EXPORTS="ALL,DATASET=${DATASET}"
 # one; gres = any gpu by default (pass --gres after the args to pin a type).
 RES=(--partition="${DAIC_PARTITION}" --gres="${DAIC_GRES_GPU}")
 [ -n "${QOS}" ] && RES+=(--qos="${QOS}")
+# DAIC has no OR-constraint for gpu type, so to use "any working gpu" we ask for
+# a generic gpu and exclude the nodes whose card is incompatible (rtx pro 6000 /
+# blackwell sm_120 crashes our py-torch). DAIC_GPU_EXCLUDE is set in clusters.sh.
+[ -n "${DAIC_GPU_EXCLUDE:-}" ] && RES+=(--exclude="${DAIC_GPU_EXCLUDE}")
 
 set -x
 sbatch --job-name="${RUN_NAME}" --export="${EXPORTS}" \

@@ -1,6 +1,9 @@
 #!/bin/bash
 #SBATCH --job-name=diffusion
-#SBATCH --time=24:00:00
+# early stopping (patience 25) ends runs in ~1-2h, and best.pt is saved on every
+# improvement, so even a walltime kill keeps the best model. 4h is a generous cap
+# that backfills fast. override per-job with --time=HH:MM:SS if ever needed.
+#SBATCH --time=04:00:00
 # partition / qos / gres are injected per-cluster by submit.sh.
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32G

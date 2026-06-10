@@ -85,6 +85,59 @@ def masked_mae_per_h(
     return num / den
 
 
+def lr_range_test(loader, *, denoiser, prior_t, schedule, optim, device, t_eps,
+                  n_steps, lr_min, lr_max, out_path) -> None:
+    """Smith lr range test: sweep lr exponentially lr_min->lr_max over n_steps
+    training batches, recording the loss. the good lr band is where the loss falls
+    fastest (most negative slope of loss vs log-lr); a common pick is ~1 order
+    below the loss minimum. writes (lr, loss) to out_path + prints a suggestion.
+    this trains the weights as it goes, so the run exits afterwards (no real fit)."""
+    import math
+    mult = (lr_max / lr_min) ** (1.0 / max(n_steps - 1, 1))
+    lr = lr_min
+    lrs: list[float] = []
+    losses: list[float] = []
+    denoiser.train()
+    it = iter(loader)
+    best = float("inf")
+    for i in range(n_steps):
+        try:
+            batch = next(it)
+        except StopIteration:
+            it = iter(loader); batch = next(it)
+        for g in optim.param_groups:
+            g["lr"] = lr
+        optim.zero_grad()
+        loss = train_step(batch, denoiser=denoiser, prior_t=prior_t,
+                          schedule=schedule, device=device, t_eps=t_eps, generator=None)
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(denoiser.parameters(), 5.0)
+        optim.step()
+        val = float(loss.detach())
+        lrs.append(lr); losses.append(val)
+        print(f"  [lr-find] step {i:4d}  lr={lr:.3e}  loss={val:.4f}", flush=True)
+        best = min(best, val)
+        if math.isnan(val) or val > 4.0 * best:
+            print("  [lr-find] loss diverged - stopping early", flush=True)
+            break
+        lr *= mult
+
+    # suggestion: steepest descent on a lightly smoothed loss-vs-log10(lr) curve
+    a = np.asarray(lrs); b = np.asarray(losses)
+    suggest = None
+    if len(a) > 5:
+        k = max(1, len(b) // 20)
+        bs = np.convolve(b, np.ones(k) / k, mode="same")
+        grad = np.gradient(bs, np.log10(a))
+        suggest = float(a[int(np.argmin(grad))])
+    out_path.write_text(json.dumps(
+        {"lrs": lrs, "losses": losses, "suggested_lr": suggest}, indent=2))
+    print(f"  [lr-find] wrote {out_path}", flush=True)
+    if suggest is not None:
+        print(f"  [lr-find] suggested lr ~ {suggest:.2e}  (steepest descent; "
+              f"also eyeball the curve)", flush=True)
+
+
 # ─── Training step ───────────────────────────────────────────────────────────
 
 
@@ -367,6 +420,12 @@ def main() -> None:
     p.add_argument("--c-0", type=float, default=20000.0)
     p.add_argument("--alpha", type=float, default=7.0)
     p.add_argument("--t-eps", type=float, default=1e-3, help="lower bound on t to avoid σ²=0")
+    # ── learning-rate range test (Smith): sweep lr exponentially over a few
+    # hundred steps to locate the good lr band, then exit (no full training).
+    p.add_argument("--lr-find", type=int, default=0,
+                   help="if >0, run an lr range test for this many steps and exit")
+    p.add_argument("--lr-find-min", type=float, default=1e-6)
+    p.add_argument("--lr-find-max", type=float, default=1.0)
     # ── end-to-end reconstruction / generation eval (one val batch)
     p.add_argument("--recon-every", type=int, default=10,
                    help="run the reconstruction+WI eval every N epochs (0 disables)")
@@ -479,6 +538,16 @@ def main() -> None:
 
     optim = torch.optim.Adam(denoiser.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     sched = None  # add cosine later if needed
+
+    # lr range test: sweep lr, record loss, exit before the real training loop.
+    if args.lr_find:
+        lr_range_test(
+            train_loader, denoiser=denoiser, prior_t=prior_t, schedule=schedule,
+            optim=optim, device=device, t_eps=args.t_eps, n_steps=args.lr_find,
+            lr_min=args.lr_find_min, lr_max=args.lr_find_max,
+            out_path=ckpt_dir / "lr_find.json",
+        )
+        return
 
     # ── Resume (if a checkpoint exists)
     start_epoch = 0

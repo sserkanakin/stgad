@@ -18,6 +18,19 @@ DIFF_TIME="${DIFF_TIME:-06:00:00}"; EVAL_TIME="${EVAL_TIME:-03:00:00}"
 EVAL_CFG="--k 30 --n-steps 50 --gen-batch 1024 --w1-samples 4"
 jid() { awk '/Submitted batch job/{print $NF}'; }
 
+# safety: resume reasons about FINISHED on-disk state, so it must run against an
+# EMPTY queue — a still-running residual/diffusion would be misread (partial file
+# = "corrupt", no best.pt yet = "missing") and double-submitted. refuse otherwise.
+if [ "$DRY" != "--dry" ]; then
+  active=$(squeue -u "$USER" -h -o '%j' 2>/dev/null | grep -cE 'backbone_|residuals_|diffusion_|eval_' || true)
+  if [ "${active:-0}" -gt 0 ]; then
+    echo "ERROR: ${active} pipeline jobs still in the queue — resume needs an empty queue." >&2
+    echo "       run 'scancel -u $USER' (or wait for it to drain), then retry." >&2
+    echo "       (use --dry anytime to preview the plan.)" >&2
+    exit 1
+  fi
+fi
+
 residuals_ok() {  # ds seed -> 0/1, valid only if all 3 split npz pass zip integrity
   local ds=$1 s=$2 f
   for split in train val test; do

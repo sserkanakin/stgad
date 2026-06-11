@@ -27,7 +27,12 @@ def save_checkpoint(
         "best_val_mae": best_val_mae,
         "rng_states": rng_states,
     }
-    torch.save(ckpt, path)
+    # write atomically (temp + rename): if the disk fills mid-save, the partial
+    # lands on a .tmp and the real best.pt/last.pt is never a truncated half-file
+    # that a later resume/eval would fail to read (PytorchStreamReader error).
+    tmp = path.with_name(path.name + ".tmp")
+    torch.save(ckpt, tmp)
+    tmp.replace(path)
 
 
 def load_checkpoint(path: Path) -> dict:

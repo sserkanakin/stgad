@@ -8,8 +8,12 @@ plateau knee. eta is fixed at 1.0 (DDPM reverse sde). writes a markdown table.
         --seed 42 --exp 20260612 --max-windows 512
 """
 from __future__ import annotations
-import argparse, json
+import argparse, json, sys
 from pathlib import Path
+
+# repo root on sys.path so `scripts` resolves as a namespace package (src is
+# installed, scripts is not — run as a file, sys.path[0] is scripts/analysis/).
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import torch
 

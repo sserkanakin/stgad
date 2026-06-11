@@ -12,7 +12,14 @@
 #   EXP=20260610 bash scripts/daic/resume_pipeline.sh --dry   # just print the plan
 set -uo pipefail
 EXP="${EXP:-dev}"; export EXP
-DRY="${1:-}"
+# args (any order): a dataset name to scope the run to, and/or --dry to preview.
+DRY=""; ONLY_DS=""
+for a in "$@"; do
+  case "$a" in
+    --dry) DRY="--dry" ;;
+    metrla|pemsbay|pems08f) ONLY_DS="$a" ;;
+  esac
+done
 DATA="${DAIC_DATA_DIR:-$HOME/windowshome/research-tud-data}"
 DIFF_TIME="${DIFF_TIME:-06:00:00}"; EVAL_TIME="${EVAL_TIME:-03:00:00}"
 EVAL_CFG="--k 30 --n-steps 50 --gen-batch 1024 --w1-samples 4"
@@ -50,6 +57,7 @@ submit_eval() {  # ds seed prior [afterok-jobid]
 
 echo "===== resume ${EXP} (DATA=$DATA) ====="
 for ds in metrla pemsbay pems08f; do
+  [ -n "$ONLY_DS" ] && [ "$ds" != "$ONLY_DS" ] && continue
   for s in 42 43 44; do
     if ! residuals_ok "$ds" "$s"; then
       echo "[$ds/seed$s] residuals missing/corrupt -> FULL CHAIN"

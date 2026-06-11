@@ -525,6 +525,10 @@ def main() -> None:
     schedule = FCPSSchedule.for_prior(prior, c_min=args.c_min, alpha=args.alpha, T=1.0)
     print(f"[train_diffusion] schedule c_0 auto-derived = {schedule.c_0:.1f} "
           f"(--c-0 ignored)", flush=True)
+    # persist the derived c_0 so config.json describes the schedule actually used
+    # (it used to record the ignored CLI value, which misled eval_diffusion)
+    cfg["c_0"] = schedule.c_0
+    (ckpt_dir / "config.json").write_text(json.dumps(cfg, indent=2, default=str))
     print(
         f"[train_diffusion] prior N={prior.N} H={prior.H} γ={prior.gamma:.4f}  "
         f"θ_min={float(prior.theta.min()):.4f}  θ_max={float(prior.theta.max()):.2f}",

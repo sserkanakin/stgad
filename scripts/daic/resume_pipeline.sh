@@ -21,8 +21,11 @@ for a in "$@"; do
   esac
 done
 DATA="${DAIC_DATA_DIR:-$HOME/windowshome/research-tud-data}"
-DIFF_TIME="${DIFF_TIME:-06:00:00}"; EVAL_TIME="${EVAL_TIME:-03:00:00}"
-EVAL_CFG="--k 30 --n-steps 50 --gen-batch 1024 --w1-samples 4"
+DIFF_TIME="${DIFF_TIME:-06:00:00}"; EVAL_TIME="${EVAL_TIME:-06:00:00}"
+# gen-batch 4096 fills the a40 (48G) and cuts the per-call launch overhead 4x vs
+# the old 1024 (each reverse_sample then pushes ~4096 trajectories, not ~1020);
+# total flops are unchanged (n_steps*n_total*k), but the gpu is no longer starved.
+EVAL_CFG="--k 30 --n-steps 50 --gen-batch 4096 --w1-samples 4"
 jid() { awk '/Submitted batch job/{print $NF}'; }
 
 # safety: resume reasons about FINISHED on-disk state, so a still-running job for

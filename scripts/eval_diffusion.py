@@ -32,6 +32,13 @@ import numpy as np
 os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 import torch
 
+# eval is sampling-based (k draws of a stochastic reverse sde), so the tiny
+# precision loss of TF32 matmuls is far below the monte-carlo noise floor but
+# buys ~1.5-2x on the denoiser's graph-conv / linear layers on ampere/ada gpus.
+# no-op on cpu/mps and on pre-ampere cards.
+torch.backends.cuda.matmul.allow_tf32 = True
+torch.backends.cudnn.allow_tf32 = True
+
 from src.data.adjacency import load_adjacency
 from src.data.residual_dataset import ResidualDataset, residual_path, train_residual_sigma
 from src.diffusion.denoiser import R0Denoiser

@@ -1,9 +1,14 @@
 #!/bin/bash
 #SBATCH --job-name=eval_diffusion
-#SBATCH --time=01:30:00
+# 6h cap: the point phase samples k draws over ALL test windows, which on the
+# bigger datasets (pemsbay ~10k windows) ran past the old 3h. resume_pipeline
+# passes --time=$EVAL_TIME (also 6h) which overrides this; kept in sync here so
+# a bare sbatch gets the same budget.
+#SBATCH --time=06:00:00
 # partition / gres are passed on the sbatch command line (pin a supported GPU).
 #SBATCH --cpus-per-task=4
-#SBATCH --mem=32G
+# 64G host ram to match the larger gen-batch (4096) staged per reverse_sample.
+#SBATCH --mem=64G
 #SBATCH --output=logs/eval/%x-%j.out
 #SBATCH --error=logs/eval/%x-%j.err
 #SBATCH --mail-user=sserkanakin@icloud.com

@@ -22,10 +22,19 @@ for a in "$@"; do
 done
 DATA="${DAIC_DATA_DIR:-$HOME/windowshome/research-tud-data}"
 DIFF_TIME="${DIFF_TIME:-06:00:00}"; EVAL_TIME="${EVAL_TIME:-06:00:00}"
-# gen-batch 4096 fills the a40 (48G) and cuts the per-call launch overhead 4x vs
-# the old 1024 (each reverse_sample then pushes ~4096 trajectories, not ~1020);
-# total flops are unchanged (n_steps*n_total*k), but the gpu is no longer starved.
-EVAL_CFG="--k 30 --n-steps 50 --gen-batch 4096 --w1-samples 4"
+EVAL_CFG="--k 30 --n-steps 50 --w1-samples 4"
+
+# gen-batch is sized PER DATASET: the ugnet's spatial graph-conv activation scales
+# with batch*N, so a flat batch over-allocates for high-N datasets. pemsbay (N=325)
+# OOM'd at 4096 on the 44G l40; keep batch*N ~constant (~0.65M) so peak memory fits
+# the smallest gpu in the pool while still using ~3x more of it than the old 1024.
+_gen_batch() {
+  case "$1" in
+    pemsbay) echo 2048 ;;   # N=325, heaviest
+    metrla)  echo 3072 ;;   # N=207
+    *)       echo 4096 ;;   # pems08f N=170
+  esac
+}
 jid() { awk '/Submitted batch job/{print $NF}'; }
 
 # safety: resume reasons about FINISHED on-disk state, so a still-running job for
@@ -55,9 +64,10 @@ residuals_ok() {  # ds seed -> 0/1, valid only if all 3 split npz pass zip integ
 
 submit_eval() {  # ds seed prior [afterok-jobid]
   local ds=$1 s=$2 pr=$3 dep="${4:-}"
+  local gb; gb=$(_gen_batch "$ds")
   local extra=(--time="$EVAL_TIME"); [ -n "$dep" ] && extra+=(--dependency=afterok:"$dep")
-  [ "$DRY" = "--dry" ] && { echo "      would: eval $ds/$pr/seed$s ${dep:+(after $dep)}"; return; }
-  PRIOR="$pr" EVAL_ARGS="--dataset $ds --prior $pr --exp $EXP --seed $s $EVAL_CFG" \
+  [ "$DRY" = "--dry" ] && { echo "      would: eval $ds/$pr/seed$s gen-batch=$gb ${dep:+(after $dep)}"; return; }
+  PRIOR="$pr" EVAL_ARGS="--dataset $ds --prior $pr --exp $EXP --seed $s $EVAL_CFG --gen-batch $gb" \
     bash scripts/daic/submit.sh eval "$ds" "$s" "${extra[@]}" | tee /dev/stderr | jid >/dev/null
 }
 

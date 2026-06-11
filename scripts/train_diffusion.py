@@ -406,6 +406,12 @@ def _log_reconstruction(epoch: int, res: dict, alpha: float, *, to_wandb: bool) 
 def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--dataset", choices=("metrla", "pemsbay", "pems08f"), required=True)
+    p.add_argument("--spatial", choices=("structured", "flat"), default="structured",
+                   help="kronecker spatial factor: structured Σ_S=(L+γI)^-1 (spatio-temporal) "
+                        "or flat Σ_S=I (temporal-only). recorded in config.json.")
+    p.add_argument("--stiffness-cap", type=float, default=0.0,
+                   help="if >0, floor θ so θ_max/θ_min <= this (joint-spectrum twin of κ-cap; "
+                        "trainability fallback for stiff structured priors). 0 = off.")
     p.add_argument("--prior", choices=("kronecker", "isotropic"), default="kronecker",
                    help="noise prior: structured kronecker, or the isotropic σ²I baseline")
     p.add_argument("--exp", default="dev",
@@ -431,7 +437,7 @@ def main() -> None:
     p.add_argument("--lr-find-min", type=float, default=1e-6)
     p.add_argument("--lr-find-max", type=float, default=1.0)
     # ── end-to-end reconstruction / generation eval (one val batch)
-    p.add_argument("--recon-every", type=int, default=10,
+    p.add_argument("--recon-every", type=int, default=5,
                    help="run the reconstruction+WI eval every N epochs (0 disables)")
     p.add_argument("--recon-steps", type=int, default=100,
                    help="reverse-sampler steps for the reconstruction eval")
@@ -518,7 +524,8 @@ def main() -> None:
     )
 
     # ── Prior + schedule
-    prior = load_prior(args.dataset, args.prior, args.seed)
+    prior = load_prior(args.dataset, args.prior, args.seed,
+                       spatial=args.spatial, stiffness_cap=(args.stiffness_cap or None))
     prior_t = prior_to_torch(prior, device=device, dtype=torch.float32)
     # c_0 is auto-derived from the fitted prior (5/θ_min), never a CLI number -
         # the human-typed-c_0 footgun bites the same at 35 as at 27000. --c-0 is ignored.

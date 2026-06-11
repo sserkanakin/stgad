@@ -14,6 +14,15 @@ import numpy as np
 
 from src.utils import paths
 
+# reconnect isolated sensors (degree 0 in the thresholded road graph) so every
+# dataset is a SINGLE connected component — the spatio-temporal heat-equation
+# prior needs one connected graph, not per-component blocks. we have no raw
+# sensor distances (only the thresholded DCRNN adj), so each isolated sensor is
+# linked to its most-correlated neighbour by the train-period signal. set False
+# to get the bare road graph (with isolated singletons) back.
+REPAIR_ISOLATED = True
+_ADJ_CACHE: dict = {}
+
 _NUM_NODES = {
     "metrla":  207,
     "pemsbay": 325,
@@ -48,8 +57,8 @@ def _load_adjacency_csv(path: Path, num_nodes: int) -> np.ndarray:
     return A
 
 
-def load_adjacency(dataset: str) -> np.ndarray:
-    """load the (N, N) adjacency for a dataset.
+def _load_raw_adjacency(dataset: str) -> np.ndarray:
+    """the bare (N, N) road adjacency on disk, no repair.
 
     dispatches by file type: .pkl for metr-la/pems-bay (dcrnn format), .csv for
     pems08 (stsgcn edge list).
@@ -71,6 +80,65 @@ def load_adjacency(dataset: str) -> np.ndarray:
     if path.suffix == ".csv":
         return _load_adjacency_csv(path, _NUM_NODES[dataset])
     raise ValueError(f"Unsupported adjacency format: {path.suffix}")
+
+
+def _isolated_nodes(adj: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """indices of zero-degree sensors in the symmetrised, self-loop-free graph."""
+    A = adj.astype(np.float64).copy()
+    np.fill_diagonal(A, 0.0)
+    A = (A + A.T) / 2.0
+    return np.where(A.sum(axis=1) == 0)[0], A
+
+
+def _train_signal_corr(dataset: str) -> np.ndarray:
+    """(N, N) Pearson correlation of the train-period sensor signal (feature 0).
+
+    mask-aware: missing entries are filled with the per-sensor mean before
+    centring, so a few gaps don't dominate the correlation used to pick a
+    neighbour for an isolated sensor.
+    """
+    d = np.load(paths.split_npz(dataset, "train"))
+    N = d["x"].shape[2]
+    X = d["x"][..., 0].astype(np.float64).reshape(-1, N)        # (B*T, N)
+    M = d["x_mask"][..., 0].astype(bool).reshape(-1, N)
+    X = np.where(M, X, np.nan)
+    mu = np.nanmean(X, axis=0)
+    X = np.where(np.isnan(X), mu, X)
+    Xc = X - X.mean(axis=0)
+    s = np.sqrt((Xc ** 2).sum(axis=0)); s[s == 0] = 1.0
+    return (Xc.T @ Xc) / np.outer(s, s)
+
+
+def repair_adjacency(dataset: str, adj: np.ndarray) -> np.ndarray:
+    """connect each isolated sensor to its most-correlated neighbour (train
+    signal), so the graph becomes a single connected component. minimal: adds
+    one edge per isolated sensor, weight = median existing edge weight. returns
+    the repaired adjacency (unchanged if nothing is isolated or no train signal).
+    """
+    iso, Asym = _isolated_nodes(adj)
+    if len(iso) == 0 or not paths.split_npz(dataset, "train").exists():
+        return adj
+    C = _train_signal_corr(dataset)
+    w = float(np.median(Asym[Asym > 0]))
+    connected = np.where(Asym.sum(axis=1) > 0)[0]
+    out = adj.astype(np.float64).copy()
+    for i in iso:
+        j = int(connected[np.argmax(np.abs(C[i, connected]))])
+        out[i, j] = out[j, i] = w
+        print(f"[adjacency] {dataset}: reconnected isolated sensor {i} -> {j} "
+              f"(corr={C[i, j]:.2f}, w={w:.3f})", flush=True)
+    return out.astype(adj.dtype, copy=False)        # preserve the raw loader's dtype
+
+
+def load_adjacency(dataset: str, repair: bool = REPAIR_ISOLATED) -> np.ndarray:
+    """load the (N, N) adjacency, reconnecting isolated sensors by default so the
+    graph is a single connected component (see repair_adjacency). pass
+    repair=False for the bare road graph. cached per (dataset, repair)."""
+    key = (dataset, repair)
+    if key not in _ADJ_CACHE:
+        A = _load_raw_adjacency(dataset)
+        _ADJ_CACHE[key] = repair_adjacency(dataset, A) if repair else A
+    return _ADJ_CACHE[key].copy()
 
 
 def compute_normalized_laplacian(adj: np.ndarray) -> np.ndarray:

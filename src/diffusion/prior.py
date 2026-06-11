@@ -42,11 +42,15 @@ GAMMA_LOCKED: dict[str, float] = {
 # this is a deliberate distortion to keep the per-mode schedule trainable.
 KAPPA_CAP = 40.0
 
-# flatten the spatial factor (Σ_S → I). residuals of a frozen GWN are the rough
-# leftover (Dirichlet energy ≈ 0.75), so a graph-smoothness prior is misspecified,
-# and the small γ also drives c0 up. keep the temporal correlation, drop the
-# spatial smoothness. set False for the structured-spatial A/B (on a repaired graph).
-SPATIAL_FLATTEN = True
+# default spatial factor for the "kronecker" prior:
+#   "structured" -> Σ_S = (L + γI)^{-1} on the repaired (connected) graph: the
+#                   spatio-temporal prior — the thesis contribution.
+#   "flat"       -> Σ_S = I (temporal-only): keeps the horizon correlation, drops
+#                   the graph smoothness. residuals of a frozen GWN are spatially
+#                   ~white (Dirichlet energy ≈ 0.80), so flat is a fair ablation.
+# the choice is passed explicitly through load_prior and recorded in config.json
+# (do NOT infer it from a module constant — the run must say what it used).
+DEFAULT_SPATIAL = "structured"
 
 @dataclass(frozen=True)
 class KroneckerPrior:
@@ -166,17 +170,28 @@ def _build_isotropic_prior(dataset: str, seed: int = 0) -> KroneckerPrior:
 
 
 @lru_cache(maxsize=32)
-def load_prior(dataset: str, prior: str = "kronecker", seed: int = 0) -> KroneckerPrior:
+def load_prior(
+    dataset: str,
+    prior: str = "kronecker",
+    seed: int = 0,
+    spatial: str = DEFAULT_SPATIAL,
+    stiffness_cap: float | None = None,
+) -> KroneckerPrior:
     """Fit and cache the diffusion noise prior for a dataset.
 
-    prior="kronecker": structured Σ = Σ_T ⊗ Σ_S (graph + temporal correlations),
-    fit from training residuals on first call.
-    prior="isotropic": scale-matched white noise Σ = σ²·I (the ablation baseline).
+    prior="kronecker": structured Σ = Σ_T ⊗ Σ_S, fit from training residuals.
+      spatial="structured" -> Σ_S = (L + γI)^{-1} (spatio-temporal, the contribution).
+      spatial="flat"       -> Σ_S = I (temporal-only ablation).
+    prior="isotropic": scale-matched white noise Σ = σ²·I (the baseline).
+    stiffness_cap: if set, floor θ_min so θ_max/θ_min <= cap (a joint-spectrum
+      twin of KAPPA_CAP; the trainability fallback for stiff structured priors).
     """
     if prior == "isotropic":
         return _build_isotropic_prior(dataset, seed)
     if prior != "kronecker":
         raise ValueError(f"unknown prior {prior!r}; use 'kronecker' or 'isotropic'")
+    if spatial not in ("structured", "flat"):
+        raise ValueError(f"unknown spatial {spatial!r}; use 'structured' or 'flat'")
     if dataset not in GAMMA_LOCKED:
         raise KeyError(f"no locked γ for dataset {dataset!r}; valid: {sorted(GAMMA_LOCKED)}")
 
@@ -189,8 +204,8 @@ def load_prior(dataset: str, prior: str = "kronecker", seed: int = 0) -> Kroneck
     # deliberate condition cap: floor the small eigenvalues so cond(Σ_T) <= KAPPA_CAP
     mu_T = np.maximum(mu_T, mu_T.max() / KAPPA_CAP)
 
-    # spatial factor: flat (Σ_S = I) by default, else structured (L + γI)^{-1}
-    if SPATIAL_FLATTEN:
+    # spatial factor: structured (L + γI)^{-1} on the repaired graph, or flat (Σ_S = I)
+    if spatial == "flat":
         gamma = 0.0
         V_S = np.eye(N)
         lam_S = np.zeros(N)
@@ -204,6 +219,11 @@ def load_prior(dataset: str, prior: str = "kronecker", seed: int = 0) -> Kroneck
     # (= 1 exactly when flat; the true-variance D_H already carries the scale).
     tau2 = N / (1.0 / q_S).sum()
     theta = q_S[:, None] / (tau2 * mu_T[None, :])
+
+    # optional joint-stiffness cap: floor θ so θ_max/θ_min <= stiffness_cap. off by
+    # default (faithful prior); enabled only if the pilot shows training instability.
+    if stiffness_cap is not None:
+        theta = np.maximum(theta, theta.max() / stiffness_cap)
 
     return KroneckerPrior(
         dataset=dataset,

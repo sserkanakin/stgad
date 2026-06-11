@@ -86,7 +86,11 @@ def load_run(dataset, prior, seed, exp, device):
     cfg = json.loads((ckpt_dir / "config.json").read_text())
     ckpt = torch.load(ckpt_dir / "best.pt", map_location=device, weights_only=False)
 
-    prior_obj = load_prior(dataset, prior, seed)
+    # rebuild the SAME prior the run trained with (spatial + stiffness cap from config;
+    # default structured for back-compat with configs written before --spatial existed)
+    prior_obj = load_prior(dataset, prior, seed,
+                           spatial=cfg.get("spatial", "structured"),
+                           stiffness_cap=(cfg.get("stiffness_cap") or None))
     # rebuild the schedule exactly as training does: c_0 auto-derived from the
     # prior (5/θ_min). config.json's c_0 was the ignored CLI default (20000)
     # until 2026-06-11 - using it here was a bug that broke all earlier evals.

@@ -82,16 +82,21 @@ export PYTHONUNBUFFERED=1
 
 cd "${PROJECT_DIR}"
 
-# symlink the big artefact dirs to the data dir on first run (idempotent).
-# create the targets first so the links aren't dangling.
+# symlink the big artefact dirs to the data dir. (re)point a link whenever it's a
+# symlink or missing, so changing DAIC_DATA_DIR actually moves them (the old
+# "[ -e ] ||" guard left stale symlinks pointing at the previous data dir). a
+# populated real dir (e.g. results/backbone) is left untouched so we never clobber.
 mkdir -p data results
 mkdir -p "${DAIC_DATA_DIR}"/{raw,processed,backbone,diffusion,residuals,eval}
-[ -e data/raw          ] || ln -sfn "${DAIC_DATA_DIR}/raw"          data/raw
-[ -e data/processed    ] || ln -sfn "${DAIC_DATA_DIR}/processed"    data/processed
-[ -e results/backbone  ] || ln -sfn "${DAIC_DATA_DIR}/backbone"     results/backbone
-[ -e results/diffusion ] || ln -sfn "${DAIC_DATA_DIR}/diffusion"    results/diffusion
-[ -e results/residuals ] || ln -sfn "${DAIC_DATA_DIR}/residuals"    results/residuals
-[ -e results/eval      ] || ln -sfn "${DAIC_DATA_DIR}/eval"         results/eval
+_relink() {
+  if [ -L "$1" ] || [ ! -e "$1" ]; then ln -sfn "$2" "$1"; fi
+}
+_relink data/raw          "${DAIC_DATA_DIR}/raw"
+_relink data/processed    "${DAIC_DATA_DIR}/processed"
+_relink results/backbone  "${DAIC_DATA_DIR}/backbone"
+_relink results/diffusion "${DAIC_DATA_DIR}/diffusion"
+_relink results/residuals "${DAIC_DATA_DIR}/residuals"
+_relink results/eval      "${DAIC_DATA_DIR}/eval"
 
 # wandb writes its run buffer here; make sure it exists.
 mkdir -p "${WANDB_DIR:-${PROJECT_DIR}/wandb}"

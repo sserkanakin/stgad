@@ -21,7 +21,7 @@ for a in "$@"; do
   esac
 done
 DATA="${DAIC_DATA_DIR:-$HOME/windowshome/research-tud-data}"
-DIFF_TIME="${DIFF_TIME:-06:00:00}"; EVAL_TIME="${EVAL_TIME:-06:00:00}"
+DIFF_TIME="${DIFF_TIME:-06:00:00}"
 EVAL_CFG="--k 30 --n-steps 50 --w1-samples 4"
 
 # gen-batch is sized PER DATASET: the ugnet's spatial graph-conv activation scales
@@ -33,6 +33,17 @@ _gen_batch() {
     pemsbay) echo 2048 ;;   # N=325, heaviest
     metrla)  echo 3072 ;;   # N=207
     *)       echo 4096 ;;   # pems08f N=170
+  esac
+}
+
+# eval walltime is also PER DATASET: the point phase runs k samples over ALL test
+# windows, and pemsbay has both the most windows (~10k) and most nodes, so its full
+# eval needs ~8h where metrla/pems08f finish well under 6h. EVAL_TIME env overrides.
+_eval_time() {
+  [ -n "${EVAL_TIME:-}" ] && { echo "$EVAL_TIME"; return; }
+  case "$1" in
+    pemsbay) echo 10:00:00 ;;
+    *)       echo 06:00:00 ;;
   esac
 }
 jid() { awk '/Submitted batch job/{print $NF}'; }
@@ -65,8 +76,9 @@ residuals_ok() {  # ds seed -> 0/1, valid only if all 3 split npz pass zip integ
 submit_eval() {  # ds seed prior [afterok-jobid]
   local ds=$1 s=$2 pr=$3 dep="${4:-}"
   local gb; gb=$(_gen_batch "$ds")
-  local extra=(--time="$EVAL_TIME"); [ -n "$dep" ] && extra+=(--dependency=afterok:"$dep")
-  [ "$DRY" = "--dry" ] && { echo "      would: eval $ds/$pr/seed$s gen-batch=$gb ${dep:+(after $dep)}"; return; }
+  local tl; tl=$(_eval_time "$ds")
+  local extra=(--time="$tl"); [ -n "$dep" ] && extra+=(--dependency=afterok:"$dep")
+  [ "$DRY" = "--dry" ] && { echo "      would: eval $ds/$pr/seed$s gen-batch=$gb time=$tl ${dep:+(after $dep)}"; return; }
   PRIOR="$pr" EVAL_ARGS="--dataset $ds --prior $pr --exp $EXP --seed $s $EVAL_CFG --gen-batch $gb" \
     bash scripts/daic/submit.sh eval "$ds" "$s" "${extra[@]}" | tee /dev/stderr | jid >/dev/null
 }

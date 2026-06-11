@@ -1,10 +1,10 @@
 #!/bin/bash
 #SBATCH --job-name=eval_diffusion
-# 6h cap: the point phase samples k draws over ALL test windows, which on the
-# bigger datasets (pemsbay ~10k windows) ran past the old 3h. resume_pipeline
-# passes --time=$EVAL_TIME (also 6h) which overrides this; kept in sync here so
-# a bare sbatch gets the same budget.
-#SBATCH --time=06:00:00
+# 10h cap: the point phase samples k draws over ALL test windows; pemsbay (~10k
+# windows, N=325) needs ~8h, metrla/pems08f finish well under 6h. resume_pipeline
+# passes a per-dataset --time that overrides this (pemsbay 10h, others 6h); the
+# 10h default here just keeps a bare --all run (which includes pemsbay) safe.
+#SBATCH --time=10:00:00
 # partition / gres are passed on the sbatch command line (pin a supported GPU).
 #SBATCH --cpus-per-task=4
 # 64G host ram to match the larger gen-batch (4096) staged per reverse_sample.

@@ -25,15 +25,18 @@ DIFF_TIME="${DIFF_TIME:-06:00:00}"; EVAL_TIME="${EVAL_TIME:-03:00:00}"
 EVAL_CFG="--k 30 --n-steps 50 --gen-batch 1024 --w1-samples 4"
 jid() { awk '/Submitted batch job/{print $NF}'; }
 
-# safety: resume reasons about FINISHED on-disk state, so it must run against an
-# EMPTY queue — a still-running residual/diffusion would be misread (partial file
-# = "corrupt", no best.pt yet = "missing") and double-submitted. refuse otherwise.
+# safety: resume reasons about FINISHED on-disk state, so a still-running job for
+# a cell it's about to submit would be misread (partial file = "corrupt", no
+# best.pt yet = "missing") and double-submitted. only the cells we're about to
+# touch matter, so when scoped to one dataset we only block on THAT dataset's
+# jobs — letting you launch the next dataset while the previous one still runs.
 if [ "$DRY" != "--dry" ]; then
-  active=$(squeue -u "$USER" -h -o '%j' 2>/dev/null | grep -cE 'backbone_|residuals_|diffusion_|eval_' || true)
+  pat='(backbone|residuals|diffusion|eval)_'
+  [ -n "$ONLY_DS" ] && pat="(backbone|residuals|diffusion|eval)_${ONLY_DS}_"
+  active=$(squeue -u "$USER" -h -o '%j' 2>/dev/null | grep -cE "$pat" || true)
   if [ "${active:-0}" -gt 0 ]; then
-    echo "ERROR: ${active} pipeline jobs still in the queue — resume needs an empty queue." >&2
-    echo "       run 'scancel -u $USER' (or wait for it to drain), then retry." >&2
-    echo "       (use --dry anytime to preview the plan.)" >&2
+    echo "ERROR: ${active} ${ONLY_DS:+${ONLY_DS} }jobs still in the queue — let them finish first." >&2
+    echo "       wait for them to drain (or scancel), then retry. (--dry previews anytime.)" >&2
     exit 1
   fi
 fi

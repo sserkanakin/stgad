@@ -5,7 +5,7 @@
 #
 # we run on two different clusters now:
 #   stable  -> login.daic.tudelft.nl   (insy modulefiles + conda, the old setup)
-#   exp     -> daic01.hpc.tudelft.nl   (2025 Lmod tree + venv overlay, new hw)
+#   exp     -> daic02.hpc.tudelft.nl   (2025 Lmod tree + venv overlay, new hw)
 # everything that differs between them lives here, keyed off $DAIC_CLUSTER.
 
 : "${DAIC_NETID:?set DAIC_NETID in scripts/daic/env.sh before sourcing}"
@@ -48,9 +48,9 @@ case "$DAIC_CLUSTER" in
     export DAIC_GRES_GPU_TYPED="gpu:a40:1" # pin an a40 when needed
     ;;
 
-  # ── experimental DAIC (daic01.hpc.tudelft.nl) ───────────────────────────
+  # ── experimental DAIC (daic02.hpc.tudelft.nl) ───────────────────────────
   exp)
-    export DAIC_LOGIN_HOST="daic01.hpc.tudelft.nl"
+    export DAIC_LOGIN_HOST="daic02.hpc.tudelft.nl"
     # $HOME (/trinity/home, ~5 MB) is config-only. real space is under the two
     # auto-mounted home shares: linuxhome (8 GB, code) and windowshome (data).
     : "${DAIC_PROJECT_DIR:=${HOME}/linuxhome/research-tud}"

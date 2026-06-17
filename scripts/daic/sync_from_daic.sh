@@ -53,17 +53,21 @@ _pull() {
   fi
 }
 
+# trained artefacts live in the repo's results/ dir on the cluster
+# (= ${DAIC_PROJECT_DIR}/results, the single location src/utils/paths.py writes
+# to). the data dir only ever held stale copies — e.g. an old empty 20260610
+# diffusion run — so always pull from the project results dir, the authority.
 if $CKPTS; then
-  _pull "backbone checkpoints"  "${DAIC_DATA_DIR}/backbone/"  results/backbone
-  _pull "diffusion checkpoints" "${DAIC_DATA_DIR}/diffusion/" results/diffusion
+  _pull "backbone checkpoints"  "${DAIC_PROJECT_DIR}/results/backbone/"  results/backbone
+  _pull "diffusion checkpoints" "${DAIC_PROJECT_DIR}/results/diffusion/" results/diffusion
 fi
 
 if $RESIDS; then
-  _pull "residuals" "${DAIC_DATA_DIR}/residuals/" results/residuals
+  _pull "residuals" "${DAIC_PROJECT_DIR}/results/residuals/" results/residuals
 fi
 
 # eval outputs (metrics json, tables, figures, small sample bank).
-_pull "eval results" "${DAIC_DATA_DIR}/eval/" results/eval
+_pull "eval results" "${DAIC_PROJECT_DIR}/results/eval/" results/eval
 
 if $LOGS; then
   _pull "slurm logs" "${DAIC_PROJECT_DIR}/logs/" logs

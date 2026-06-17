@@ -13,7 +13,7 @@ export DAIC_NETID="CHANGE_ME"
 # Which cluster to target. Leave unset to auto-detect (on a cluster it picks
 # itself; off-cluster — your Mac — it defaults to the experimental cluster).
 # Force it when syncing from the Mac to a specific cluster:
-#   export DAIC_CLUSTER="exp"      # daic01.hpc.tudelft.nl (new GPUs)
+#   export DAIC_CLUSTER="exp"      # daic02.hpc.tudelft.nl (new GPUs)
 #   export DAIC_CLUSTER="stable"   # login.daic.tudelft.nl (old setup)
 # export DAIC_CLUSTER="exp"
 

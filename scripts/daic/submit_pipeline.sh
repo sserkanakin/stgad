@@ -26,7 +26,7 @@ case "$DATASET" in
   *)       BB_TIME="${BB_TIME:-01:00:00}" ;;
 esac
 RES_TIME="${RES_TIME:-00:30:00}"
-DIFF_TIME="${DIFF_TIME:-06:00:00}"
+DIFF_TIME="${DIFF_TIME:-10:00:00}"
 EVAL_TIME="${EVAL_TIME:-03:00:00}"
 # full test set (no --max-windows), CRPS auto. k/steps kept light enough to fit.
 EVAL_CFG="--exp ${EXP} --seed ${SEED} --k 30 --n-steps 50 --gen-batch 1024 --w1-samples 4"

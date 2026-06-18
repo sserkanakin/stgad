@@ -21,7 +21,9 @@ for a in "$@"; do
   esac
 done
 DATA="${DAIC_DATA_DIR:-$HOME/windowshome/research-tud-data}"
-DIFF_TIME="${DIFF_TIME:-06:00:00}"
+# 10h walltime for every diffusion run — generous, and kill-safe (best.pt saves on every
+# improvement). profiled 2026-06-19: GPU mem only 6-12G/46G, util 100% (compute-bound).
+DIFF_TIME="${DIFF_TIME:-10:00:00}"
 EVAL_CFG="--k 30 --n-steps 50 --w1-samples 4"
 
 # gen-batch is sized PER DATASET: the ugnet's spatial graph-conv activation scales

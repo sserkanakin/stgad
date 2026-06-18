@@ -1,9 +1,9 @@
 #!/bin/bash
 #SBATCH --job-name=diffusion
 # 200 epochs / patience 15 finishes in ~1-2h; best.pt is saved on every
-# improvement, so even a walltime kill keeps the best model. 6h is a safe cap
-# (covers a slow no-early-stop pemsbay run). override with --time=HH:MM:SS.
-#SBATCH --time=06:00:00
+# improvement, so even a walltime kill keeps the best model. 10h walltime per
+# run. 10h is generous (no queue pressure). override with --time=HH:MM:SS.
+#SBATCH --time=10:00:00
 # partition / qos / gres are injected per-cluster by submit.sh.
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32G

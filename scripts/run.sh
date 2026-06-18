@@ -37,10 +37,11 @@ CMD="${1:?usage: run.sh <profile|train|all> ...}"; shift
 case "$CMD" in
   profile)
     DS="${1:?dataset}"; ARM="${2:-kron}"; arm_flags "$ARM"
+    SEED="${SEED:-42}"   # profile on a seed that has residuals (42/43/44); override via SEED=
     # production batch + val diagnostic, but 1 epoch / 40 batches -> real memory, short.
     EXP="${EXP:-profile}" PROFILE=1 PRIOR="$ARM_PRIOR" \
       EXTRA_FLAGS="--epochs 1 --max-train-batches 40 --val-every 1 ${ARM_SPATIAL} --loss ${LOSS}" \
-      bash "$SUBMIT" diffusion "$DS" 0 --time=00:30:00
+      bash "$SUBMIT" diffusion "$DS" "$SEED" --time=00:30:00
     ;;
   train)
     DS="${1:?dataset}"; SEED="${2:?seed}"; ARM="${3:-kron}"; arm_flags "$ARM"

@@ -3,11 +3,12 @@
 inputs are the cached residuals (src.utils.paths.residual_npz) and the kronecker
 prior from src.diffusion.prior.load_prior.
 
-each step:
+each step (noise-level / c̄ parameterization, EDM-style):
   1. take a batch of (R0, Y_hat, mask) from the residual cache
-  2. draw t ~ Uniform[t_eps, T]  (t_eps avoids the singular t=0 where σ²_t -> 0)
-  3. forward-sample R_t = sample_R_t_given_R0_torch(R0, t, ...)
-  4. predict R0_hat = denoiser(R_t, t, Y_hat)
+  2. draw the noise level c̄ ~ log-uniform[c̄_lo, c̄_hi] (even coverage of every
+     mode's transition; uniform-in-t on the steep schedule misses the middle)
+  3. forward-sample R_t = sample_R_t_from_c_bar_torch(R0, c̄, ...)
+  4. predict R0_hat = denoiser(R_t, tau, Y_hat), tau = normalized log-c̄ in [0,1]
   5. masked mse between R0_hat and R0, then backprop
 
 usage:
@@ -32,15 +33,18 @@ from torch.utils.data import DataLoader
 from src.data.adjacency import load_adjacency
 from src.data.residual_dataset import ResidualDataset, residual_path, train_residual_sigma
 from src.diffusion.denoiser import R0Denoiser, num_parameters
+from src.diffusion.losses import compute_loss, mahalanobis_mse
 from src.diffusion.forward_fcps import (
     FCPSSchedule,
+    c_bar_to_tau,
+    noise_level_bounds,
     prior_to_torch,
-    sample_R_t_given_R0_torch,
+    sample_log_c_bar_torch,
+    sample_R_t_from_c_bar_torch,
 )
 from src.diffusion.prior import load_prior
 from src.diffusion.reverse import reverse_sample
 from src.eval.distribution import energy_distance, sliced_wasserstein1
-from src.eval.intervals import masked_winkler_per_horizon
 from src.utils import paths
 from src.utils.checkpoint import (
     find_latest_checkpoint,
@@ -86,7 +90,7 @@ def masked_mae_per_h(
     return num / den
 
 
-def lr_range_test(loader, *, denoiser, prior_t, schedule, optim, device, t_eps,
+def lr_range_test(loader, *, denoiser, prior_t, c_lo, c_hi, loss_name, optim, device,
                   n_steps, lr_min, lr_max, out_path) -> None:
     """Smith lr range test: sweep lr exponentially lr_min->lr_max over n_steps
     training batches, recording the loss. the good lr band is where the loss falls
@@ -110,7 +114,7 @@ def lr_range_test(loader, *, denoiser, prior_t, schedule, optim, device, t_eps,
             g["lr"] = lr
         optim.zero_grad()
         loss = train_step(batch, denoiser=denoiser, prior_t=prior_t,
-                          schedule=schedule, device=device, t_eps=t_eps, generator=None)
+                          c_lo=c_lo, c_hi=c_hi, loss_name=loss_name, device=device, generator=None)
         loss.backward()
         torch.nn.utils.clip_grad_norm_(denoiser.parameters(), 5.0)
         optim.step()
@@ -147,9 +151,10 @@ def train_step(
     *,
     denoiser: R0Denoiser,
     prior_t,
-    schedule: FCPSSchedule,
+    c_lo: float,
+    c_hi: float,
+    loss_name: str,
     device: torch.device,
-    t_eps: float,
     generator: Optional[torch.Generator],
 ) -> torch.Tensor:
     R0 = batch["R0"].to(device, non_blocking=True)         # (B, N, H)
@@ -157,11 +162,15 @@ def train_step(
     mask = batch["mask"].to(device, non_blocking=True)
     B = R0.shape[0]
 
-    t = torch.rand(B, device=device, generator=generator) * (schedule.T - t_eps) + t_eps
-    R_t = sample_R_t_given_R0_torch(R0, t, prior_t, schedule, generator=generator)
+    # draw the noise level log-uniformly in [c̄_lo, c̄_hi] (even coverage of every
+    # mode's transition), forward-noise R0 to it, and condition on the normalized
+    # log-noise tau. this is the EDM-style noise-level axis, not uniform-in-t.
+    c_bar = sample_log_c_bar_torch(c_lo, c_hi, B, device, R0.dtype, generator=generator)
+    R_t = sample_R_t_from_c_bar_torch(R0, c_bar, prior_t, generator=generator)
+    tau = c_bar_to_tau(c_bar, c_lo, c_hi)
 
-    R0_hat = denoiser(R_t, t, Y_hat)
-    return masked_mse(R0_hat, R0, mask)
+    R0_hat = denoiser(R_t, tau, Y_hat)
+    return compute_loss(loss_name, R0_hat, R0, mask, c_bar, prior_t)
 
 
 @torch.no_grad()
@@ -170,13 +179,14 @@ def validate(
     *,
     denoiser: R0Denoiser,
     prior_t,
-    schedule: FCPSSchedule,
+    c_lo: float,
+    c_hi: float,
+    loss_name: str,
     device: torch.device,
-    t_eps: float,
     n_t_samples: int = 4,
 ) -> float:
-    """Average validation loss over the loader. For each batch we average the
-    MSE over `n_t_samples` random t draws to reduce noise from the t sampling.
+    """Average validation loss over the loader (same loss as training, for early
+    stopping). For each batch we average over `n_t_samples` random noise-level draws.
     """
     denoiser.eval()
     total = 0.0
@@ -188,25 +198,26 @@ def validate(
         B = R0.shape[0]
         batch_loss = 0.0
         for _ in range(n_t_samples):
-            t = torch.rand(B, device=device) * (schedule.T - t_eps) + t_eps
-            R_t = sample_R_t_given_R0_torch(R0, t, prior_t, schedule)
-            R0_hat = denoiser(R_t, t, Y_hat)
-            batch_loss += float(masked_mse(R0_hat, R0, mask))
+            c_bar = sample_log_c_bar_torch(c_lo, c_hi, B, device, R0.dtype)
+            R_t = sample_R_t_from_c_bar_torch(R0, c_bar, prior_t)
+            R0_hat = denoiser(R_t, c_bar_to_tau(c_bar, c_lo, c_hi), Y_hat)
+            batch_loss += float(compute_loss(loss_name, R0_hat, R0, mask, c_bar, prior_t))
         total += batch_loss / n_t_samples
         n += 1
     denoiser.train()
     return total / max(n, 1)
 
 
-# ─── End-to-end reconstruction / generation eval ─────────────────────────────
+# ─── Validation diagnostic (every few epochs) ────────────────────────────────
 
 
 _HL_HORIZONS = (3, 6, 12)  # horizons highlighted in the printout (1-indexed)
 
 
 @torch.no_grad()
-def reconstruction_eval(
-    batch: dict[str, torch.Tensor],
+def val_diagnostic(
+    R0_fo: torch.Tensor,
+    Y_hat_fo: torch.Tensor,
     *,
     denoiser: R0Denoiser,
     prior,
@@ -214,189 +225,79 @@ def reconstruction_eval(
     schedule: FCPSSchedule,
     device: torch.device,
     n_steps: int,
-    n_samples: int,
-    alpha: float,
-    log_every: int,
+    n_proj: int,
     sigma_r: float,
+    c_lo: float,
+    c_hi: float,
     generator: Optional[torch.Generator],
 ) -> dict:
-    """end-to-end check that the reverse process actually works, on one val batch.
+    """end-to-end reverse-process check on fully-observed val windows.
 
-    sampling runs in unit space (R0, prior, schedule all unit); metrics are
-    de-normalized back to physical units (× sigma_r) so the numbers are in mph /
-    veh and comparable to the backbone and the isotropic baseline. the backbone
-    term cancels (forecast_err = (Y_hat+R0_hat) - (Y_hat+R0_true) = R0_hat-R0_true),
-    so Y_hat never enters the metric and only the residual scaler matters here.
-
-    two diagnostics:
-      1. reconstruction curve - forward-noise the true R0 to t≈T (almost fully
-         noised), then reverse-denoise back to t≈0 with the deterministic (eta=0)
-         sampler, logging masked mae/mse every `log_every` steps. mae should drop
-         as t -> 0 if the denoiser is inverting the forward process.
-      2. generative metric - draw `n_samples` prior-seeded samples, report mae/mse
-         of the sample mean and the winkler interval score at level alpha.
+    the flow: take a val batch, forward-noise it close to fully-noised (c̄_hi), run
+    the reverse sde back, and score the reconstruction —
+      - MSE / MAE vs the true residual (raw units, overall + per horizon),
+      - Wasserstein: sliced-W1 + energy distance between the reconstructed and true
+        residual clouds, per horizon, in node space,
+      - Mahalanobis: the one-shot denoising error in standardised (per-mode) units —
+        the metric that is comparable across priors (kron vs iso).
+    fully-observed windows only, so the node vectors carry no masked garbage and the
+    eigenbasis rotation (Mahalanobis) is clean. metrics are de-normalized (× sigma_r)
+    to raw units; the backbone term cancels, so only the residual scaler enters.
     """
     denoiser.eval()
-    R0 = batch["R0"].to(device)                                   # unit space
-    Y_hat = batch["Y_hat"].to(device)
-    mask = batch["mask"].to(device)
-    B = R0.shape[0]
-    R0_phys = R0 * sigma_r                                        # for metrics (raw units)
+    R0 = R0_fo.to(device)                                    # unit space
+    Y_hat = Y_hat_fo.to(device)
+    W, N, H = R0.shape
+    R0_phys = R0 * sigma_r                                   # raw units
+    full = torch.ones_like(R0)                               # fully observed
 
-    # ── 1. reconstruction curve from a noised true R0 ──────────────────────
-    t_top = torch.full((B,), schedule.T, device=device, dtype=R0.dtype)
-    R_T = sample_R_t_given_R0_torch(R0, t_top, prior_t, schedule, generator=generator)
+    # ── noise close to full (c̄_hi), then reverse-denoise back to the data ──
+    c_top = torch.full((W,), c_hi, device=device, dtype=R0.dtype)
+    R_T = sample_R_t_from_c_bar_torch(R0, c_top, prior_t, generator=generator)
+    R0_hat, _ = reverse_sample(prior, schedule, denoiser, Y_hat, n_steps=n_steps,
+                               eta=0.0, R_T=R_T, generator=generator)
+    R0_hat_phys = R0_hat * sigma_r
 
-    curve: list[tuple[float, float, float]] = []  # (t, mae, mse) along the trajectory
+    recon_mae = float(masked_mae(R0_hat_phys, R0_phys, full))
+    recon_mse = float(masked_mse(R0_hat_phys, R0_phys, full))
+    recon_mae_h = masked_mae_per_h(R0_hat_phys, R0_phys, full).tolist()
 
-    def _record(i: int, t_cur: float, R0_hat: torch.Tensor) -> None:
-        if i % log_every == 0:
-            curve.append((t_cur, float(masked_mae(R0_hat * sigma_r, R0_phys, mask)),
-                          float(masked_mse(R0_hat * sigma_r, R0_phys, mask))))
+    # ── Wasserstein on reconstructed vs true residual clouds (per horizon) ──
+    w1_h, ed_h = [], []
+    for h in range(H):
+        w1_h.append(sliced_wasserstein1(R0_hat_phys[:, :, h], R0_phys[:, :, h], n_proj, generator))
+        ed_h.append(energy_distance(R0_hat_phys[:, :, h], R0_phys[:, :, h]))
 
-    R0_recon, _ = reverse_sample(
-        prior, schedule, denoiser, Y_hat, n_steps=n_steps,
-        eta=0.0, R_T=R_T, generator=generator, step_callback=_record,
-    )
-    curve.append((0.0, float(masked_mae(R0_recon * sigma_r, R0_phys, mask)),
-                  float(masked_mse(R0_recon * sigma_r, R0_phys, mask))))
-    recon_mae = curve[-1][1]
-    recon_mse = curve[-1][2]
-
-    # ── 2. generative samples from the prior (one batched reverse pass) ─────
-    Y_hat_rep = Y_hat.repeat(n_samples, 1, 1)                      # (K*B, N, H)
-    samples_flat, _ = reverse_sample(
-        prior, schedule, denoiser, Y_hat_rep, n_steps=n_steps,
-        eta=0.0, R_T=None, generator=generator,
-    )
-    samples = samples_flat.view(n_samples, B, prior.N, prior.H) * sigma_r   # raw units
-
-    sample_mean = samples.mean(dim=0)                             # (B, N, H), raw
-    gen_mae_h = masked_mae_per_h(sample_mean, R0_phys, mask)       # (H,)
-    gen_mae = float(masked_mae(sample_mean, R0_phys, mask))
-    gen_mse = float(masked_mse(sample_mean, R0_phys, mask))
-
-    lo = torch.quantile(samples, alpha / 2.0, dim=0)              # (B, N, H), raw
-    hi = torch.quantile(samples, 1.0 - alpha / 2.0, dim=0)
-    wi_h = masked_winkler_per_horizon(R0_phys, lo, hi, mask, alpha)   # (H,)
-    wi = float(wi_h.mean())
-    # empirical coverage of the interval (should be ~ 1 - alpha if calibrated)
-    inside = ((R0_phys >= lo) & (R0_phys <= hi) & mask).float().sum()
-    coverage = float(inside / mask.float().sum().clamp(min=1.0))
+    # ── Mahalanobis: one-shot denoising error in standardised units (cross-prior) ──
+    c_bar = sample_log_c_bar_torch(c_lo, c_hi, W, device, R0.dtype)
+    R_t = sample_R_t_from_c_bar_torch(R0, c_bar, prior_t)
+    R0_hat_1 = denoiser(R_t, c_bar_to_tau(c_bar, c_lo, c_hi), Y_hat)
+    maha = float(mahalanobis_mse(R0_hat_1, R0, full, c_bar, prior_t))
 
     denoiser.train()
     return {
-        "curve": curve,
-        "recon_mae": recon_mae,
-        "recon_mse": recon_mse,
-        "gen_mae": gen_mae,
-        "gen_mse": gen_mse,
-        "gen_mae_h": gen_mae_h.tolist(),
-        "wi": wi,
-        "wi_h": wi_h.tolist(),
-        "coverage": coverage,
+        "recon_mae": recon_mae, "recon_mse": recon_mse, "recon_mae_h": recon_mae_h,
+        "w1": float(sum(w1_h) / H), "ed": float(sum(ed_h) / H),
+        "w1_h": w1_h, "ed_h": ed_h, "mahalanobis": maha, "n_windows": W,
     }
 
 
-@torch.no_grad()
-def generative_fidelity_eval(
-    R0: torch.Tensor,
-    Y_hat: torch.Tensor,
-    *,
-    denoiser: R0Denoiser,
-    prior,
-    schedule: FCPSSchedule,
-    device: torch.device,
-    n_steps: int,
-    n_samples: int,
-    n_proj: int,
-    eta: float,
-    sigma_r: float,
-    generator: Optional[torch.Generator],
-) -> dict:
-    """W1 generative-fidelity check (global, distributional).
-
-    R0 / Y_hat are a fixed subsample of fully-observed val windows (complete
-    case, so the R^N node vectors are clean - no masked garbage). we draw
-    `n_samples` pure-prior samples per window through the full stochastic
-    reverse sde (eta=1 by default), then per horizon compare the generated
-    residual cloud against the true cloud in node-space via sliced wasserstein-1
-    and energy distance. this asks whether the generative chain produces
-    realistic residuals, not whether it can locally undo a small perturbation.
-    """
-    denoiser.eval()
-    R0 = R0.to(device)
-    Y_hat = Y_hat.to(device)
-    W, N, H = R0.shape
-
-    # generate: pure prior -> full reverse sde, n_samples draws per window.
-    Y_hat_rep = Y_hat.repeat(n_samples, 1, 1)                  # (S*W, N, H)
-    gen_flat, _ = reverse_sample(
-        prior, schedule, denoiser, Y_hat_rep, n_steps=n_steps,
-        eta=eta, R_T=None, generator=generator,
-    )
-    gen = gen_flat.view(n_samples, W, N, H) * sigma_r          # (S, W, N, H), raw units
-    R0_phys = R0 * sigma_r                                     # raw units for the true cloud
-
-    w1_h, ed_h = [], []
-    for h in range(H):
-        true_cloud = R0_phys[:, :, h]                          # (W, N)
-        gen_cloud = gen[:, :, :, h].reshape(n_samples * W, N)  # (S*W, N)
-        w1_h.append(sliced_wasserstein1(gen_cloud, true_cloud, n_proj, generator))
-        ed_h.append(energy_distance(gen_cloud, true_cloud))
-
-    return {
-        "w1_h": w1_h,
-        "ed_h": ed_h,
-        "w1": float(sum(w1_h) / len(w1_h)),
-        "ed": float(sum(ed_h) / len(ed_h)),
-        "n_windows": W,
-        "n_samples": n_samples,
-    }
-
-
-def _log_w1(epoch: int, res: dict, frac: float, *, to_wandb: bool) -> None:
-    """print the W1 generative-fidelity result and optionally push to wandb."""
-    horizons = [h for h in _HL_HORIZONS if h <= len(res["w1_h"])]
-    hl = ", ".join(f"h{h}=W1:{res['w1_h'][h - 1]:.3f}/ED:{res['ed_h'][h - 1]:.3f}"
-                   for h in horizons)
-    print(f"  [w1] {res['n_windows']} clean windows x{res['n_samples']} "
-          f"(={frac:.2f} of val)  mean W1={res['w1']:.3f} ED={res['ed']:.3f}  ({hl})",
-          flush=True)
+def _log_val(epoch: int, res: dict, *, to_wandb: bool) -> None:
+    """print the val diagnostic and optionally push scalars to wandb."""
+    hz = [h for h in _HL_HORIZONS if h <= len(res["recon_mae_h"])]
+    hl = ", ".join(f"h{h}={res['recon_mae_h'][h - 1]:.3f}" for h in hz)
+    print(f"  [val] {res['n_windows']} clean windows | recon MAE={res['recon_mae']:.3f} "
+          f"MSE={res['recon_mse']:.3f} ({hl}) | W1={res['w1']:.3f} ED={res['ed']:.3f} "
+          f"| mahalanobis={res['mahalanobis']:.3f}", flush=True)
     if not to_wandb:
         return
     import wandb
-    log = {"w1/swd": res["w1"], "w1/energy": res["ed"], "epoch": epoch}
-    for h in horizons:
-        log[f"w1/swd_h{h}"] = res["w1_h"][h - 1]
-        log[f"w1/energy_h{h}"] = res["ed_h"][h - 1]
-    wandb.log(log)
-
-
-def _log_reconstruction(epoch: int, res: dict, alpha: float, *, to_wandb: bool) -> None:
-    """print the reconstruction-eval result and optionally push scalars to wandb."""
-    pct = int(round((1.0 - alpha) * 100))
-    horizons = [h for h in _HL_HORIZONS if h <= len(res["gen_mae_h"])]
-    print(f"  [recon] curve mae (t->0): "
-          + " ".join(f"{t:.2f}:{mae:.3f}" for t, mae, _ in res["curve"]), flush=True)
-    hl = ", ".join(f"h{h}={res['gen_mae_h'][h - 1]:.3f}" for h in horizons)
-    print(f"  [recon] gen mae={res['gen_mae']:.3f} mse={res['gen_mse']:.3f} "
-          f"({hl})  WI{pct}={res['wi']:.3f}  cov={res['coverage']:.3f}", flush=True)
-    if not to_wandb:
-        return
-    import wandb
-    log = {
-        "recon/recon_mae": res["recon_mae"],
-        "recon/recon_mse": res["recon_mse"],
-        "recon/gen_mae": res["gen_mae"],
-        "recon/gen_mse": res["gen_mse"],
-        "recon/wi": res["wi"],
-        "recon/coverage": res["coverage"],
-        "epoch": epoch,
-    }
-    for h in horizons:
-        log[f"recon/gen_mae_h{h}"] = res["gen_mae_h"][h - 1]
-        log[f"recon/wi_h{h}"] = res["wi_h"][h - 1]
+    log = {"val/recon_mae": res["recon_mae"], "val/recon_mse": res["recon_mse"],
+           "val/w1": res["w1"], "val/energy": res["ed"],
+           "val/mahalanobis": res["mahalanobis"], "epoch": epoch}
+    for h in hz:
+        log[f"val/recon_mae_h{h}"] = res["recon_mae_h"][h - 1]
+        log[f"val/w1_h{h}"] = res["w1_h"][h - 1]
     wandb.log(log)
 
 
@@ -430,34 +331,25 @@ def main() -> None:
     p.add_argument("--c-0", type=float, default=20000.0)
     p.add_argument("--alpha", type=float, default=7.0)
     p.add_argument("--t-eps", type=float, default=1e-3, help="lower bound on t to avoid σ²=0")
+    p.add_argument("--loss", choices=("snr", "mse", "mahalanobis"), default="snr",
+                   help="training loss: snr-weighted mse (default), plain mse, or the "
+                        "precision-weighted mahalanobis ablation")
     # ── learning-rate range test (Smith): sweep lr exponentially over a few
     # hundred steps to locate the good lr band, then exit (no full training).
     p.add_argument("--lr-find", type=int, default=0,
                    help="if >0, run an lr range test for this many steps and exit")
     p.add_argument("--lr-find-min", type=float, default=1e-6)
     p.add_argument("--lr-find-max", type=float, default=1.0)
-    # ── end-to-end reconstruction / generation eval (one val batch)
-    p.add_argument("--recon-every", type=int, default=5,
-                   help="run the reconstruction+WI eval every N epochs (0 disables)")
-    p.add_argument("--recon-steps", type=int, default=100,
-                   help="reverse-sampler steps for the reconstruction eval")
-    p.add_argument("--recon-samples", type=int, default=20,
-                   help="K prior-seeded samples for the generative mae + winkler interval")
-    p.add_argument("--recon-alpha", type=float, default=0.1,
-                   help="miscoverage for the winkler interval (0.1 -> central 90%%)")
-    p.add_argument("--recon-log-every", type=int, default=25,
-                   help="record the reconstruction mae/mse every this many reverse steps")
-    # ── W1 generative-fidelity eval (fixed subsample of clean val windows)
-    p.add_argument("--w1-every", type=int, default=20,
-                   help="run the W1 (sliced wasserstein + energy) eval every N epochs (0 disables)")
-    p.add_argument("--w1-windows", type=int, default=512,
-                   help="number of fully-observed val windows in the W1 cloud")
-    p.add_argument("--w1-samples", type=int, default=1,
-                   help="prior-seeded samples generated per window for the W1 cloud")
-    p.add_argument("--w1-proj", type=int, default=128,
+    # ── val diagnostic (every N epochs): noise a clean val batch close to full,
+    #    reverse it, score recon MSE/MAE + Wasserstein + the mahalanobis metric.
+    p.add_argument("--val-every", type=int, default=5,
+                   help="run the val diagnostic every N epochs (0 disables)")
+    p.add_argument("--val-steps", type=int, default=100,
+                   help="reverse-sampler steps for the val diagnostic")
+    p.add_argument("--val-windows", type=int, default=512,
+                   help="number of fully-observed val windows used by the diagnostic")
+    p.add_argument("--val-proj", type=int, default=128,
                    help="random projections for the sliced wasserstein-1")
-    p.add_argument("--w1-eta", type=float, default=1.0,
-                   help="reverse-sde noise level for W1 sampling (1.0 = full stochastic sde)")
     p.add_argument("--smoke", action="store_true", help="1 epoch, tiny batch, wandb disabled")
     p.add_argument("--fresh", action="store_true", help="delete existing checkpoint dir + restart")
     p.add_argument("--max-train-batches", type=int, default=0,
@@ -468,13 +360,11 @@ def main() -> None:
         args.epochs = 1
         args.batch_size = 8
         args.max_train_batches = max(args.max_train_batches, 5)
-        # exercise the recon + w1 evals cheaply on the single smoke epoch
-        args.recon_every = 1
-        args.recon_steps = 20
-        args.recon_samples = 4
-        args.w1_every = 1
-        args.w1_windows = 16
-        args.w1_proj = 16
+        # exercise the val diagnostic cheaply on the single smoke epoch
+        args.val_every = 1
+        args.val_steps = 20
+        args.val_windows = 16
+        args.val_proj = 16
         os.environ.setdefault("WANDB_MODE", "disabled")
 
     cfg = vars(args).copy()
@@ -536,9 +426,13 @@ def main() -> None:
     # (it used to record the ignored CLI value, which misled eval_diffusion)
     cfg["c_0"] = schedule.c_0
     (ckpt_dir / "config.json").write_text(json.dumps(cfg, indent=2, default=str))
+    # noise-level (c̄) bounds the training sampler and reverse grid span — derived
+    # from the prior spectrum. training draws c̄ log-uniformly in [c_lo, c_hi].
+    c_lo, c_hi = noise_level_bounds(prior)
     print(
         f"[train_diffusion] prior N={prior.N} H={prior.H} γ={prior.gamma:.4f}  "
-        f"θ_min={float(prior.theta.min()):.4f}  θ_max={float(prior.theta.max()):.2f}",
+        f"θ_min={float(prior.theta.min()):.4f}  θ_max={float(prior.theta.max()):.2f}  "
+        f"noise-level c̄∈[{c_lo:.3g}, {c_hi:.3g}] (log-uniform sampling)",
         flush=True,
     )
 
@@ -557,8 +451,8 @@ def main() -> None:
     # lr range test: sweep lr, record loss, exit before the real training loop.
     if args.lr_find:
         lr_range_test(
-            train_loader, denoiser=denoiser, prior_t=prior_t, schedule=schedule,
-            optim=optim, device=device, t_eps=args.t_eps, n_steps=args.lr_find,
+            train_loader, denoiser=denoiser, prior_t=prior_t, c_lo=c_lo, c_hi=c_hi,
+            loss_name=args.loss, optim=optim, device=device, n_steps=args.lr_find,
             lr_min=args.lr_find_min, lr_max=args.lr_find_max,
             out_path=ckpt_dir / "lr_find.json",
         )
@@ -589,60 +483,35 @@ def main() -> None:
         )
     import wandb  # safe — always installed
 
-    # ── Reconstruction eval: one fixed val batch + a dedicated rng so the
-    # diagnostic is comparable across epochs. mps can't drive randn from a
-    # device generator, so fall back to the global rng there (cuda in prod).
-    recon_batch = next(iter(val_loader)) if args.recon_every else None
-    recon_gen = (
+    # ── Val diagnostic: a fixed subsample of fully-observed (complete-case) val
+    # windows, so the node vectors carry no masked garbage and the eigenbasis
+    # rotation (mahalanobis) is clean. a dedicated rng keeps it comparable across
+    # epochs; mps can't drive randn from a device generator, so fall back there.
+    val_gen = (
         None if device.type == "mps"
         else torch.Generator(device=device.type).manual_seed(args.seed + 999)
     )
-
-    def _maybe_recon(epoch: int, is_last: bool) -> None:
-        if not args.recon_every:
-            return
-        if epoch % args.recon_every != 0 and not is_last:
-            return
-        res = reconstruction_eval(
-            recon_batch, denoiser=denoiser, prior=prior, prior_t=prior_t,
-            schedule=schedule, device=device, n_steps=args.recon_steps,
-            n_samples=args.recon_samples, alpha=args.recon_alpha,
-            log_every=args.recon_log_every, sigma_r=sigma_r, generator=recon_gen,
-        )
-        _log_reconstruction(
-            epoch, res, args.recon_alpha,
-            to_wandb=os.environ.get("WANDB_MODE", "online") != "disabled",
-        )
-
-    # ── W1 cloud: a fixed subsample of fully-observed (complete-case) val
-    # windows, so the per-horizon R^N node vectors carry no masked garbage.
-    if args.w1_every:
+    if args.val_every:
         full_valid = val_ds.mask.reshape(len(val_ds), -1).all(dim=1)   # (Nval,)
         valid_idx = full_valid.nonzero(as_tuple=True)[0]
-        w1_frac = float(full_valid.float().mean())
-        n_w1 = min(args.w1_windows, valid_idx.numel())
-        sel = valid_idx[:n_w1]
-        w1_R0, w1_Yhat = val_ds.R0[sel], val_ds.Y_hat[sel]
-        print(f"[train_diffusion] W1 cloud: {n_w1} clean windows "
-              f"({w1_frac:.2f} of val fully observed)", flush=True)
+        n_val = min(args.val_windows, valid_idx.numel())
+        val_R0, val_Yhat = val_ds.R0[valid_idx[:n_val]], val_ds.Y_hat[valid_idx[:n_val]]
+        print(f"[train_diffusion] val diagnostic: {n_val} clean windows "
+              f"({float(full_valid.float().mean()):.2f} of val fully observed)", flush=True)
     else:
-        w1_R0 = w1_Yhat = None
-        w1_frac = 0.0
+        val_R0 = val_Yhat = None
 
-    def _maybe_w1(epoch: int, is_last: bool) -> None:
-        if not args.w1_every or w1_R0 is None or w1_R0.shape[0] == 0:
+    def _maybe_val(epoch: int, is_last: bool) -> None:
+        if not args.val_every or val_R0 is None or val_R0.shape[0] == 0:
             return
-        if epoch % args.w1_every != 0 and not is_last:
+        if epoch % args.val_every != 0 and not is_last:
             return
-        res = generative_fidelity_eval(
-            w1_R0, w1_Yhat, denoiser=denoiser, prior=prior, schedule=schedule,
-            device=device, n_steps=args.recon_steps, n_samples=args.w1_samples,
-            n_proj=args.w1_proj, eta=args.w1_eta, sigma_r=sigma_r, generator=recon_gen,
+        res = val_diagnostic(
+            val_R0, val_Yhat, denoiser=denoiser, prior=prior, prior_t=prior_t,
+            schedule=schedule, device=device, n_steps=args.val_steps,
+            n_proj=args.val_proj, sigma_r=sigma_r, c_lo=c_lo, c_hi=c_hi, generator=val_gen,
         )
-        _log_w1(
-            epoch, res, w1_frac,
-            to_wandb=os.environ.get("WANDB_MODE", "online") != "disabled",
-        )
+        _log_val(epoch, res, to_wandb=os.environ.get("WANDB_MODE", "online") != "disabled")
 
     # ── Train
     for epoch in range(start_epoch, args.epochs):
@@ -655,8 +524,8 @@ def main() -> None:
                 break
             optim.zero_grad()
             loss = train_step(
-                batch, denoiser=denoiser, prior_t=prior_t, schedule=schedule,
-                device=device, t_eps=args.t_eps, generator=None,
+                batch, denoiser=denoiser, prior_t=prior_t, c_lo=c_lo, c_hi=c_hi,
+                loss_name=args.loss, device=device, generator=None,
             )
             loss.backward()
             torch.nn.utils.clip_grad_norm_(denoiser.parameters(), 5.0)
@@ -666,8 +535,8 @@ def main() -> None:
 
         train_loss = running / max(n_batches, 1)
         val_loss = validate(
-            val_loader, denoiser=denoiser, prior_t=prior_t, schedule=schedule,
-            device=device, t_eps=args.t_eps,
+            val_loader, denoiser=denoiser, prior_t=prior_t, c_lo=c_lo, c_hi=c_hi,
+            loss_name=args.loss, device=device,
         )
         elapsed = time.time() - t0
         print(
@@ -678,8 +547,7 @@ def main() -> None:
         if os.environ.get("WANDB_MODE", "online") != "disabled":
             wandb.log({"train/loss": train_loss, "val/loss": val_loss, "epoch": epoch})
 
-        _maybe_recon(epoch, is_last=(epoch == args.epochs - 1))
-        _maybe_w1(epoch, is_last=(epoch == args.epochs - 1))
+        _maybe_val(epoch, is_last=(epoch == args.epochs - 1))
 
         improved = val_loss < best_val
         if improved:

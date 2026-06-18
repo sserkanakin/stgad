@@ -164,6 +164,42 @@ def compute_scaled_laplacian(adj: np.ndarray) -> np.ndarray:
     return (2.0 / lambda_max) * L - np.eye(L.shape[0])
 
 
+def connectivity(dataset: str, repair: bool = REPAIR_ISOLATED) -> dict:
+    """verify the graph is a SINGLE connected component.
+
+    repairing isolated (degree-0) sensors is not enough: a graph can have every
+    node at degree ≥ 1 yet still split into separate clusters. a disconnected graph
+    is a real problem for the heat-equation prior — the Laplacian's zero eigenvalue
+    gains one extra copy per component, so each cluster has its own un-mixable
+    constant mode and the forward process can never spread noise between clusters.
+
+    we check it two independent ways that must agree:
+      - graph search: scipy.connected_components (BFS/DFS) on the binary adjacency.
+      - spectrum: the multiplicity of the λ=0 Laplacian eigenvalue equals the number
+        of components; the second-smallest eigenvalue (the Fiedler value) is > 0
+        iff the graph is connected.
+    returns n_components, component_sizes, fiedler, zero_eig_multiplicity, ok.
+    """
+    from scipy.sparse.csgraph import connected_components
+
+    A = load_adjacency(dataset, repair=repair).astype(np.float64)
+    np.fill_diagonal(A, 0.0)
+    A = (A + A.T) / 2.0
+    n_comp, labels = connected_components(A > 0, directed=False)
+    sizes = sorted(np.bincount(labels).tolist(), reverse=True)
+
+    eig = np.linalg.eigvalsh(compute_normalized_laplacian(load_adjacency(dataset, repair=repair)))
+    fiedler = float(eig[1])                       # second-smallest eigenvalue
+    zero_mult = int((eig < 1e-8).sum())
+    return {
+        "n_components": int(n_comp),
+        "component_sizes": sizes,
+        "fiedler": fiedler,
+        "zero_eig_multiplicity": zero_mult,
+        "ok": n_comp == 1 and zero_mult == 1 and fiedler > 1e-8,
+    }
+
+
 def laplacian_eigendecomposition(
     L: np.ndarray, dataset: str, cache: bool = True
 ) -> tuple[np.ndarray, np.ndarray]:

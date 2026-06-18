@@ -17,6 +17,7 @@ two schedules:
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Optional
 
@@ -172,6 +173,90 @@ def prior_to_torch(
         V_T=torch.as_tensor(prior.V_T, device=device, dtype=dtype),
         theta=torch.as_tensor(prior.theta, device=device, dtype=dtype),
     )
+
+
+# ─── noise-level (c̄) parameterization — the EDM-style training/sampling axis ──
+#
+# the control variable is the cumulative noise c̄ (not diffusion-time t), because
+# the whole process depends only on c̄ and the per-mode precision θ:
+#     H(c̄)  = exp(-c̄ θ)                    (signal retained, per mode)
+#     σ²(c̄) = (1 - exp(-2 c̄ θ)) / θ        (noise variance, per mode)
+# a mode is "in transition" (learnable) when c̄·θ ~ O(1). because θ spans orders of
+# magnitude on the stiff prior, we sample / step c̄ LOG-uniformly so every mode's
+# transition is covered evenly — uniform-in-t (steep schedule) misses the middle,
+# uniform-in-c̄ over-weights the loose modes. bounds come from the spectrum:
+#     c̄_hi = mix the slowest mode (5/θ_min) ; c̄_lo = barely noise the fastest (0.05/θ_max).
+
+_SNR_HI = 5.0          # c̄_hi·θ_min: slowest mode fully mixed (H = e^-5 ≈ 0.007)
+_NOISE_FLOOR = 0.04    # target std of the noise left in the final sample (unit space):
+                       # σ(c̄_lo) ≈ sqrt(2·c̄_lo), so c̄_lo = floor²/2. fixed (not tied to
+                       # θ_max) so every dataset's final sample is equally clean (~4%),
+                       # and c̄_lo stays below the stiffest mode's transition start.
+
+
+def noise_level_bounds(prior: KroneckerPrior) -> tuple[float, float]:
+    """(c̄_lo, c̄_hi): the noise-level range training samples and sampling steps span.
+    c̄_hi mixes the slowest mode (5/θ_min); c̄_lo gives a clean ~4% final noise floor."""
+    c_lo = _NOISE_FLOOR ** 2 / 2.0
+    c_hi = _SNR_HI / float(prior.theta.min())
+    return c_lo, c_hi
+
+
+def c_bar_to_tau(c_bar, c_lo: float, c_hi: float):
+    """normalized log-noise-level in [0, 1] — what the denoiser conditions on
+    (replaces raw t; even resolution across the noise range). accepts np or torch."""
+    if isinstance(c_bar, torch.Tensor):
+        log = torch.log
+    else:
+        log = np.log
+        c_bar = np.asarray(c_bar)
+    return (log(c_bar) - math.log(c_lo)) / (math.log(c_hi) - math.log(c_lo))
+
+
+def sample_log_c_bar_torch(
+    c_lo: float, c_hi: float, B: int, device, dtype,
+    generator: Optional[torch.Generator] = None,
+) -> torch.Tensor:
+    """draw B noise levels log-uniformly in [c̄_lo, c̄_hi] (training)."""
+    u = torch.rand(B, device=device, dtype=dtype, generator=generator)
+    return c_lo * (c_hi / c_lo) ** u
+
+
+def reverse_c_bar_grid(c_lo: float, c_hi: float, n_steps: int) -> np.ndarray:
+    """descending geometric grid of n_steps+1 noise levels from c̄_hi down to c̄_lo
+    (the reverse trajectory; even in log-c̄ so steps are well-spaced for all modes)."""
+    return np.geomspace(c_hi, c_lo, n_steps + 1)
+
+
+def sample_R_t_from_c_bar_torch(
+    R0: torch.Tensor,
+    c_bar: torch.Tensor,
+    prior_t: TorchPriorTensors,
+    generator: Optional[torch.Generator] = None,
+) -> torch.Tensor:
+    """forward marginal at noise level c̄ (no schedule / no t). R0 (B, N, H),
+    c_bar (B,) -> R_t (B, N, H). H and σ² are per-mode functions of c̄ and θ."""
+    if R0.ndim != 3:
+        raise ValueError(f"R0 must be (B, N, H); got {tuple(R0.shape)}")
+    cb = c_bar.view(-1, 1, 1)
+    theta = prior_t.theta.unsqueeze(0)
+    H = torch.exp(-theta * cb)
+    sigma2 = (1.0 - torch.exp(-2.0 * theta * cb)) / theta
+    C0 = torch.einsum("ki,bih,hj->bkj", prior_t.V_S.T, R0, prior_t.V_T)
+    Z = torch.randn(R0.shape, generator=generator, device=R0.device, dtype=R0.dtype)
+    Ct = H * C0 + sigma2.sqrt() * Z
+    return torch.einsum("ik,bkh,hj->bij", prior_t.V_S, Ct, prior_t.V_T.T)
+
+
+def sample_R_t_from_c_bar(
+    R0: np.ndarray, c_bar: float, prior: KroneckerPrior, rng: np.random.Generator,
+) -> np.ndarray:
+    """numpy twin of sample_R_t_from_c_bar_torch, for tests/diagnostics. R0 (..., N, H)."""
+    H = np.exp(-prior.theta * c_bar)
+    sigma2 = (1.0 - np.exp(-2.0 * prior.theta * c_bar)) / prior.theta
+    C0 = _rotate_to_eigenbasis(R0, prior)
+    Z = rng.standard_normal(R0.shape)
+    return _rotate_from_eigenbasis(H * C0 + np.sqrt(sigma2) * Z, prior)
 
 
 def _fcps_c_bar_torch(

@@ -176,6 +176,7 @@ def load_prior(
     seed: int = 0,
     spatial: str = DEFAULT_SPATIAL,
     stiffness_cap: float | None = None,
+    gamma: float | None = None,
 ) -> KroneckerPrior:
     """Fit and cache the diffusion noise prior for a dataset.
 
@@ -185,6 +186,9 @@ def load_prior(
     prior="isotropic": scale-matched white noise Σ = σ²·I (the baseline).
     stiffness_cap: if set, floor θ_min so θ_max/θ_min <= cap (a joint-spectrum
       twin of KAPPA_CAP; the trainability fallback for stiff structured priors).
+    gamma: override the locked spatial shift γ (structured only). None = use
+      GAMMA_LOCKED[dataset]. exposed for the conditioning trade-off sweep (a larger
+      γ tames κ(Q_S) at the cost of a less smoothness-committed prior).
     """
     if prior == "isotropic":
         return _build_isotropic_prior(dataset, seed)
@@ -211,7 +215,7 @@ def load_prior(
         lam_S = np.zeros(N)
         q_S = np.ones(N)                          # spatial precision = 1 (Σ_S = I)
     else:
-        gamma = GAMMA_LOCKED[dataset]
+        gamma = GAMMA_LOCKED[dataset] if gamma is None else gamma
         lam_S, V_S = _load_laplacian_eig(dataset)
         q_S = lam_S + gamma                       # spatial precision = L + γI
 

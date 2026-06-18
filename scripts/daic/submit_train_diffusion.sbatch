@@ -43,7 +43,16 @@ scontrol update job="${SLURM_JOB_ID}" JobName="${RUN_NAME}" 2>/dev/null || true
 log_run_header "${DAIC_PYTHON} scripts/train_diffusion.py --dataset ${DATASET} --prior ${PRIOR} --exp ${EXP} --seed ${SEED} \
 --epochs ${EPOCHS} --batch-size ${BATCH_SIZE} --lr ${LR} --d-h ${D_H} --c-0 ${C_0} --alpha ${ALPHA} ${EXTRA_FLAGS}"
 
+# resource profiling: sample GPU memory + utilisation every 10s in the background
+# so we can size production resources from a smoke run. cleaned up on exit.
+prof_csv="logs/diffusion/profile_${RUN_NAME}_${SLURM_JOB_ID}.csv"
+nvidia-smi --query-gpu=timestamp,memory.used,memory.total,utilization.gpu,utilization.memory \
+    --format=csv,noheader -l 10 > "${prof_csv}" 2>/dev/null &
+PROF_PID=$!
+trap 'kill ${PROF_PID} 2>/dev/null || true' EXIT
+
 # shellcheck disable=SC2086
+set +e
 srun --export=ALL "${DAIC_PYTHON}" scripts/train_diffusion.py \
     --dataset "${DATASET}" \
     --prior "${PRIOR}" \
@@ -56,3 +65,17 @@ srun --export=ALL "${DAIC_PYTHON}" scripts/train_diffusion.py \
     --c-0 "${C_0}" \
     --alpha "${ALPHA}" \
     ${EXTRA_FLAGS}
+RC=$?
+set -e
+
+# resource report — sizes --gres (GPU mem), --mem (MaxRSS), --time (Elapsed), --cpus.
+kill ${PROF_PID} 2>/dev/null || true
+echo "===================== resource profile ====================="
+echo "GPU: $(nvidia-smi --query-gpu=name,memory.total --format=csv,noheader 2>/dev/null | head -1)"
+awk -F',' '{gsub(/ ?MiB/,"",$2); gsub(/ ?%/,"",$4); if($2+0>m)m=$2+0; if($4+0>u)u=$4+0}
+    END{printf "peak GPU mem used: %d MiB | peak GPU util: %d%%\n", m, u}' "${prof_csv}" 2>/dev/null || true
+echo "CPU/RAM/walltime (run AFTER the job ends):"
+echo "  seff ${SLURM_JOB_ID}"
+echo "  sacct -j ${SLURM_JOB_ID} --format=JobID,Elapsed,MaxRSS,MaxVMSize,ReqMem,AllocCPUS,State%20"
+echo "============================================================"
+exit ${RC}

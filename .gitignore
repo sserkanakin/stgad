@@ -22,3 +22,5 @@ scripts/daic-exp/env.sh
 logs/
 tea_debug.log
 results/
+notebooks/
+plan.md

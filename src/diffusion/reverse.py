@@ -17,7 +17,12 @@ from typing import Callable, Optional
 import numpy as np
 import torch
 
-from .forward_fcps import FCPSSchedule
+from .forward_fcps import (
+    FCPSSchedule,
+    c_bar_to_tau,
+    noise_level_bounds,
+    reverse_c_bar_grid,
+)
 from .prior import KroneckerPrior
 
 
@@ -114,26 +119,30 @@ def reverse_sample(
             )
         R_t = R_T.to(device=device, dtype=dtype)
 
-    ts = np.linspace(schedule.T, 0.0, n_steps + 1)
+    # reverse trajectory in noise-level (c̄) space: a geometric grid from c̄_hi
+    # (≈ the prior) down to c̄_lo (≈ clean), so steps are even in log-c̄ and
+    # well-spaced for every mode. the denoiser is conditioned on the normalized
+    # log-noise tau ∈ [0, 1] (same axis it was trained on), not raw t.
+    c_lo, c_hi = noise_level_bounds(prior)
+    c_bars = reverse_c_bar_grid(c_lo, c_hi, n_steps)
 
     trace = ReverseTrace([], [], []) if return_trace else None
 
     for i in range(n_steps):
-        t_cur = float(ts[i])
-        t_next = float(ts[i + 1])
-        c_bar_cur = float(schedule.c_bar(t_cur))
-        c_bar_next = float(schedule.c_bar(t_next))
+        c_bar_cur = float(c_bars[i])
+        c_bar_next = float(c_bars[i + 1])
 
-        # Per-mode (H_t, σ²_t) at the current and next time.
+        # Per-mode (H, σ²) at the current and next noise level.
         H_cur, sigma2_cur = _eigenbasis_HSigma(theta, c_bar_cur)
         H_next, sigma2_next = _eigenbasis_HSigma(theta, c_bar_next)
 
-        # Denoiser predicts R̂_0 in physical space.
-        t_batch = torch.full((B,), t_cur, device=device, dtype=dtype)
-        R0_hat = denoiser(R_t, t_batch, Y_hat)                              # (B, N, H)
+        # Denoiser predicts R̂_0, conditioned on the normalized log-noise level.
+        tau_cur = float(c_bar_to_tau(c_bar_cur, c_lo, c_hi))
+        tau_batch = torch.full((B,), tau_cur, device=device, dtype=dtype)
+        R0_hat = denoiser(R_t, tau_batch, Y_hat)                            # (B, N, H)
 
         if step_callback is not None:
-            step_callback(i, t_cur, R0_hat)
+            step_callback(i, c_bar_cur, R0_hat)
 
         # Rotate to eigenbasis.
         C_t = _rotate_to_eig_torch(R_t, V_S, V_T)
@@ -164,7 +173,7 @@ def reverse_sample(
         R_t = _rotate_from_eig_torch(C_next, V_S, V_T)
 
         if trace is not None:
-            trace.t.append(t_cur)
+            trace.t.append(c_bar_cur)
             trace.R_t_mean_norm.append(float(R_t.norm(dim=(-1, -2)).mean()))
             trace.R_hat_0_mean_norm.append(float(R0_hat.norm(dim=(-1, -2)).mean()))
 

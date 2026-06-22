@@ -253,7 +253,8 @@ def _print_comparison(results):
 
 def main():
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    p.add_argument("--dataset", choices=("metrla", "pemsbay", "pems08f"))
+    p.add_argument("--dataset", choices=("metrla", "pemsbay", "pems04f", "pems04s",
+                                          "pems08f", "pems08s"))
     p.add_argument("--prior", choices=("kronecker", "isotropic"))
     p.add_argument("--exp", default="dev", help="experiment tag (matches training --exp)")
     p.add_argument("--seed", type=int, default=0)

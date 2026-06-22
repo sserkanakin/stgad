@@ -1,5 +1,8 @@
 data/raw/
 data/processed/
+# data artifacts travel via rsync (scripts/daic), not git
+data/manifest.json
+data/REMOVED_inventory.txt
 results/checkpoints/
 results/residuals/
 third_party/

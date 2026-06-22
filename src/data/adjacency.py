@@ -1,15 +1,10 @@
 # Adjacency loading and Laplacian computation.
 #
-# METR-LA / PEMS-BAY ship the DCRNN .pkl format — Python-2 pickle, 3-tuple
-#   (sensor_ids_list, sensor_id_to_index_dict, adj_mx_array). Loaded with
-#   encoding='latin1' on Python 3.
-#
-# PEMS08F (STSGCN) ships a .csv edge list with columns from,to,cost. Sensor
-#   indices are 0..N-1 contiguous; we build a binary symmetric adjacency
-#   matrix (1 where an edge exists, 0 elsewhere).
-import csv
-import pickle
-from pathlib import Path
+# The (N, N) source adjacency is precomputed per variant by
+# scripts/build_datasets.py and stored in data/processed/<variant>/adj.npz as
+# A (weighted for the speed datasets, binary for the flow datasets), A_sym and
+# the symmetric normalised Laplacian L. We read A here and (optionally) repair
+# isolated nodes for the connected-graph prior.
 import numpy as np
 
 from src.utils import paths
@@ -26,60 +21,31 @@ _ADJ_CACHE: dict = {}
 _NUM_NODES = {
     "metrla":  207,
     "pemsbay": 325,
+    "pems04f": 307,
+    "pems04s": 307,
     "pems08f": 170,
+    "pems08s": 170,
 }
 
 
-def _load_adjacency_pkl(path: Path) -> np.ndarray:
-    """DCRNN .pkl: (sensor_ids, id_to_index, adj_mx). Returns adj_mx float32."""
-    with open(path, "rb") as f:
-        _, _, adj_mx = pickle.load(f, encoding="latin1")
-    return adj_mx.astype(np.float32)
-
-
-def _load_adjacency_csv(path: Path, num_nodes: int) -> np.ndarray:
-    """STSGCN edge list .csv (columns from,to,cost) → binary symmetric A.
-
-    Sensor ids are contiguous 0..num_nodes-1. Edge weight from the CSV is
-    discarded; we use binary connectivity (A[i,j]=1 iff (i,j) appears).
-    Symmetrised so A = A.T.
-    """
-    A = np.zeros((num_nodes, num_nodes), dtype=np.float32)
-    with open(path, "r") as f:
-        reader = csv.reader(f)
-        next(reader, None)  # header
-        for row in reader:
-            if len(row) < 2:
-                continue
-            i, j = int(row[0]), int(row[1])
-            A[i, j] = 1.0
-            A[j, i] = 1.0
-    return A
-
-
 def _load_raw_adjacency(dataset: str) -> np.ndarray:
-    """the bare (N, N) road adjacency on disk, no repair.
+    """the bare (N, N) source adjacency from data/processed/<variant>/adj.npz.
 
-    dispatches by file type: .pkl for metr-la/pems-bay (dcrnn format), .csv for
-    pems08 (stsgcn edge list).
+    A is the weighted DCRNN road graph (speed datasets) or the binary SpecSTG
+    connectivity (flow datasets); no repair applied here.
     """
     if dataset not in _NUM_NODES:
         raise ValueError(
             f"Unknown dataset '{dataset}'. Choose from {list(_NUM_NODES)}."
         )
-    path = paths.raw_adj(dataset)
+    path = paths.adj_npz(dataset)
     if not path.exists():
         raise FileNotFoundError(
             f"Adjacency file not found: {path}\n"
-            "Run  bash scripts/download_data.sh  (METR-LA / PEMS-BAY) or "
-            "download PEMS08 from STFGNN (PEMS08F)."
+            "Run  python scripts/build_datasets.py --variant "
+            f"{dataset}  (or --all) first."
         )
-
-    if path.suffix == ".pkl":
-        return _load_adjacency_pkl(path)
-    if path.suffix == ".csv":
-        return _load_adjacency_csv(path, _NUM_NODES[dataset])
-    raise ValueError(f"Unsupported adjacency format: {path.suffix}")
+    return np.load(path)["A"].astype(np.float32)
 
 
 def _isolated_nodes(adj: np.ndarray) -> tuple[np.ndarray, np.ndarray]:

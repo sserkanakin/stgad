@@ -15,10 +15,10 @@ locking the results chapter.
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import numpy as np
-import yaml
 
 from src.utils import paths
 
@@ -45,7 +45,7 @@ def ensure_residuals(dataset: str, seed: int = 0, verbose: bool = True) -> Path:
     if all((out_dir / f"{s}.npz").exists() for s in splits):
         return out_dir
 
-    scaler = yaml.safe_load(paths.scaler_yaml(dataset).read_text())
+    scaler = json.loads(paths.scaler_json(dataset).read_text())
     mean, std = float(scaler["mean"]), float(scaler["std"])
     out_dir.mkdir(parents=True, exist_ok=True)
 

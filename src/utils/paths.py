@@ -7,33 +7,37 @@ ROOT = Path(__file__).resolve().parents[2]
 DATA = ROOT / "data"
 RESULTS = ROOT / "results"
 
-# raw source files keep their original names, grouped under data/raw/<dataset>/.
+# six variants; raw is grouped by SOURCE (the F/S variants share one raw set).
+_VARIANT_SOURCE = {
+    "metrla": "metrla", "pemsbay": "pemsbay",
+    "pems04f": "pems04", "pems04s": "pems04",
+    "pems08f": "pems08", "pems08s": "pems08",
+}
+# raw source files keep their original names, grouped under data/raw/<source>/.
 _RAW_PRIMARY = {
-    "metrla": "metr-la.h5",
-    "pemsbay": "pems-bay.h5",
-    "pems08f": "PEMS08.npz",
+    "metrla": "metr-la.h5", "pemsbay": "pems-bay.h5",
+    "pems04": "PEMS04.npz", "pems08": "PEMS08.npz",
 }
 _RAW_ADJ = {
-    "metrla": "adj_mx_metrla.pkl",
-    "pemsbay": "adj_mx_pemsbay.pkl",
-    "pems08f": "PEMS08.csv",
+    "metrla": "adj_mx.pkl", "pemsbay": "adj_mx_bay.pkl",
+    "pems04": "PEMS04.csv", "pems08": "PEMS08.csv",
 }
 
 
-# --- raw + processed data, one folder per dataset ---
+# --- raw (by source) + processed (by variant) data ---
 
-def raw_dir(dataset):
-    return DATA / "raw" / dataset
-
-
-def raw_primary(dataset):
-    # the speed/flow source file (.h5 for metr-la/pems-bay, .npz for pems08)
-    return raw_dir(dataset) / _RAW_PRIMARY[dataset]
+def raw_dir(variant):
+    return DATA / "raw" / _VARIANT_SOURCE[variant]
 
 
-def raw_adj(dataset):
-    # the adjacency source file (.pkl for metr-la/pems-bay, .csv for pems08)
-    return raw_dir(dataset) / _RAW_ADJ[dataset]
+def raw_primary(variant):
+    # speed/flow source file (.h5 for metr-la/pems-bay, .npz for pems04/08)
+    return raw_dir(variant) / _RAW_PRIMARY[_VARIANT_SOURCE[variant]]
+
+
+def raw_adj(variant):
+    # adjacency source file (.pkl for metr-la/pems-bay, distance .csv for pems)
+    return raw_dir(variant) / _RAW_ADJ[_VARIANT_SOURCE[variant]]
 
 
 def processed_dir(dataset):
@@ -45,8 +49,18 @@ def split_npz(dataset, split):
     return processed_dir(dataset) / f"{split}.npz"
 
 
-def scaler_yaml(dataset):
-    return processed_dir(dataset) / "scaler.yaml"
+def adj_npz(dataset):
+    # precomputed A / A_sym / L (built by scripts/build_datasets.py)
+    return processed_dir(dataset) / "adj.npz"
+
+
+def scaler_json(dataset):
+    return processed_dir(dataset) / "scaler.json"
+
+
+def gwn_native_dir(dataset):
+    # GWN-repo-ready view: {train,val,test}.npz (B,12,N,2) + adj_mx.pkl
+    return processed_dir(dataset) / "gwn_native"
 
 
 def laplacian_eigs(dataset):

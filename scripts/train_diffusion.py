@@ -306,7 +306,8 @@ def _log_val(epoch: int, res: dict, *, to_wandb: bool) -> None:
 
 def main() -> None:
     p = argparse.ArgumentParser()
-    p.add_argument("--dataset", choices=("metrla", "pemsbay", "pems08f"), required=True)
+    p.add_argument("--dataset", choices=("metrla", "pemsbay", "pems04f", "pems04s",
+                                          "pems08f", "pems08s"), required=True)
     p.add_argument("--spatial", choices=("structured", "flat"), default="structured",
                    help="kronecker spatial factor: structured Σ_S=(L+γI)^-1 (spatio-temporal) "
                         "or flat Σ_S=I (temporal-only). recorded in config.json.")
@@ -389,11 +390,12 @@ def main() -> None:
     set_seed(args.seed)
 
     # ── Preflight: fail fast (not hours in) if an input is missing.
-    _ex = f"run scripts/extract_residuals.py --dataset {args.dataset} --seed {args.seed} first"
+    _ex = (f"run scripts/gwn_extract_residuals.py --variant {args.dataset} "
+           f"--seed {args.seed} --checkpoint <gwn-ckpt> first")
     paths.require_inputs([
         (paths.residual_npz(args.dataset, "train", args.seed), _ex),
         (paths.residual_npz(args.dataset, "val", args.seed), _ex),
-        (paths.raw_adj(args.dataset), "sync raw data here (scripts/daic/sync_to_daic.sh --raw)"),
+        (paths.adj_npz(args.dataset), "run python scripts/build_datasets.py --all"),
     ])
 
     # ── Data (modeled in unit space; sigma_r from train, reused for val)

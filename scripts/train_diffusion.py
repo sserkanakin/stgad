@@ -57,8 +57,6 @@ from src.utils.config import hash_config
 from src.utils.seed import set_seed
 from src.utils.wandb_setup import init_wandb
 
-_BACKBONE = "gwn"
-
 # Config keys whose value should NOT contribute to the hash — varying them
 # should NOT trigger a fresh wandb run / fresh checkpoint dir.
 _CFG_HASH_EXCLUDE = {"seed", "epochs", "batch_size", "lr", "weight_decay", "patience",
@@ -308,6 +306,8 @@ def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--dataset", choices=("metrla", "pemsbay", "pems04f", "pems04s",
                                           "pems08f", "pems08s"), required=True)
+    p.add_argument("--backbone", choices=("gwn", "gcn", "mlp"), default="gwn",
+                   help="which backbone's residuals to model (namespaces results)")
     p.add_argument("--spatial", choices=("structured", "flat"), default="structured",
                    help="kronecker spatial factor: structured Σ_S=(L+γI)^-1 (spatio-temporal) "
                         "or flat Σ_S=I (temporal-only). recorded in config.json.")
@@ -369,12 +369,13 @@ def main() -> None:
         os.environ.setdefault("WANDB_MODE", "disabled")
 
     cfg = vars(args).copy()
-    cfg["backbone"] = _BACKBONE
+    cfg["backbone"] = args.backbone
     cfg["prior"] = args.prior
     cfg_hash = hash_config({k: v for k, v in cfg.items() if k not in _CFG_HASH_EXCLUDE})
-    run_id = f"diff_{_BACKBONE}_{args.dataset}_seed{args.seed}_{cfg_hash}"
+    run_id = f"diff_{args.backbone}_{args.dataset}_seed{args.seed}_{cfg_hash}"
 
-    ckpt_dir = paths.diffusion_dir(args.dataset, args.prior, args.seed, exp=args.exp)
+    ckpt_dir = paths.diffusion_dir(args.dataset, args.prior, args.seed, exp=args.exp,
+                                   backbone=args.backbone)
     if args.fresh and ckpt_dir.exists():
         import shutil
         shutil.rmtree(ckpt_dir)
@@ -391,17 +392,17 @@ def main() -> None:
 
     # ── Preflight: fail fast (not hours in) if an input is missing.
     _ex = (f"run scripts/gwn_extract_residuals.py --variant {args.dataset} "
-           f"--seed {args.seed} --checkpoint <gwn-ckpt> first")
+           f"--seed {args.seed} --backbone {args.backbone} --checkpoint <ckpt> first")
     paths.require_inputs([
-        (paths.residual_npz(args.dataset, "train", args.seed), _ex),
-        (paths.residual_npz(args.dataset, "val", args.seed), _ex),
+        (paths.residual_npz(args.dataset, "train", args.seed, args.backbone), _ex),
+        (paths.residual_npz(args.dataset, "val", args.seed, args.backbone), _ex),
         (paths.adj_npz(args.dataset), "run python scripts/build_datasets.py --all"),
     ])
 
     # ── Data (modeled in unit space; sigma_r from train, reused for val)
-    sigma_r = train_residual_sigma(args.dataset, args.seed)
-    train_ds = ResidualDataset(residual_path(args.dataset, "train", args.seed), sigma_r)
-    val_ds = ResidualDataset(residual_path(args.dataset, "val", args.seed), sigma_r)
+    sigma_r = train_residual_sigma(args.dataset, args.seed, args.backbone)
+    train_ds = ResidualDataset(residual_path(args.dataset, "train", args.seed, args.backbone), sigma_r)
+    val_ds = ResidualDataset(residual_path(args.dataset, "val", args.seed, args.backbone), sigma_r)
     print(f"[train_diffusion] train={len(train_ds)}  val={len(val_ds)}  "
           f"sigma_r={sigma_r:.4f} (residuals modeled in unit space)", flush=True)
 
@@ -417,7 +418,8 @@ def main() -> None:
 
     # ── Prior + schedule
     prior = load_prior(args.dataset, args.prior, args.seed,
-                       spatial=args.spatial, stiffness_cap=(args.stiffness_cap or None))
+                       spatial=args.spatial, stiffness_cap=(args.stiffness_cap or None),
+                       backbone=args.backbone)
     prior_t = prior_to_torch(prior, device=device, dtype=torch.float32)
     # c_0 is auto-derived from the fitted prior (5/θ_min), never a CLI number -
         # the human-typed-c_0 footgun bites the same at 35 as at 27000. --c-0 is ignored.
@@ -481,7 +483,7 @@ def main() -> None:
     if os.environ.get("WANDB_MODE", "online") != "disabled":
         init_wandb(
             cfg, stage="diffusion", dataset=args.dataset, seed=args.seed,
-            prior=args.prior, backbone=_BACKBONE, exp=args.exp,
+            prior=args.prior, backbone=args.backbone, exp=args.exp,
         )
     import wandb  # safe — always installed
 

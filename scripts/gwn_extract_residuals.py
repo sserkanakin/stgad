@@ -52,12 +52,14 @@ def main():
     ap.add_argument("--gcn_order", type=int, default=2)
     ap.add_argument("--null_val", default="0.0",
                     help="'0.0' (speed) or 'nan' (PEMS flow) — must match training")
+    ap.add_argument("--backbone", default="gwn", choices=["gwn", "gcn", "mlp"],
+                    help="namespaces the output: results/residuals/<variant>/<backbone>/seed<seed>")
     args = ap.parse_args()
 
     null_val = np.nan if args.null_val.lower() == "nan" else float(args.null_val)
     n = N_NODES[args.variant]
     nat = ROOT / "data" / "processed" / args.variant / "gwn_native"
-    out_dir = ROOT / "results" / "residuals" / args.variant / f"seed{args.seed}"
+    out_dir = ROOT / "results" / "residuals" / args.variant / args.backbone / f"seed{args.seed}"
     out_dir.mkdir(parents=True, exist_ok=True)
 
     device = torch.device("cuda" if torch.cuda.is_available()

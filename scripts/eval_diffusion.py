@@ -81,8 +81,8 @@ def empirical_crps(samples, y):
 # ─── load a trained run ──────────────────────────────────────────────────────
 
 
-def load_run(dataset, prior, seed, exp, device):
-    ckpt_dir = paths.diffusion_dir(dataset, prior, seed, exp=exp)
+def load_run(dataset, prior, seed, exp, device, backbone="gwn"):
+    ckpt_dir = paths.diffusion_dir(dataset, prior, seed, exp=exp, backbone=backbone)
     cfg = json.loads((ckpt_dir / "config.json").read_text())
     ckpt = torch.load(ckpt_dir / "best.pt", map_location=device, weights_only=False)
 
@@ -90,7 +90,8 @@ def load_run(dataset, prior, seed, exp, device):
     # default structured for back-compat with configs written before --spatial existed)
     prior_obj = load_prior(dataset, prior, seed,
                            spatial=cfg.get("spatial", "structured"),
-                           stiffness_cap=(cfg.get("stiffness_cap") or None))
+                           stiffness_cap=(cfg.get("stiffness_cap") or None),
+                           backbone=backbone)
     # rebuild the schedule exactly as training does: c_0 auto-derived from the
     # prior (5/θ_min). config.json's c_0 was the ignored CLI default (20000)
     # until 2026-06-11 - using it here was a bug that broke all earlier evals.
@@ -112,12 +113,13 @@ def load_run(dataset, prior, seed, exp, device):
 
 @torch.no_grad()
 def evaluate(dataset, prior, seed, *, exp, device, k, n_steps, eta, alpha,
-             w1_windows, w1_samples, w1_proj, gen_batch, max_windows, generator):
-    denoiser, prior_obj, schedule, cfg, ckpt_epoch = load_run(dataset, prior, seed, exp, device)
+             w1_windows, w1_samples, w1_proj, gen_batch, max_windows, generator,
+             backbone="gwn"):
+    denoiser, prior_obj, schedule, cfg, ckpt_epoch = load_run(dataset, prior, seed, exp, device, backbone)
     N, H = prior_obj.N, prior_obj.H
 
-    sigma_r = train_residual_sigma(dataset, seed)        # same scalar used in training
-    test = ResidualDataset(residual_path(dataset, "test", seed), sigma_r)
+    sigma_r = train_residual_sigma(dataset, seed, backbone)   # same scalar used in training
+    test = ResidualDataset(residual_path(dataset, "test", seed, backbone), sigma_r)
     R0_all, Y_all, M_all = test.R0, test.Y_hat, test.mask
     n_total = R0_all.shape[0] if not max_windows else min(max_windows, R0_all.shape[0])
 
@@ -194,7 +196,8 @@ def evaluate(dataset, prior, seed, *, exp, device, k, n_steps, eta, alpha,
         ed_h.append(energy_distance(gen_c, true_c))
 
     return {
-        "dataset": dataset, "prior": prior, "seed": seed, "exp": exp, "ckpt_epoch": ckpt_epoch,
+        "dataset": dataset, "backbone": backbone, "prior": prior, "seed": seed,
+        "exp": exp, "ckpt_epoch": ckpt_epoch,
         "n_test_windows": int(n_total), "k_samples": k, "n_steps": n_steps,
         "eta": eta, "alpha": alpha,
         "mae": overall(mae_n), "mse": overall(mse_n),
@@ -208,7 +211,8 @@ def evaluate(dataset, prior, seed, *, exp, device, k, n_steps, eta, alpha,
 
 
 def _save(res):
-    out = paths.eval_dir(res["dataset"], res["prior"], res["seed"], exp=res.get("exp"))
+    out = paths.eval_dir(res["dataset"], res["prior"], res["seed"], exp=res.get("exp"),
+                         backbone=res.get("backbone", "gwn"))
     out.mkdir(parents=True, exist_ok=True)
     path = out / "test_metrics.json"
     path.write_text(json.dumps(res, indent=2))
@@ -256,6 +260,8 @@ def main():
     p.add_argument("--dataset", choices=("metrla", "pemsbay", "pems04f", "pems04s",
                                           "pems08f", "pems08s"))
     p.add_argument("--prior", choices=("kronecker", "isotropic"))
+    p.add_argument("--backbone", choices=("gwn", "gcn", "mlp"), default="gwn",
+                   help="which backbone's diffusion runs to eval (namespaces results)")
     p.add_argument("--exp", default="dev", help="experiment tag (matches training --exp)")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--all", action="store_true", help="eval all datasets x both priors")
@@ -276,7 +282,8 @@ def main():
     g = None if device.type == "mps" else torch.Generator(device=device.type).manual_seed(args.seed)
 
     if args.all:
-        jobs = [(ds, pr) for ds in ("metrla", "pems08f", "pemsbay")
+        jobs = [(ds, pr) for ds in ("metrla", "pemsbay", "pems04f", "pems04s",
+                                    "pems08f", "pems08s")
                 for pr in ("kronecker", "isotropic")]
     else:
         if not (args.dataset and args.prior):
@@ -290,7 +297,7 @@ def main():
                        n_steps=args.n_steps, eta=args.eta, alpha=args.alpha,
                        w1_windows=args.w1_windows, w1_samples=args.w1_samples,
                        w1_proj=args.w1_proj, gen_batch=args.gen_batch,
-                       max_windows=args.max_windows, generator=g)
+                       max_windows=args.max_windows, generator=g, backbone=args.backbone)
         _print_one(res)
         print(f"  wrote {_save(res)}")
         results.append(res)

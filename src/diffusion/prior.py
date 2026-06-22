@@ -90,7 +90,7 @@ class KroneckerPrior:
         return 1.0 / self.theta
 
 
-def _load_residuals_train(dataset: str, seed: int = 0) -> tuple[np.ndarray, np.ndarray]:
+def _load_residuals_train(dataset: str, seed: int = 0, backbone: str = "gwn") -> tuple[np.ndarray, np.ndarray]:
     """Train residuals in unit-variance space, with the mask.
 
     divides by the single global train std (same scalar ResidualDataset uses), so
@@ -98,10 +98,11 @@ def _load_residuals_train(dataset: str, seed: int = 0) -> tuple[np.ndarray, np.n
     back to physical units happens at the output (r_raw = r_unit * sigma_r).
     """
     paths.require_inputs([(
-        paths.residual_npz(dataset, "train", seed),
-        f"run scripts/extract_residuals.py --dataset {dataset} --seed {seed} first",
+        paths.residual_npz(dataset, "train", seed, backbone),
+        f"run scripts/gwn_extract_residuals.py --variant {dataset} --seed {seed} "
+        f"--backbone {backbone} first",
     )])
-    d = np.load(paths.residual_npz(dataset, "train", seed))
+    d = np.load(paths.residual_npz(dataset, "train", seed, backbone))
     R = d["residuals"].astype(np.float64)
     mask = d["mask"].astype(bool)
     sigma_r = R[mask].std()                       # global train residual std
@@ -146,14 +147,14 @@ def _fit_sigma_T(R: np.ndarray, mask: np.ndarray) -> tuple[np.ndarray, np.ndarra
     return delta_h, R_H, Sigma_T
 
 
-def _build_isotropic_prior(dataset: str, seed: int = 0) -> KroneckerPrior:
+def _build_isotropic_prior(dataset: str, seed: int = 0, backbone: str = "gwn") -> KroneckerPrior:
     """Scale-matched white-noise baseline: Σ = σ²·I, σ² = masked variance of the
     training residuals. identity eigenbasis (no spatial/temporal structure) with
     a constant per-mode precision θ = 1/σ², so the stationary variance is σ²
     everywhere. strips all structure but keeps the overall noise energy, so the
     comparison against the kronecker prior isolates the effect of structure.
     """
-    R, mask = _load_residuals_train(dataset, seed)
+    R, mask = _load_residuals_train(dataset, seed, backbone)
     sigma2 = float(R[mask].var())
     _, N, H = R.shape
     return KroneckerPrior(
@@ -177,6 +178,7 @@ def load_prior(
     spatial: str = DEFAULT_SPATIAL,
     stiffness_cap: float | None = None,
     gamma: float | None = None,
+    backbone: str = "gwn",
 ) -> KroneckerPrior:
     """Fit and cache the diffusion noise prior for a dataset.
 
@@ -191,7 +193,7 @@ def load_prior(
       γ tames κ(Q_S) at the cost of a less smoothness-committed prior).
     """
     if prior == "isotropic":
-        return _build_isotropic_prior(dataset, seed)
+        return _build_isotropic_prior(dataset, seed, backbone)
     if prior != "kronecker":
         raise ValueError(f"unknown prior {prior!r}; use 'kronecker' or 'isotropic'")
     if spatial not in ("structured", "flat"):
@@ -199,7 +201,7 @@ def load_prior(
     if dataset not in GAMMA_LOCKED:
         raise KeyError(f"no locked γ for dataset {dataset!r}; valid: {sorted(GAMMA_LOCKED)}")
 
-    R, mask = _load_residuals_train(dataset, seed)
+    R, mask = _load_residuals_train(dataset, seed, backbone)
     _, N, H = R.shape
     delta_h, R_H, Sigma_T = _fit_sigma_T(R, mask)
 

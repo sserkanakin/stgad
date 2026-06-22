@@ -25,12 +25,12 @@ from src.utils import paths
 
 
 @lru_cache(maxsize=8)
-def train_residual_sigma(dataset: str, seed: int = 0) -> float:
+def train_residual_sigma(dataset: str, seed: int = 0, backbone: str = "gwn") -> float:
     """single global std of the TRAIN residuals (masked). one scalar per dataset,
     computed on train only and reused verbatim for val/test, so the modeling
     space is unit-variance without leaking the val distribution (which differs
     from train by design on pems-bay - that drift is a result, not noise)."""
-    d = np.load(paths.residual_npz(dataset, "train", seed))
+    d = np.load(paths.residual_npz(dataset, "train", seed, backbone))
     R = d["residuals"].astype(np.float64)
     M = d["mask"].astype(bool)
     return float(R[M].std())
@@ -66,6 +66,6 @@ class ResidualDataset(Dataset):
         }
 
 
-def residual_path(dataset: str, split: str, seed: int = 0) -> Path:
+def residual_path(dataset: str, split: str, seed: int = 0, backbone: str = "gwn") -> Path:
     """Canonical path for the residual npz file."""
-    return paths.residual_npz(dataset, split, seed)
+    return paths.residual_npz(dataset, split, seed, backbone)

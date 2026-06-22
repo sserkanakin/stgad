@@ -28,6 +28,8 @@ export STAGE="eval"
 source "${PROJECT_DIR}/scripts/daic/_common.sh"
 
 EVAL_ARGS="${EVAL_ARGS:---all}"
+# namespace eval by backbone (default gwn); last --backbone wins under argparse.
+EVAL_ARGS="${EVAL_ARGS} --backbone ${BACKBONE:-gwn}"
 
 log_run_header "${DAIC_PYTHON} scripts/eval_diffusion.py ${EVAL_ARGS}"
 

@@ -69,7 +69,7 @@ fi
 residuals_ok() {  # ds seed -> 0/1, valid only if all 3 split npz pass zip integrity
   local ds=$1 s=$2 f
   for split in train val test; do
-    f="$DATA/residuals/$ds/seed$s/$split.npz"
+    f="$DATA/residuals/$ds/${BACKBONE:-gwn}/seed$s/$split.npz"
     [ -f "$f" ] && unzip -tq "$f" >/dev/null 2>&1 || return 1
   done
   return 0

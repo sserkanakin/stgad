@@ -69,28 +69,31 @@ def laplacian_eigs(dataset):
 
 # --- results, grouped by stage then dataset ---
 
-def backbone_dir(dataset, seed):
-    return RESULTS / "backbone" / dataset / f"seed{seed}"
+# backbone namespaces the residual/diffusion/eval tree so the gwn/gcn/mlp grid
+# never overwrites: results/<stage>/<dataset>/<backbone>/.../seed<seed>.
+
+def backbone_dir(dataset, seed, backbone="gwn"):
+    return RESULTS / "backbone" / dataset / backbone / f"seed{seed}"
 
 
-def residual_dir(dataset, seed):
-    return RESULTS / "residuals" / dataset / f"seed{seed}"
+def residual_dir(dataset, seed, backbone="gwn"):
+    return RESULTS / "residuals" / dataset / backbone / f"seed{seed}"
 
 
-def residual_npz(dataset, split, seed):
-    return residual_dir(dataset, seed) / f"{split}.npz"
+def residual_npz(dataset, split, seed, backbone="gwn"):
+    return residual_dir(dataset, seed, backbone) / f"{split}.npz"
 
 
-def diffusion_dir(dataset, prior, seed, exp=None):
+def diffusion_dir(dataset, prior, seed, exp=None, backbone="gwn"):
     # exp namespaces a whole experiment run (results/diffusion/<exp>/...), so a
     # fresh launch is fully separate and a re-run never clobbers an old one.
     base = RESULTS / "diffusion" / exp if exp else RESULTS / "diffusion"
-    return base / dataset / prior / f"seed{seed}"
+    return base / dataset / backbone / prior / f"seed{seed}"
 
 
-def eval_dir(dataset, prior, seed, exp=None):
+def eval_dir(dataset, prior, seed, exp=None, backbone="gwn"):
     base = RESULTS / "eval" / exp if exp else RESULTS / "eval"
-    return base / dataset / prior / f"seed{seed}"
+    return base / dataset / backbone / prior / f"seed{seed}"
 
 
 # --- run naming ---

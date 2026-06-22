@@ -27,6 +27,7 @@ source "${PROJECT_DIR}/scripts/daic/_common.sh"
 : "${DATASET:?Set DATASET=metrla|pemsbay|pems04f|pems04s|pems08f|pems08s via --export}"
 : "${SEED:?Set SEED=<int> via --export}"
 export PRIOR="${PRIOR:-kronecker}"
+BACKBONE="${BACKBONE:-gwn}"
 EXP="${EXP:-dev}"
 EPOCHS="${EPOCHS:-200}"
 BATCH_SIZE="${BATCH_SIZE:-32}"
@@ -37,7 +38,7 @@ ALPHA="${ALPHA:-7.0}"
 EXTRA_FLAGS="${EXTRA_FLAGS:-}"
 
 export STAGE="diffusion"
-RUN_NAME="diffusion_${DATASET}_${PRIOR}_seed${SEED}"
+RUN_NAME="diffusion_${BACKBONE}_${DATASET}_${PRIOR}_seed${SEED}"
 scontrol update job="${SLURM_JOB_ID}" JobName="${RUN_NAME}" 2>/dev/null || true
 
 log_run_header "${DAIC_PYTHON} scripts/train_diffusion.py --dataset ${DATASET} --prior ${PRIOR} --exp ${EXP} --seed ${SEED} \
@@ -55,6 +56,7 @@ trap 'kill ${PROF_PID} 2>/dev/null || true' EXIT
 set +e
 srun --export=ALL "${DAIC_PYTHON}" scripts/train_diffusion.py \
     --dataset "${DATASET}" \
+    --backbone "${BACKBONE}" \
     --prior "${PRIOR}" \
     --exp "${EXP}" \
     --seed "${SEED}" \

@@ -49,6 +49,7 @@ log_run_header "${DAIC_PYTHON} scripts/gwn_extract_residuals.py --variant ${DATA
 srun --export=ALL "${DAIC_PYTHON}" scripts/gwn_extract_residuals.py \
     --variant "${DATASET}" \
     --seed "${SEED}" \
+    --backbone "${BACKBONE}" \
     --checkpoint "${CKPT}" \
     --null_val "${NULL_VAL}" \
     "${RES_FLAGS[@]}"

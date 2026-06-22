@@ -41,8 +41,20 @@ def main():
                     help="state_dict saved by GWN train.py")
     ap.add_argument("--batch_size", type=int, default=64)
     ap.add_argument("--nhid", type=int, default=32)
+    # flags MUST match the checkpoint's training config.
+    ap.add_argument("--adjtype", default="doubletransition",
+                    help="doubletransition (GWN) | symnadj (GCN) | identity (MLP)")
+    ap.add_argument("--gcn_bool", action="store_true", default=True)
+    ap.add_argument("--no_gcn", dest="gcn_bool", action="store_false",
+                    help="MLP backbone (no graph conv)")
+    ap.add_argument("--addaptadj", action="store_true", default=True)
+    ap.add_argument("--no_addaptadj", dest="addaptadj", action="store_false")
+    ap.add_argument("--gcn_order", type=int, default=2)
+    ap.add_argument("--null_val", default="0.0",
+                    help="'0.0' (speed) or 'nan' (PEMS flow) — must match training")
     args = ap.parse_args()
 
+    null_val = np.nan if args.null_val.lower() == "nan" else float(args.null_val)
     n = N_NODES[args.variant]
     nat = ROOT / "data" / "processed" / args.variant / "gwn_native"
     out_dir = ROOT / "results" / "residuals" / args.variant / f"seed{args.seed}"
@@ -52,20 +64,23 @@ def main():
                           else "mps" if torch.backends.mps.is_available()
                           else "cpu")
 
-    # repo loaders on the native view + pkl
-    _, _, supports = util.load_adj(str(nat / "adj_mx.pkl"), "doubletransition")
+    # repo loaders on the native view + pkl, with the same adjtype as training
+    _, _, supports = util.load_adj(str(nat / "adj_mx.pkl"), args.adjtype)
     supports = [torch.tensor(s).to(device) for s in supports]
     dl = util.load_dataset(str(nat), args.batch_size, args.batch_size, args.batch_size)
     scaler = dl["scaler"]
 
-    # repo model, matching train.py defaults (gcn_bool + addaptadj, doubletransition)
-    model = gwnet(device, n, supports=supports, gcn_bool=True, addaptadj=True,
-                  aptinit=supports[0], in_dim=2, out_dim=12,
+    # repo model, configured to match the checkpoint (backbone flags + gcn_order)
+    model = gwnet(device, n, supports=supports, gcn_bool=args.gcn_bool,
+                  addaptadj=args.addaptadj, aptinit=supports[0], in_dim=2, out_dim=12,
                   residual_channels=args.nhid, dilation_channels=args.nhid,
-                  skip_channels=args.nhid * 8, end_channels=args.nhid * 16).to(device)
+                  skip_channels=args.nhid * 8, end_channels=args.nhid * 16,
+                  gcn_order=args.gcn_order).to(device)
     model.load_state_dict(torch.load(args.checkpoint, map_location=device))
     model.eval()
-    print(f"loaded {args.checkpoint}; scaler mean={scaler.mean:.3f} std={scaler.std:.3f}")
+    print(f"loaded {args.checkpoint}; adjtype={args.adjtype} gcn={args.gcn_bool} "
+          f"order={args.gcn_order} null_val={args.null_val}; "
+          f"scaler mean={scaler.mean:.3f} std={scaler.std:.3f}")
 
     for split in ("train", "val", "test"):
         x = dl[f"x_{split}"]                       # (B,12,N,2), ch0 already z-scored
@@ -81,14 +96,18 @@ def main():
         # -> (B,N,H)
         y_pred = np.transpose(pred_raw, (0, 2, 1)).astype(np.float32)
         y_true = np.transpose(y_real, (0, 2, 1)).astype(np.float32)
-        mask = (y_true != 0.0)
+        # mask matches the training null_val: nan -> mask nothing (all valid);
+        # else value==null_val is missing. PEMS flow (nan) keeps real zeros.
+        mask = (np.ones_like(y_true, dtype=bool) if np.isnan(null_val)
+                else (y_true != null_val))
         residuals = (y_true - y_pred).astype(np.float32)
 
         out_path = out_dir / f"{split}.npz"
         tmp = out_path.with_suffix(".npz.tmp")
         with open(tmp, "wb") as fh:
-            np.savez_compressed(fh, residuals=residuals, y_pred=y_pred, mask=mask,
-                                mean=np.float32(scaler.mean), std=np.float32(scaler.std))
+            np.savez_compressed(fh, residuals=residuals, y_pred=y_pred, y_true=y_true,
+                                mask=mask, mean=np.float32(scaler.mean),
+                                std=np.float32(scaler.std))
         tmp.replace(out_path)
         vr = residuals[mask]
         print(f"  {split}: {residuals.shape} (B,N,H)  masked mean={vr.mean():+.4f} "

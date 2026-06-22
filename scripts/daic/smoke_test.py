@@ -59,7 +59,8 @@ def _toy_prior(N: int = 12, H: int = 12, seed: int = 0):
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--dataset", default="metrla", choices=["metrla", "pemsbay", "pems08f"])
+    parser.add_argument("--dataset", default="metrla",
+                        choices=["metrla", "pemsbay", "pems04f", "pems04s", "pems08f", "pems08s"])
     args = parser.parse_args()
 
     failed: list[str] = []
@@ -92,7 +93,7 @@ def main() -> int:
     def _imports():
         import src.diffusion.forward_fcps, src.diffusion.prior  # noqa: F401
         import src.diffusion.reverse, src.diffusion.denoiser  # noqa: F401
-        import src.data.adjacency, src.data.dataset  # noqa: F401
+        import src.data.adjacency, src.data.residual_dataset  # noqa: F401
         from src.utils import paths  # noqa: F401
     step("src.diffusion + src.data + paths", _imports)
 

@@ -24,7 +24,7 @@ mkdir -p logs/diffusion
 export PROJECT_DIR="${SLURM_SUBMIT_DIR:-$PWD}"
 source "${PROJECT_DIR}/scripts/daic/_common.sh"
 
-: "${DATASET:?Set DATASET=metrla|pemsbay|pems08f via --export}"
+: "${DATASET:?Set DATASET=metrla|pemsbay|pems04f|pems04s|pems08f|pems08s via --export}"
 : "${SEED:?Set SEED=<int> via --export}"
 export PRIOR="${PRIOR:-kronecker}"
 EXP="${EXP:-dev}"

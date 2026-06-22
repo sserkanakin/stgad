@@ -257,7 +257,13 @@ def write_variant(variant: str):
     xtr = splits["train"][0]                         # (B,12,N,1) raw value
     scaler = {"mean": float(xtr.mean()), "std": float(xtr.std())}
 
-    # --- write split npz with masks (raw value != 0) ---
+    # --- masks follow the null_val convention used downstream by GWN training:
+    # speed (METR-LA/PEMS-BAY) treat raw 0 as missing (null_val=0.0); PEMS flow
+    # AND speed treat every value as valid (null_val=nan) since the PeMS arrays
+    # are complete and a 0 flow is a real low-traffic reading, not a gap.
+    null_val = "0.0" if spec["family"] == "speed" else "nan"
+
+    # --- write split npz with masks ---
     # also emit the GWN-native view (same windows) so the vendored
     # third_party/Graph-WaveNet/train.py trains unmodified: x,y both
     # (B,12,N,2) = [value_raw, tod]. The repo's util.load_dataset builds its
@@ -267,8 +273,12 @@ def write_variant(variant: str):
     nat_dir.mkdir(parents=True, exist_ok=True)
     counts = {}
     for s, (xv, yv, xt, yt) in splits.items():
-        x_mask = (xv != 0.0).astype(np.uint8)
-        y_mask = (yv != 0.0).astype(np.uint8)
+        if null_val == "nan":
+            x_mask = np.ones_like(xv, dtype=np.uint8)
+            y_mask = np.ones_like(yv, dtype=np.uint8)
+        else:
+            x_mask = (xv != 0.0).astype(np.uint8)
+            y_mask = (yv != 0.0).astype(np.uint8)
         np.savez_compressed(
             out_dir / f"{s}.npz",
             x=xv, y=yv, x_tod=xt, y_tod=yt, x_mask=x_mask, y_mask=y_mask,
@@ -327,12 +337,15 @@ def write_variant(variant: str):
         "n_train": counts["train"], "n_val": counts["val"], "n_test": counts["test"],
         "n_total_windows": sum(counts.values()),
         "raw_timesteps": int(T),
+        "null_val": null_val,   # GWN --null_val for this variant (0.0 speed / nan flow)
         "split": split_desc,
         "segment_lengths": (
             {"train": seg_lens[0], "val": seg_lens[1], "test": seg_lens[2]}
             if seg_lens else None),
         "channel_index": spec.get("channel"),
-        "missing_convention": "raw value == 0 marks missing (masked loss downstream)",
+        "missing_convention": (
+            "raw value == 0 marks missing (null_val=0.0)" if null_val == "0.0"
+            else "no masking; all values valid (null_val=nan, complete PeMS array)"),
         "missing_fraction": round(missing_frac, 6),
         "normalization": {
             "stored": "raw values; train-only per-channel z-score in scaler.json",

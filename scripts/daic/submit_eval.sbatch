@@ -29,17 +29,6 @@ source "${PROJECT_DIR}/scripts/daic/_common.sh"
 
 EVAL_ARGS="${EVAL_ARGS:---all}"
 
-# if ABL_JSON is set, read the grounded (n_steps, K) from the ablation at RUNTIME
-# and append them (argparse: last value wins, so this overrides any earlier flag).
-# lets us submit the evals with a dependency on the ablation, before it finishes;
-# pick_knee falls back to sane defaults if the json is missing/partial.
-if [ -n "${ABL_JSON:-}" ]; then
-  KNEE="$("${DAIC_PYTHON}" "${PROJECT_DIR}/scripts/analysis/pick_knee.py" "${ABL_JSON}" 2>/dev/null || echo "100 30")"
-  set -- ${KNEE:-100 30}; _NS="${1:-100}"; _K="${2:-30}"
-  EVAL_ARGS="${EVAL_ARGS} --n-steps ${_NS} --k ${_K}"
-  echo "[eval] ablation knee from ${ABL_JSON}: n_steps=${_NS} k=${_K}" >&2
-fi
-
 log_run_header "${DAIC_PYTHON} scripts/eval_diffusion.py ${EVAL_ARGS}"
 
 # --unbuffered + python -u so the per-chunk progress is written to the log live

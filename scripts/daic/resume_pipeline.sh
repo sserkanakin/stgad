@@ -17,7 +17,7 @@ DRY=""; ONLY_DS=""
 for a in "$@"; do
   case "$a" in
     --dry) DRY="--dry" ;;
-    metrla|pemsbay|pems08f) ONLY_DS="$a" ;;
+    metrla|pemsbay|pems04f|pems04s|pems08f|pems08s) ONLY_DS="$a" ;;
   esac
 done
 DATA="${DAIC_DATA_DIR:-$HOME/windowshome/research-tud-data}"
@@ -86,7 +86,7 @@ submit_eval() {  # ds seed prior [afterok-jobid]
 }
 
 echo "===== resume ${EXP} (DATA=$DATA) ====="
-for ds in metrla pemsbay pems08f; do
+for ds in metrla pemsbay pems04f pems04s pems08f pems08s; do
   [ -n "$ONLY_DS" ] && [ "$ds" != "$ONLY_DS" ] && continue
   for s in 42 43 44; do
     if ! residuals_ok "$ds" "$s"; then

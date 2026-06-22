@@ -35,10 +35,10 @@ case "$STAGE" in
     shift 2 ;;
   backbone)
     SEED="${3:?seed}"; SBATCH=submit_train_backbone.sbatch
-    RUN_NAME="backbone_${DATASET}_seed${SEED}"; shift 3 ;;
+    RUN_NAME="backbone_${BACKBONE:-gwn}_${DATASET}_seed${SEED}"; shift 3 ;;
   residuals)
     SEED="${3:?seed}"; SBATCH=submit_extract_residuals.sbatch
-    RUN_NAME="residuals_${DATASET}_seed${SEED}"; shift 3 ;;
+    RUN_NAME="residuals_${BACKBONE:-gwn}_${DATASET}_seed${SEED}"; shift 3 ;;
   diffusion)
     SEED="${3:?seed}"; SBATCH=submit_train_diffusion.sbatch
     RUN_NAME="diffusion_${DATASET}_${PRIOR:-kronecker}_seed${SEED}"
@@ -59,8 +59,9 @@ mkdir -p "${LOGDIR}"
 
 EXPORTS="ALL,DATASET=${DATASET},EXP=${EXP}"
 [ "${STAGE}" != "smoke" ] && EXPORTS="${EXPORTS},SEED=${SEED}"
-[ -n "${EPOCHS:-}" ] && EXPORTS="${EXPORTS},EPOCHS=${EPOCHS}"
-[ -n "${PRIOR:-}" ]  && EXPORTS="${EXPORTS},PRIOR=${PRIOR}"
+[ -n "${EPOCHS:-}" ]   && EXPORTS="${EXPORTS},EPOCHS=${EPOCHS}"
+[ -n "${PRIOR:-}" ]    && EXPORTS="${EXPORTS},PRIOR=${PRIOR}"
+[ -n "${BACKBONE:-}" ] && EXPORTS="${EXPORTS},BACKBONE=${BACKBONE}"
 
 # per-cluster slurm resources. partition always; qos only if the cluster has
 # one; gres = any gpu by default (pass --gres after the args to pin a type).

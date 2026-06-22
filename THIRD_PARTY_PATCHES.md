@@ -58,6 +58,21 @@ PEMS flow zeros (real low-traffic readings) get masked out. Speed datasets need
   into `trainer(...)` and `NULL_VAL` into the test-loop `util.metric(pred,real,...)`.
 **Reapply:** as above. Defaults keep behaviour identical for speed datasets.
 
+### PATCH 4 — train.py: save only the best checkpoint, not every epoch  (2026-06-22)
+**File:** `train.py` (epoch loop + test-load).
+**Why:** upstream saves `{save}_epoch_{i}_{loss}.pth` EVERY epoch (100 files/run,
+just to reload the best one for the test eval) — wasteful disk/IO, bad with the
+parallel local grid.
+**Change:**
+- In the epoch loop, replace the unconditional per-epoch
+  `torch.save(... args.save+"_epoch_"+...)` with a best-so-far guard:
+  `if mvalid_loss <= min(his_loss): torch.save(model.state_dict(), args.save+"_best.pth")`.
+- In the test section, load `args.save+"_best.pth"` instead of the per-epoch file.
+The final `args.save+"_exp"+expid+"_best_"+loss+".pth"` save is unchanged, so the
+sbatch/runner's `ls ..._exp<seed>_best_*.pth` best-finding still works.
+**Reapply:** as above. Now each run writes 2 checkpoints (`_best.pth` + the final
+`_exp_best_`) instead of ~100.
+
 Backbone flag cheatsheet (per the grid):
 - GWN: `--gcn_bool --adjtype doubletransition --addaptadj` (gcn_order 2 default)
 - GCN: `--gcn_bool --adjtype symnadj --gcn_order 1` (no --addaptadj)

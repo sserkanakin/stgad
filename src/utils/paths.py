@@ -100,8 +100,11 @@ def eval_dir(dataset, prior, seed, exp=None, backbone="gwn"):
 # the wandb run name, the sbatch job name, and the slurm log file all share
 # this string, so a run is easy to find across every system.
 
-def run_name(stage, dataset, seed, prior=None):
-    parts = [stage, dataset]
+def run_name(stage, dataset, seed, prior=None, backbone=None):
+    parts = [stage]
+    if backbone is not None:
+        parts.append(backbone)
+    parts.append(dataset)
     if prior is not None:
         parts.append(prior)
     parts.append(f"seed{seed}")

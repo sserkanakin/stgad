@@ -75,13 +75,18 @@ def init_wandb(
     _load_dotenv()
 
     if exp:
-        name = f"{exp}-" + paths.run_name(stage, dataset, seed, prior)
+        name = f"{exp}-" + paths.run_name(stage, dataset, seed, prior, backbone)
         group = f"{exp}-{dataset}" if stage == "diffusion" else f"{exp}-{dataset}-{stage}"
     else:
-        name = paths.run_name(stage, dataset, seed, prior)
+        name = paths.run_name(stage, dataset, seed, prior, backbone)
         group = f"{stage}-{dataset}" + (f"-{prior}" if prior else "")
 
-    job_suffix = os.environ.get("SLURM_JOB_ID") or f"local{os.getpid()}"
+    # host distinguishes the laptop-vs-DAIC race; the suffix keeps the run id
+    # unique per machine/job so concurrent runs of the same cell never collide
+    # (SLURM_JOB_ID on DAIC, local<host>-<pid> on the laptop).
+    import socket
+    host = socket.gethostname().split(".")[0]
+    job_suffix = os.environ.get("SLURM_JOB_ID") or f"local-{host}-{os.getpid()}"
     unique_id = f"{name}__{job_suffix}"
 
     mode = os.environ.get("WANDB_MODE", "online")
@@ -94,7 +99,7 @@ def init_wandb(
         )
         mode = "offline"
 
-    tags = [dataset, backbone, f"seed{seed}"]
+    tags = [dataset, backbone, f"seed{seed}", host]
     if prior:
         tags.append(prior)
     if exp:

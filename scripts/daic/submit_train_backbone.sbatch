@@ -4,7 +4,9 @@
 #SBATCH --time=02:00:00
 # partition / qos / gres are injected per-cluster by submit.sh.
 #SBATCH --cpus-per-task=2
-#SBATCH --mem=8G
+# util.load_dataset holds the WHOLE dataset in host RAM; pemsbay (N=325, 36k
+# windows) needs ~16G+, so 8G OOM-kills it. 32G is safe for all variants.
+#SBATCH --mem=32G
 #SBATCH --output=logs/backbone/%x-%j.out
 #SBATCH --error=logs/backbone/%x-%j.err
 #SBATCH --mail-user=sserkanakin@icloud.com
@@ -72,6 +74,7 @@ srun --export=ALL "${DAIC_PYTHON}" third_party/Graph-WaveNet/train.py \
 BEST="$(ls -t "${SAVE}"_exp"${SEED}"_best_*.pth 2>/dev/null | head -1 || true)"
 if [ -n "${BEST}" ]; then
   cp -f "${BEST}" "${OUT}/best.pth"
+  rm -f "${OUT}"/ckpt_*.pth     # drop the raw repo checkpoints; keep best.pth (quota)
   echo "best checkpoint -> ${OUT}/best.pth  (from ${BEST})"
 else
   echo "ERROR: no best checkpoint at ${SAVE}_exp${SEED}_best_*.pth" >&2

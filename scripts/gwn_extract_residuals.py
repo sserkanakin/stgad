@@ -106,9 +106,13 @@ def main():
 
         out_path = out_dir / f"{split}.npz"
         tmp = out_path.with_suffix(".npz.tmp")
+        # store float16 to fit the 8GB share quota (residuals are modelled in
+        # unit space ~ /sigma_r, so fp16 precision is far finer than needed).
+        # y_true is dropped — it is exactly y_pred + residuals (recover at load).
         with open(tmp, "wb") as fh:
-            np.savez_compressed(fh, residuals=residuals, y_pred=y_pred, y_true=y_true,
-                                mask=mask, mean=np.float32(scaler.mean),
+            np.savez_compressed(fh, residuals=residuals.astype(np.float16),
+                                y_pred=y_pred.astype(np.float16), mask=mask,
+                                mean=np.float32(scaler.mean),
                                 std=np.float32(scaler.std))
         tmp.replace(out_path)
         vr = residuals[mask]

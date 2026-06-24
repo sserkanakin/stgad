@@ -656,7 +656,7 @@ def main() -> None:
 
     _logline(f"# {run_id} | {args.dataset} prior={args.prior} backbone={args.backbone} "
              f"seed={args.seed} | select=val-CRPS | c_0={schedule.c_0:.2f}")
-    _logline("epoch |   train     val | val_CRPS val_MAE |   lr   | time")
+    _logline("epoch | train | val_CRPS val_MAE | lr | time   (+ recon MAE/MSE every val-every)")
 
     # ── Train (best.pt selected by val-CRPS, Vimal's protocol)
     for epoch in range(start_epoch, args.epochs):
@@ -679,11 +679,9 @@ def main() -> None:
             n_batches += 1
 
         train_loss = running / max(n_batches, 1)
-        val_loss = validate(
-            val_loader, denoiser=denoiser, prior_t=prior_t, schedule=schedule,
-            tv_weight=args.tv_weight, A_t=A_t, device=device,
-        )
-        # selection metric: probabilistic val-CRPS (raw units) via reverse sampling
+        # selection metric: probabilistic val-CRPS on a fixed clean val subset (Vimal's
+        # protocol = ONE val pass per epoch). we do NOT also run a full-val-loss pass —
+        # that was redundant (never used for selection) and the bulk of the old overhead.
         vcrps, vmae = val_crps(
             val_R0, val_Yhat, denoiser=denoiser, prior=prior, schedule=schedule,
             device=device, n_steps=args.crps_steps, k=args.crps_k, sigma_r=sigma_r,
@@ -692,8 +690,8 @@ def main() -> None:
         sched.step(vcrps)
         lr_now = optim.param_groups[0]["lr"]
         elapsed = time.time() - t0
-        _logline(f"{epoch:04d}  | {train_loss:7.4f} {val_loss:7.4f} | "
-                 f"{vcrps:7.4f} {vmae:7.4f} | {lr_now:.1e} | {elapsed:5.1f}s")
+        _logline(f"{epoch:04d}  | train={train_loss:7.4f} | "
+                 f"val_CRPS={vcrps:7.4f} val_MAE={vmae:7.4f} | {lr_now:.1e} | {elapsed:5.1f}s")
 
         diag = _maybe_diag(epoch, is_last=(epoch == args.epochs - 1))
 
@@ -703,7 +701,7 @@ def main() -> None:
         else:
             bad_epochs += 1
 
-        row = {"epoch": epoch, "train_loss": train_loss, "val_loss": val_loss,
+        row = {"epoch": epoch, "train_loss": train_loss,
                "val_crps": vcrps, "val_mae": vmae, "lr": lr_now, "time": elapsed}
         if diag is not None:
             row.update({"recon_mae": diag["recon_mae"], "recon_mse": diag["recon_mse"],
@@ -713,7 +711,7 @@ def main() -> None:
         hist_path.write_text(json.dumps(
             {"select_metric": "crps", "best_epoch": best_epoch, "history": history}, indent=2))
         if wandb_on:
-            wandb.log({"train/loss": train_loss, "val/loss": val_loss,
+            wandb.log({"train/loss": train_loss,
                        "val/crps": vcrps, "val/mae": vmae, "lr": lr_now, "epoch": epoch})
 
         save_checkpoint(ckpt_dir / "last.pt", denoiser, optim, sched,

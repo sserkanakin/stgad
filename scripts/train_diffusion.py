@@ -420,11 +420,16 @@ def main() -> None:
     p.add_argument("--tv-weight", type=float, default=0.0,
                    help="GAD's graph-TV penalty weight on predictions (GAD uses 5e-3). "
                         "off by default: residuals are rough, so TV may be misspecified")
-    # ── checkpoint selection by validation CRPS (Vimal's protocol) ──
-    p.add_argument("--crps-k", type=int, default=8,
-                   help="samples per window for the val-CRPS used to select best.pt")
-    p.add_argument("--crps-steps", type=int, default=40,
-                   help="reverse steps for val-CRPS (Vimal validates at 40)")
+    # ── checkpoint selection by validation CRPS (Vimal's protocol). this is only the
+    # SELECTION signal (which epoch's best.pt to keep) — it does NOT affect the final
+    # test metrics (those use --eval-k / --eval-steps). kept lean so it isn't the bulk
+    # of per-epoch time: k=4 draws, 20 reverse steps (still 4× Vimal's n_samples=1 val).
+    p.add_argument("--crps-k", type=int, default=4,
+                   help="samples per window for the val-CRPS used to select best.pt (selection only)")
+    p.add_argument("--crps-steps", type=int, default=20,
+                   help="reverse steps for val-CRPS (selection only; final eval uses --eval-steps)")
+    p.add_argument("--crps-windows", type=int, default=256,
+                   help="clean val windows scored for selection (subset; <= --val-windows)")
     p.add_argument("--lr-factor", type=float, default=0.5,
                    help="ReduceLROnPlateau factor on the val-CRPS plateau")
     p.add_argument("--lr-patience", type=int, default=5,
@@ -628,8 +633,12 @@ def main() -> None:
     valid_idx = full_valid.nonzero(as_tuple=True)[0]
     n_val = min(args.val_windows, valid_idx.numel())
     val_R0, val_Yhat = val_ds.R0[valid_idx[:n_val]], val_ds.Y_hat[valid_idx[:n_val]]
-    print(f"[train_diffusion] selection = val-CRPS on {n_val} clean windows "
-          f"(k={args.crps_k}, steps={args.crps_steps}); "
+    # smaller subset for the per-epoch CRPS selection (it runs every epoch); the
+    # richer diagnostic still uses the full n_val windows but only every --val-every.
+    n_crps = min(args.crps_windows, n_val)
+    crps_R0, crps_Yhat = val_R0[:n_crps], val_Yhat[:n_crps]
+    print(f"[train_diffusion] selection = val-CRPS on {n_crps} clean windows "
+          f"(k={args.crps_k}, steps={args.crps_steps}); diagnostic on {n_val}; "
           f"{float(full_valid.float().mean()):.2f} of val fully observed", flush=True)
 
     def _maybe_diag(epoch: int, is_last: bool):
@@ -683,7 +692,7 @@ def main() -> None:
         # protocol = ONE val pass per epoch). we do NOT also run a full-val-loss pass —
         # that was redundant (never used for selection) and the bulk of the old overhead.
         vcrps, vmae = val_crps(
-            val_R0, val_Yhat, denoiser=denoiser, prior=prior, schedule=schedule,
+            crps_R0, crps_Yhat, denoiser=denoiser, prior=prior, schedule=schedule,
             device=device, n_steps=args.crps_steps, k=args.crps_k, sigma_r=sigma_r,
             generator=val_gen,
         )

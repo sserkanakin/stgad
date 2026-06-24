@@ -40,8 +40,8 @@ torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
 
 from src.data.adjacency import load_adjacency
-from src.data.residual_dataset import ResidualDataset, residual_path, train_residual_sigma
-from src.diffusion.denoiser import R0Denoiser
+from src.data.residual_dataset import make_dataset, residual_path, train_residual_sigma
+from src.diffusion.denoiser import R0Denoiser, SignalDenoiser
 from src.diffusion.forward_fcps import FCPSSchedule, prior_to_torch
 from src.diffusion.prior import load_prior
 from src.diffusion.reverse import reverse_sample
@@ -61,21 +61,7 @@ def _masked_sums(err, mask):
     return (err * m).sum(dim=(0, 1)), m.sum(dim=(0, 1))
 
 
-def empirical_crps(samples, y):
-    """fair (energy-form) ensemble CRPS per point, in the same units as samples/y.
-
-    CRPS = E|X - y| - 0.5 E|X - X'|, estimated from the K samples. the pairwise
-    term uses the O(K log K) sorted identity ΣΣ|x_i-x_j| = 2 Σ_i (2i-K-1) x_(i),
-    so we never form the KxK matrix. translation-equivariant, so CRPS on residuals
-    equals CRPS on the reconstructed forecast (the backbone Y_hat cancels per point).
-    samples (K, B, N, H), y (B, N, H) -> (B, N, H)."""
-    K = samples.shape[0]
-    term1 = (samples - y.unsqueeze(0)).abs().mean(dim=0)            # E|X - y|
-    xs, _ = torch.sort(samples, dim=0)                             # ascending
-    idx = torch.arange(1, K + 1, device=samples.device, dtype=samples.dtype)
-    w = (2 * idx - K - 1) / (K * K)                                # 0.5 E|X - X'| weights
-    term2 = (w.view(K, 1, 1, 1) * xs).sum(dim=0)
-    return term1 - term2
+from src.eval.crps import empirical_crps, quantile_crps_num   # noqa: E402  (shared w/ training)
 
 
 # ─── load a trained run ──────────────────────────────────────────────────────
@@ -98,11 +84,20 @@ def load_run(dataset, prior, seed, exp, device, backbone="gwn"):
     schedule = FCPSSchedule.for_prior(prior_obj, c_min=cfg["c_min"], alpha=cfg["alpha"], T=1.0)
     print(f"[eval_diffusion] schedule c_0 = {schedule.c_0:.2f} (derived from prior, "
           f"θ_min={float(prior_obj.theta.min()):.4f})", flush=True)
-    denoiser = R0Denoiser(
-        N=prior_obj.N, H=prior_obj.H, adjacency=load_adjacency(dataset),
-        d_h=cfg["d_h"], channel_multipliers=tuple(cfg["channel_multipliers"]),
-        n_blocks=cfg["n_blocks"], device=str(device),
-    ).to(device)
+    if backbone == "raw":
+        import numpy as _np
+        T_h = int(_np.load(residual_path(dataset, "test", seed, backbone))["history"].shape[-1])
+        denoiser = SignalDenoiser(
+            N=prior_obj.N, H=prior_obj.H, T_h=T_h, adjacency=load_adjacency(dataset),
+            d_h=cfg["d_h"], channel_multipliers=tuple(cfg["channel_multipliers"]),
+            n_blocks=cfg["n_blocks"], device=str(device),
+        ).to(device)
+    else:
+        denoiser = R0Denoiser(
+            N=prior_obj.N, H=prior_obj.H, adjacency=load_adjacency(dataset),
+            d_h=cfg["d_h"], channel_multipliers=tuple(cfg["channel_multipliers"]),
+            n_blocks=cfg["n_blocks"], device=str(device),
+        ).to(device)
     denoiser.load_state_dict(ckpt["model_state_dict"])
     denoiser.eval()
     return denoiser, prior_obj, schedule, cfg, ckpt.get("epoch")
@@ -114,13 +109,19 @@ def load_run(dataset, prior, seed, exp, device, backbone="gwn"):
 @torch.no_grad()
 def evaluate(dataset, prior, seed, *, exp, device, k, n_steps, eta, alpha,
              w1_windows, w1_samples, w1_proj, gen_batch, max_windows, generator,
-             backbone="gwn"):
+             backbone="gwn", mask_zero=True):
     denoiser, prior_obj, schedule, cfg, ckpt_epoch = load_run(dataset, prior, seed, exp, device, backbone)
     N, H = prior_obj.N, prior_obj.H
 
     sigma_r = train_residual_sigma(dataset, seed, backbone)   # same scalar used in training
-    test = ResidualDataset(residual_path(dataset, "test", seed, backbone), sigma_r)
+    test = make_dataset(dataset, "test", seed, backbone, sigma_r)
     R0_all, Y_all, M_all = test.R0, test.Y_hat, test.mask
+    Ytrue_all = test.y_true_raw                               # raw ground truth (y_pred+residual)
+    # match SpecSTG/DiffSTG: drop y==0 points from the metrics. for the speed datasets
+    # the stored mask already excludes zeros (null_val=0); for the flow datasets
+    # (null_val=nan) the stored mask keeps them, so this is where it bites.
+    if mask_zero:
+        M_all = M_all & (Ytrue_all.abs() > 1e-6)
     n_total = R0_all.shape[0] if not max_windows else min(max_windows, R0_all.shape[0])
 
     # cap trajectories per reverse_sample call so big-N datasets (pemsbay N=325)
@@ -135,27 +136,35 @@ def evaluate(dataset, prior, seed, *, exp, device, k, n_steps, eta, alpha,
 
     # ── point accuracy + Winkler: K samples per window, chunked over windows ──
     mae_n = torch.zeros(H); mse_n = torch.zeros(H); cnt = torch.zeros(H)
-    wink_n = torch.zeros(H); cov_n = torch.zeros(H); crps_n = torch.zeros(H)
+    mape_n = torch.zeros(H); wink_n = torch.zeros(H); cov_n = torch.zeros(H); crps_n = torch.zeros(H)
+    qnum_n = torch.zeros(H); qden_n = torch.zeros(H)
     for ci, start in enumerate(range(0, n_total, chunk)):
         end = min(start + chunk, n_total)
-        R0 = R0_all[start:end].to(device) * sigma_r       # de-normalize to raw units
-        Y = Y_all[start:end].to(device)                   # conditioning stays z-scored
+        R0 = R0_all[start:end].to(device) * sigma_r       # raw residual
+        Y = Y_all[start:end].to(device)                   # conditioning (z-scored)
         Mk = M_all[start:end].to(device)
+        yt = Ytrue_all[start:end].to(device)              # raw ground-truth signal
+        yp = yt - R0                                      # raw backbone forecast (0 for 'raw')
         b = R0.shape[0]
         samp, _ = reverse_sample(
             prior_obj, schedule, denoiser, Y.repeat(k, 1, 1),
             n_steps=n_steps, eta=eta, R_T=None, generator=generator,
         )
-        samp = samp.view(k, b, N, H) * sigma_r            # de-normalize to raw units
-        mean = samp.mean(dim=0)
-        sn, cn = _masked_sums((mean - R0).abs(), Mk);  mae_n += sn.cpu(); cnt += cn.cpu()
-        sn, _ = _masked_sums((mean - R0).pow(2), Mk);  mse_n += sn.cpu()
-        lo = torch.quantile(samp, alpha / 2.0, dim=0)
-        hi = torch.quantile(samp, 1.0 - alpha / 2.0, dim=0)
-        sn, _ = _masked_sums(winkler_score(R0, lo, hi, alpha), Mk);  wink_n += sn.cpu()
-        inside = ((R0 >= lo) & (R0 <= hi)).float()
-        sn, _ = _masked_sums(inside, Mk);  cov_n += sn.cpu()
-        sn, _ = _masked_sums(empirical_crps(samp, R0), Mk);  crps_n += sn.cpu()
+        samp = samp.view(k, b, N, H) * sigma_r            # raw residual samples
+        # reconstruct the forecast and clip to [0,∞) (non-negative flow/speed; matches DiffSTG).
+        # all metrics are now in raw FORECAST space (= residual space + y_pred, then clip).
+        fc = (yp.unsqueeze(0) + samp).clamp(min=0.0)      # (k, b, N, H) raw forecast samples
+        mean = fc.mean(dim=0)
+        sn, cn = _masked_sums((mean - yt).abs(), Mk);  mae_n += sn.cpu(); cnt += cn.cpu()
+        sn, _ = _masked_sums((mean - yt).pow(2), Mk);  mse_n += sn.cpu()
+        sn, _ = _masked_sums((mean - yt).abs() / yt.abs().clamp(min=1e-6), Mk);  mape_n += sn.cpu()
+        lo = torch.quantile(fc, alpha / 2.0, dim=0)
+        hi = torch.quantile(fc, 1.0 - alpha / 2.0, dim=0)
+        sn, _ = _masked_sums(winkler_score(yt, lo, hi, alpha), Mk);  wink_n += sn.cpu()
+        sn, _ = _masked_sums(((yt >= lo) & (yt <= hi)).float(), Mk);  cov_n += sn.cpu()
+        sn, _ = _masked_sums(empirical_crps(fc, yt), Mk);  crps_n += sn.cpu()   # raw-unit energy CRPS
+        qnum_n += quantile_crps_num(fc, yt, Mk).cpu()                           # normalized-CRPS num
+        sn, _ = _masked_sums(yt.abs(), Mk);  qden_n += sn.cpu()                 # normalized-CRPS denom
 
         if ci % max(1, nchunks // 10) == 0 or ci == nchunks - 1:
             el = time.time() - t0
@@ -166,8 +175,9 @@ def evaluate(dataset, prior, seed, *, exp, device, k, n_steps, eta, alpha,
     print(f"  [{dataset}/{prior}] point done in {time.time()-t0:.0f}s; computing W1/energy...",
           flush=True)
     cnt = cnt.clamp(min=1.0)
-    mae_h = (mae_n / cnt); mse_h = (mse_n / cnt)
+    mae_h = (mae_n / cnt); mse_h = (mse_n / cnt); mape_h = (mape_n / cnt)
     wink_h = (wink_n / cnt); cov_h = (cov_n / cnt); crps_h = (crps_n / cnt)
+    qcrps_h = qnum_n / (qden_n.clamp(min=1e-8) * 19.0)    # normalized quantile-CRPS per horizon
     overall = lambda num: float(num.sum() / cnt.sum())
 
     # ── distribution fidelity: complete-case windows, sliced-W1 + energy ──────
@@ -199,11 +209,15 @@ def evaluate(dataset, prior, seed, *, exp, device, k, n_steps, eta, alpha,
         "dataset": dataset, "backbone": backbone, "prior": prior, "seed": seed,
         "exp": exp, "ckpt_epoch": ckpt_epoch,
         "n_test_windows": int(n_total), "k_samples": k, "n_steps": n_steps,
-        "eta": eta, "alpha": alpha,
-        "mae": overall(mae_n), "mse": overall(mse_n),
-        "winkler": overall(wink_n), "coverage": overall(cov_n), "crps": overall(crps_n),
-        "mae_h": mae_h.tolist(), "mse_h": mse_h.tolist(),
-        "winkler_h": wink_h.tolist(), "coverage_h": cov_h.tolist(), "crps_h": crps_h.tolist(),
+        "eta": eta, "alpha": alpha, "mask_zero": bool(mask_zero),
+        "mae": overall(mae_n), "mse": overall(mse_n), "rmse": float((mse_n.sum()/cnt.sum())**0.5),
+        "mape": overall(mape_n),
+        "winkler": overall(wink_n), "coverage": overall(cov_n),
+        "crps_energy": overall(crps_n),                              # raw-unit fair/energy CRPS
+        "crps": float(qnum_n.sum() / (qden_n.sum().clamp(min=1e-8) * 19.0)),  # normalized (papers/Vimal)
+        "mae_h": mae_h.tolist(), "mse_h": mse_h.tolist(), "mape_h": mape_h.tolist(),
+        "winkler_h": wink_h.tolist(), "coverage_h": cov_h.tolist(),
+        "crps_h": qcrps_h.tolist(), "crps_energy_h": crps_h.tolist(),
         "w1": float(np.mean(w1_h)), "energy": float(np.mean(ed_h)),
         "w1_h": w1_h, "energy_h": ed_h,
         "w1_clean_windows": int(n_w1), "w1_frac_of_test": w1_frac,
@@ -222,10 +236,10 @@ def _save(res):
 def _print_one(res):
     print(f"\n=== {res['dataset']}/{res['prior']} (best.pt epoch {res['ckpt_epoch']}, "
           f"{res['n_test_windows']} test windows, K={res['k_samples']}, eta={res['eta']}) ===")
-    print(f"  MAE={res['mae']:.4f}  MSE={res['mse']:.4f}  RMSE={res['mse']**0.5:.4f}  "
-          f"Winkler{int((1-res['alpha'])*100)}={res['winkler']:.4f}  coverage={res['coverage']:.3f}  "
-          f"CRPS={res['crps']:.4f}")
-    print(f"  W1={res['w1']:.4f}  energy={res['energy']:.4f}  "
+    print(f"  MAE={res['mae']:.4f}  RMSE={res['mse']**0.5:.4f}  MAPE={res['mape']:.4f}  "
+          f"Winkler{int((1-res['alpha'])*100)}={res['winkler']:.4f}  coverage={res['coverage']:.3f}")
+    print(f"  CRPS(norm)={res['crps']:.4f}  CRPS(energy)={res.get('crps_energy', float('nan')):.4f}  "
+          f"W1={res['w1']:.4f}  energy={res['energy']:.4f}  "
           f"({res['w1_clean_windows']} clean windows = {res['w1_frac_of_test']:.2f} of test)")
     hl = "  ".join(f"h{h}:MAE={res['mae_h'][h-1]:.2f}" for h in _HL if h <= len(res['mae_h']))
     print(f"  per-horizon  {hl}")
@@ -260,7 +274,7 @@ def main():
     p.add_argument("--dataset", choices=("metrla", "pemsbay", "pems04f", "pems04s",
                                           "pems08f", "pems08s"))
     p.add_argument("--prior", choices=("kronecker", "isotropic"))
-    p.add_argument("--backbone", choices=("gwn", "gcn", "mlp"), default="gwn",
+    p.add_argument("--backbone", choices=("gwn", "gcn", "mlp", "raw"), default="gwn",
                    help="which backbone's diffusion runs to eval (namespaces results)")
     p.add_argument("--exp", default="dev", help="experiment tag (matches training --exp)")
     p.add_argument("--seed", type=int, default=0)
@@ -275,6 +289,8 @@ def main():
     p.add_argument("--gen-batch", type=int, default=1024,
                    help="max trajectories per reverse_sample call (caps gpu memory)")
     p.add_argument("--max-windows", type=int, default=0, help="cap test windows (0=all)")
+    p.add_argument("--no-mask-zero", dest="mask_zero", action="store_false",
+                   help="keep y==0 points in the metrics (default: drop them, SpecSTG/DiffSTG convention)")
     args = p.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available()
@@ -297,7 +313,8 @@ def main():
                        n_steps=args.n_steps, eta=args.eta, alpha=args.alpha,
                        w1_windows=args.w1_windows, w1_samples=args.w1_samples,
                        w1_proj=args.w1_proj, gen_batch=args.gen_batch,
-                       max_windows=args.max_windows, generator=g, backbone=args.backbone)
+                       max_windows=args.max_windows, generator=g, backbone=args.backbone,
+                       mask_zero=args.mask_zero)
         _print_one(res)
         print(f"  wrote {_save(res)}")
         results.append(res)

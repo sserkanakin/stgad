@@ -3,13 +3,14 @@
   Σ_T = D_H^{1/2} R_H D_H^{1/2}, fit from the training residuals:
         D_H[h] = mean(r_h^2)   (true per-horizon variance / second moment)
         R_H    = corrcoef of the residuals   (empirical horizon correlation)
-        then the eigenvalues of Σ_T are capped so cond(Σ_T) <= KAPPA_CAP (the
-        "γ for time": a deliberate regulariser that keeps the noise schedule
-        trainable without throwing away the real horizon correlation).
-  Σ_S   the spatial factor. by default flattened to I (SPATIAL_FLATTEN): GWN
-        residuals are rough (Dirichlet energy ≈ 0.75), so the (L + γI)^{-1}
-        smoothness prior is misspecified. set SPATIAL_FLATTEN=False to use the
-        structured Σ_S = (L + γI)^{-1} (for the structured-spatial A/B).
+        then Σ_T is ridge-shifted toward scaled-identity, μ ← (1-ρ)μ + ρ·μ̄
+        (SHRINK_T, the "γ for time"): a smooth, trace-preserving regulariser —
+        the exact temporal twin of the spatial γ — that keeps the noise schedule
+        trainable without throwing away the real horizon correlation.
+  Σ_S   the spatial factor: structured Σ_S = (L + γI)^{-1} with fixed γ = 0.8
+        (GAD), or flat Σ_S = I (temporal-only ablation, spatial="flat"). γ both
+        well-conditions the operator and lifts the Laplacian's zero modes, so
+        disconnected graphs (e.g. pems04's 12 components) need no graph surgery.
   τ²    a thin scale calibration (= N / tr(Σ_S)) so flattening or structuring
         the spatial factor does not shift the overall variance. the *scale* is
         set by the true-variance D_H above; τ² only trims it (τ² = 1 when flat).
@@ -27,20 +28,22 @@ import numpy as np
 
 from src.utils import paths
 
-# locked per-dataset γ, fit once from the residual spectrum (see git history).
-# only used when SPATIAL_FLATTEN is False (the structured-spatial arm).
-GAMMA_LOCKED: dict[str, float] = {
-    "metrla": 0.15755546019980676,
-    "pemsbay": 0.21271054104199358,
-    "pems08f": 0.9239103283128737,
-}
+# fixed graph-shift γ in Σ_S = (L + γI)^{-1} for the structured-spatial arm.
+# NOT data-fit: we follow GAD (Rozada et al. 2025), which fixes γ = 0.8 across
+# datasets. this keeps the prior a principled, paper-aligned hyperparameter
+# (cf. Vimal's mas_gamma, also a fixed 1e-3/1e-2 shift) rather than a bespoke
+# per-dataset value. override per call via load_prior(gamma=...) for sweeps.
+GAMMA_DEFAULT: float = 0.8
 
-# cap on cond(Σ_T) — the temporal twin of γ, locked 2026-06-10 from the hygiene
-# analysis. κ=40 only bites pems-bay (cond 157→40); metr-la (37) and pems08f (17)
-# keep their real horizon correlation untouched. NOT data-optimal shrinkage
-# (ledoit-wolf returns δ≈1e-5 here — the stiffness is real structure, not noise);
-# this is a deliberate distortion to keep the per-mode schedule trainable.
-KAPPA_CAP = 40.0
+# temporal twin of the spatial γ: shrink Σ_T toward scaled-identity by a fixed
+# fraction ρ,  μ_T ← (1-ρ)·μ_T + ρ·μ̄  (μ̄ = mean eigenvalue). this is the exact
+# analogue of γ — γ→∞ drives Σ_S→isotropic, ρ→1 drives Σ_T→isotropic — applied as
+# a smooth, trace-preserving shift instead of the old hard cond-number clamp.
+# ρ=0.1 tames the stiffest case (pems-bay cond 116→44, ~matching the old κ=40)
+# while barely touching the already-mild datasets (metr-la 23→16, pems08f 8→6).
+# override per call via load_prior(shrink_t=...). keeps the real horizon
+# correlation (not a path-graph assumption); the c̄-schedule handles any residual stiffness.
+SHRINK_T: float = 0.1
 
 # default spatial factor for the "kronecker" prior:
 #   "structured" -> Σ_S = (L + γI)^{-1} on the repaired (connected) graph: the
@@ -75,6 +78,7 @@ class KroneckerPrior:
     theta: np.ndarray
     delta_h: np.ndarray
     R_H: np.ndarray
+    sigma2_scale: float = 1.0     # σ²: scales the noise so Σ_stat = σ²/θ (see _normalize_scale)
 
     @property
     def N(self) -> int:
@@ -86,8 +90,8 @@ class KroneckerPrior:
 
     @property
     def sigma2(self) -> np.ndarray:
-        """Stationary variance in the joint eigenbasis. Shape (N, H)."""
-        return 1.0 / self.theta
+        """Stationary variance in the joint eigenbasis (σ²/θ). Shape (N, H)."""
+        return self.sigma2_scale / self.theta
 
 
 def _load_residuals_train(dataset: str, seed: int = 0, backbone: str = "gwn") -> tuple[np.ndarray, np.ndarray]:
@@ -147,6 +151,16 @@ def _fit_sigma_T(R: np.ndarray, mask: np.ndarray) -> tuple[np.ndarray, np.ndarra
     return delta_h, R_H, Sigma_T
 
 
+def _normalize_scale(theta: np.ndarray) -> tuple[np.ndarray, float]:
+    """rescale the precision to GAD's scale: put the slowest mode at θ_min = γ (GAD's
+    smooth-mode precision λ_min+γ = γ). then the schedule's c_0 ≈ 5/γ ≈ 6 for EVERY
+    dataset (GAD fixes S≈7), instead of a per-dataset 30–80. σ² absorbs the rescale,
+    so the stationary covariance Σ_stat = σ²/θ is UNCHANGED — an exact reparameterization
+    that only moves the scale from c̄ into θ. returns (theta_scaled, sigma2_scale)."""
+    s = GAMMA_DEFAULT / float(theta.min())
+    return theta * s, s
+
+
 def _build_isotropic_prior(dataset: str, seed: int = 0, backbone: str = "gwn") -> KroneckerPrior:
     """Scale-matched white-noise baseline: Σ = σ²·I, σ² = masked variance of the
     training residuals. identity eigenbasis (no spatial/temporal structure) with
@@ -157,6 +171,7 @@ def _build_isotropic_prior(dataset: str, seed: int = 0, backbone: str = "gwn") -
     R, mask = _load_residuals_train(dataset, seed, backbone)
     sigma2 = float(R[mask].var())
     _, N, H = R.shape
+    theta, sigma2_scale = _normalize_scale(np.full((N, H), 1.0 / sigma2))
     return KroneckerPrior(
         dataset=dataset,
         gamma=0.0,                              # not meaningful for white noise
@@ -164,9 +179,10 @@ def _build_isotropic_prior(dataset: str, seed: int = 0, backbone: str = "gwn") -
         lam_S=np.zeros(N),
         V_T=np.eye(H),                          # identity basis -> no temporal structure
         mu_T=np.full(H, sigma2),
-        theta=np.full((N, H), 1.0 / sigma2),    # stationary variance 1/θ = σ² everywhere
+        theta=theta,                            # normalized; Σ_stat = σ²·scale/θ = σ²
         delta_h=np.full(H, sigma2),
         R_H=np.eye(H),
+        sigma2_scale=sigma2_scale,
     )
 
 
@@ -178,6 +194,7 @@ def load_prior(
     spatial: str = DEFAULT_SPATIAL,
     stiffness_cap: float | None = None,
     gamma: float | None = None,
+    shrink_t: float | None = None,
     backbone: str = "gwn",
 ) -> KroneckerPrior:
     """Fit and cache the diffusion noise prior for a dataset.
@@ -187,10 +204,12 @@ def load_prior(
       spatial="flat"       -> Σ_S = I (temporal-only ablation).
     prior="isotropic": scale-matched white noise Σ = σ²·I (the baseline).
     stiffness_cap: if set, floor θ_min so θ_max/θ_min <= cap (a joint-spectrum
-      twin of KAPPA_CAP; the trainability fallback for stiff structured priors).
-    gamma: override the locked spatial shift γ (structured only). None = use
-      GAMMA_LOCKED[dataset]. exposed for the conditioning trade-off sweep (a larger
+      twin of the ridge shift; the trainability fallback for stiff structured priors).
+    gamma: override the fixed spatial shift γ (structured only). None = use
+      GAMMA_DEFAULT (0.8, GAD). exposed for the conditioning trade-off sweep (a larger
       γ tames κ(Q_S) at the cost of a less smoothness-committed prior).
+    shrink_t: override the temporal ridge fraction ρ (μ_T ← (1-ρ)μ_T + ρ·μ̄, the
+      temporal twin of γ). None = use SHRINK_T (0.1). 0 = faithful empirical Σ_T.
     """
     if prior == "isotropic":
         return _build_isotropic_prior(dataset, seed, backbone)
@@ -198,9 +217,6 @@ def load_prior(
         raise ValueError(f"unknown prior {prior!r}; use 'kronecker' or 'isotropic'")
     if spatial not in ("structured", "flat"):
         raise ValueError(f"unknown spatial {spatial!r}; use 'structured' or 'flat'")
-    if gamma is None and spatial == "structured" and dataset not in GAMMA_LOCKED:
-        raise KeyError(f"no locked γ for dataset {dataset!r}; pass gamma= explicitly "
-                       f"or use one of {sorted(GAMMA_LOCKED)}")
 
     R, mask = _load_residuals_train(dataset, seed, backbone)
     _, N, H = R.shape
@@ -208,17 +224,20 @@ def load_prior(
 
     mu_T, V_T = np.linalg.eigh(Sigma_T)
     mu_T = np.clip(mu_T, a_min=1e-12, a_max=None)
-    # deliberate condition cap: floor the small eigenvalues so cond(Σ_T) <= KAPPA_CAP
-    mu_T = np.maximum(mu_T, mu_T.max() / KAPPA_CAP)
+    # ridge shift toward scaled-identity (temporal twin of γ): μ ← (1-ρ)μ + ρ·μ̄.
+    # additive + trace-preserving, not a hard clamp; ρ=0 leaves Σ_T faithful.
+    rho = SHRINK_T if shrink_t is None else shrink_t
+    if rho:
+        mu_T = (1.0 - rho) * mu_T + rho * mu_T.mean()
 
-    # spatial factor: structured (L + γI)^{-1} on the repaired graph, or flat (Σ_S = I)
+    # spatial factor: structured (L + γI)^{-1}, or flat (Σ_S = I)
     if spatial == "flat":
         gamma = 0.0
         V_S = np.eye(N)
         lam_S = np.zeros(N)
         q_S = np.ones(N)                          # spatial precision = 1 (Σ_S = I)
     else:
-        gamma = GAMMA_LOCKED[dataset] if gamma is None else gamma
+        gamma = GAMMA_DEFAULT if gamma is None else gamma
         lam_S, V_S = _load_laplacian_eig(dataset)
         q_S = lam_S + gamma                       # spatial precision = L + γI
 
@@ -232,6 +251,9 @@ def load_prior(
     if stiffness_cap is not None:
         theta = np.maximum(theta, theta.max() / stiffness_cap)
 
+    # GAD-scale normalization: θ_min → γ so c_0 ≈ 5/γ ≈ 6 (σ² preserves Σ_stat).
+    theta, sigma2_scale = _normalize_scale(theta)
+
     return KroneckerPrior(
         dataset=dataset,
         gamma=gamma,
@@ -242,6 +264,7 @@ def load_prior(
         theta=theta,
         delta_h=delta_h,
         R_H=R_H,
+        sigma2_scale=sigma2_scale,
     )
 
 
@@ -267,16 +290,18 @@ def build_prior_from_R(
 
     if spatial == "iso":
         sigma2 = float(R[mask].var())
+        theta, sigma2_scale = _normalize_scale(np.full((N, H), 1.0 / sigma2))
         return KroneckerPrior(
             dataset=dataset, gamma=0.0, V_S=np.eye(N), lam_S=np.zeros(N),
-            V_T=np.eye(H), mu_T=np.full(H, sigma2), theta=np.full((N, H), 1.0 / sigma2),
-            delta_h=np.full(H, sigma2), R_H=np.eye(H),
+            V_T=np.eye(H), mu_T=np.full(H, sigma2), theta=theta,
+            delta_h=np.full(H, sigma2), R_H=np.eye(H), sigma2_scale=sigma2_scale,
         ), sigma_r
 
     delta_h, R_H, Sigma_T = _fit_sigma_T(R, mask)
     mu_T, V_T = np.linalg.eigh(Sigma_T)
     mu_T = np.clip(mu_T, a_min=1e-12, a_max=None)
-    mu_T = np.maximum(mu_T, mu_T.max() / KAPPA_CAP)
+    if SHRINK_T:                              # ridge shift toward scaled-identity (see load_prior)
+        mu_T = (1.0 - SHRINK_T) * mu_T + SHRINK_T * mu_T.mean()
 
     if spatial == "flat":
         gamma, V_S, lam_S, q_S = 0.0, np.eye(N), np.zeros(N), np.ones(N)
@@ -287,5 +312,7 @@ def build_prior_from_R(
     theta = q_S[:, None] / (tau2 * mu_T[None, :])
     if stiffness_cap is not None:
         theta = np.maximum(theta, theta.max() / stiffness_cap)
+    theta, sigma2_scale = _normalize_scale(theta)
     return KroneckerPrior(dataset=dataset, gamma=gamma, V_S=V_S, lam_S=lam_S,
-                          V_T=V_T, mu_T=mu_T, theta=theta, delta_h=delta_h, R_H=R_H), sigma_r
+                          V_T=V_T, mu_T=mu_T, theta=theta, delta_h=delta_h, R_H=R_H,
+                          sigma2_scale=sigma2_scale), sigma_r

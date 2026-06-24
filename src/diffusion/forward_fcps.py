@@ -32,11 +32,18 @@ from .prior import KroneckerPrior
 
 @dataclass(frozen=True)
 class FCPSSchedule:
-    """floor-constrained polynomial schedule from gad (rozada et al. 2025)."""
+    """floor-constrained polynomial schedule from gad (rozada et al. 2025).
 
-    c_min: float = 0.05
-    c_0: float = 20_000.0
-    alpha: float = 7.0
+    defaults match the GAD reference (alpha=4, c_min=0.1). c_0 (= GAD's S) is the
+    cumulative noise at t=T; GAD fixes S=7 for its spatial prior (θ_min≈0.8), but
+    our kronecker Q has a smaller θ_min, so c_0 is auto-derived (FCPSSchedule.for_prior)
+    to give GAD-equivalent mixing (2·c_0·θ_min ≈ 2·7·0.8). this is the one schedule
+    knob the Q change forces; everything else (the c(t)/c̄(t) form) is GAD's.
+    """
+
+    c_min: float = 0.1
+    c_0: float = 7.0
+    alpha: float = 4.0
     T: float = 1.0
 
     def __post_init__(self) -> None:
@@ -68,15 +75,42 @@ class FCPSSchedule:
         prior: KroneckerPrior,
         mix_target: float = 5.0,
         mix_margin: float = 2.0,
-        c_min: float = 0.05,
-        alpha: float = 7.0,
+        c_min: float = 0.1,
+        alpha: float = 4.0,
         T: float = 1.0,
     ) -> "FCPSSchedule":
-        """pick c_0 large enough to mix the slowest mode by t=T
-        (so that 2 θ_min c_0 ≥ mix_target · mix_margin)."""
+        """pick c_0 (= GAD's S) large enough to mix the slowest mode by t=T
+        (so that 2 θ_min c_0 ≥ mix_target · mix_margin). GAD fixes S=7 for θ_min≈0.8
+        (2·7·0.8≈11); we reproduce that mixing for our smaller kronecker θ_min."""
         theta_min = float(prior.theta.min())
         c_0 = max(c_min * T + 1.0, 0.5 * mix_target * mix_margin / theta_min)
         return cls(c_min=c_min, c_0=c_0, alpha=alpha, T=T)
+
+    def t_of_c_bar(self, c_bar, n_iter: int = 30):
+        """invert c̄(t) → t ∈ [0, T] (newton), to match GAD: it samples the noise
+        level s = c̄ then conditions the net on the corresponding diffusion time t.
+        c̄(t) = c_min·t + (c_0 - c_min·T)·(t/T)^(α+1) is monotone in t. accepts np/torch."""
+        is_torch = isinstance(c_bar, torch.Tensor)
+        cb = c_bar if is_torch else np.asarray(c_bar, dtype=float)
+        # start from the dominant-term guess t ≈ T·(c̄ / (c_0 - c_min·T))^(1/(α+1))
+        k = self.c_0 - self.c_min * self.T
+        if is_torch:
+            t = self.T * torch.clamp(cb / k, min=0.0) ** (1.0 / (self.alpha + 1))
+            t = t.clamp(1e-8, self.T)
+            for _ in range(n_iter):
+                u = t / self.T
+                f = self.c_min * t + k * u.pow(self.alpha + 1) - cb
+                fp = self.c_min + k * (self.alpha + 1) / self.T * u.pow(self.alpha)
+                t = (t - f / fp).clamp(1e-8, self.T)
+            return t
+        t = self.T * np.clip(cb / k, 0.0, None) ** (1.0 / (self.alpha + 1))
+        t = np.clip(t, 1e-8, self.T)
+        for _ in range(n_iter):
+            u = t / self.T
+            f = self.c_min * t + k * u ** (self.alpha + 1) - cb
+            fp = self.c_min + k * (self.alpha + 1) / self.T * u ** self.alpha
+            t = np.clip(t - f / fp, 1e-8, self.T)
+        return t
 
 
 @dataclass(frozen=True)
@@ -129,8 +163,8 @@ def sample_R_t_given_R0(
     c_bar = float(schedule.c_bar(t))
     # H_t in eigenbasis: exp(-c̄·θ)
     Ht = np.exp(-prior.theta * c_bar)
-    # Σ_t in eigenbasis: (1/θ)·(1 - exp(-2·c̄·θ))
-    sigma2_t = (1.0 - np.exp(-2.0 * prior.theta * c_bar)) / prior.theta
+    # Σ_t in eigenbasis: σ²·(1 - exp(-2·c̄·θ))/θ
+    sigma2_t = prior.sigma2_scale * (1.0 - np.exp(-2.0 * prior.theta * c_bar)) / prior.theta
 
     C0 = _rotate_to_eigenbasis(R0, prior)
     Z = rng.standard_normal(R0.shape)
@@ -163,6 +197,7 @@ class TorchPriorTensors:
     V_S: torch.Tensor
     V_T: torch.Tensor
     theta: torch.Tensor
+    sigma2_scale: float = 1.0
 
 
 def prior_to_torch(
@@ -172,6 +207,7 @@ def prior_to_torch(
         V_S=torch.as_tensor(prior.V_S, device=device, dtype=dtype),
         V_T=torch.as_tensor(prior.V_T, device=device, dtype=dtype),
         theta=torch.as_tensor(prior.theta, device=device, dtype=dtype),
+        sigma2_scale=float(prior.sigma2_scale),
     )
 
 
@@ -217,9 +253,25 @@ def sample_log_c_bar_torch(
     c_lo: float, c_hi: float, B: int, device, dtype,
     generator: Optional[torch.Generator] = None,
 ) -> torch.Tensor:
-    """draw B noise levels log-uniformly in [c̄_lo, c̄_hi] (training)."""
+    """draw B noise levels log-uniformly in [c̄_lo, c̄_hi]. EDM-style alternative to
+    GAD's power-law sampler; covers stiff modes evenly but deviates from GAD."""
     u = torch.rand(B, device=device, dtype=dtype, generator=generator)
     return c_lo * (c_hi / c_lo) ** u
+
+
+# GAD's training noise sampler: s = S·u^power (u uniform), the default we use.
+_GAD_SAMPLE_POWER = 0.65    # exp_gasde.py: u.pow(0.65) — biases toward higher noise
+
+
+def sample_c_bar_powerlaw_torch(
+    c_0: float, B: int, device, dtype,
+    power: float = _GAD_SAMPLE_POWER,
+    generator: Optional[torch.Generator] = None,
+) -> torch.Tensor:
+    """draw B noise levels c̄ = c_0·u^power, u ~ U[0,1] — GAD's scheme (exp_gasde.py).
+    spans [0, c_0]; power<1 biases toward higher noise. c_0 is the schedule's c̄(T)."""
+    u = torch.rand(B, device=device, dtype=dtype, generator=generator)
+    return c_0 * u.pow(power)
 
 
 def reverse_c_bar_grid(c_lo: float, c_hi: float, n_steps: int) -> np.ndarray:
@@ -241,7 +293,7 @@ def sample_R_t_from_c_bar_torch(
     cb = c_bar.view(-1, 1, 1)
     theta = prior_t.theta.unsqueeze(0)
     H = torch.exp(-theta * cb)
-    sigma2 = (1.0 - torch.exp(-2.0 * theta * cb)) / theta
+    sigma2 = prior_t.sigma2_scale * (1.0 - torch.exp(-2.0 * theta * cb)) / theta
     C0 = torch.einsum("ki,bih,hj->bkj", prior_t.V_S.T, R0, prior_t.V_T)
     Z = torch.randn(R0.shape, generator=generator, device=R0.device, dtype=R0.dtype)
     Ct = H * C0 + sigma2.sqrt() * Z
@@ -253,7 +305,7 @@ def sample_R_t_from_c_bar(
 ) -> np.ndarray:
     """numpy twin of sample_R_t_from_c_bar_torch, for tests/diagnostics. R0 (..., N, H)."""
     H = np.exp(-prior.theta * c_bar)
-    sigma2 = (1.0 - np.exp(-2.0 * prior.theta * c_bar)) / prior.theta
+    sigma2 = prior.sigma2_scale * (1.0 - np.exp(-2.0 * prior.theta * c_bar)) / prior.theta
     C0 = _rotate_to_eigenbasis(R0, prior)
     Z = rng.standard_normal(R0.shape)
     return _rotate_from_eigenbasis(H * C0 + np.sqrt(sigma2) * Z, prior)
@@ -267,6 +319,14 @@ def _fcps_c_bar_torch(
     return schedule.c_min * t + (schedule.c_0 - schedule.c_min * schedule.T) * u.pow(
         schedule.alpha + 1
     )
+
+
+def fcps_rate_torch(t: torch.Tensor, schedule: FCPSSchedule) -> torch.Tensor:
+    """Per-element rate c(t) = c_min + k·u^α (torch). used for GAD's SNR weight
+    w = 1/(1 + 2σ²·c(t)). k = (c_0 - c_min·T)(α+1)/T."""
+    u = t / schedule.T
+    k = (schedule.c_0 - schedule.c_min * schedule.T) * (schedule.alpha + 1) / schedule.T
+    return schedule.c_min + k * u.pow(schedule.alpha)
 
 
 def sample_R_t_given_R0_torch(
@@ -291,7 +351,7 @@ def sample_R_t_given_R0_torch(
     theta_b = prior_t.theta.unsqueeze(0)                   # (1, N, H)
 
     H_t = torch.exp(-theta_b * c_bar_b)                    # (B, N, H)
-    sigma2_t = (1.0 - torch.exp(-2.0 * theta_b * c_bar_b)) / theta_b  # (B, N, H)
+    sigma2_t = prior_t.sigma2_scale * (1.0 - torch.exp(-2.0 * theta_b * c_bar_b)) / theta_b
 
     # Rotate to eigenbasis: V_S^T R0 V_T.
     C0 = torch.einsum("ki,bih,hj->bkj", prior_t.V_S.T, R0, prior_t.V_T)

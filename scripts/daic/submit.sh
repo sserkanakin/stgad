@@ -43,10 +43,14 @@ case "$STAGE" in
     SEED="${3:?seed}"; SBATCH=submit_train_diffusion.sbatch
     RUN_NAME="diffusion_${DATASET}_${PRIOR:-kronecker}_seed${SEED}"
     QOS="${DAIC_QOS_MEDIUM}"; shift 3 ;;
+  traineval)
+    SEED="${3:?seed}"; SBATCH=submit_train_eval_diffusion.sbatch
+    RUN_NAME="traineval_${BACKBONE:-gwn}_${DATASET}_${PRIOR:-kronecker}_seed${SEED}"
+    QOS="${DAIC_QOS_MEDIUM}"; shift 3 ;;
   eval)
     SEED="${3:?seed}"; SBATCH=submit_eval.sbatch
     RUN_NAME="eval_${DATASET}_${PRIOR:-kronecker}_seed${SEED}"; shift 3 ;;
-  *) echo "stage must be: smoke | backbone | residuals | diffusion | eval" >&2; exit 2 ;;
+  *) echo "stage must be: smoke | backbone | residuals | diffusion | traineval | eval" >&2; exit 2 ;;
 esac
 
 # everything namespaces under the experiment tag EXP so a fresh launch is fully
@@ -59,9 +63,11 @@ mkdir -p "${LOGDIR}"
 
 EXPORTS="ALL,DATASET=${DATASET},EXP=${EXP}"
 [ "${STAGE}" != "smoke" ] && EXPORTS="${EXPORTS},SEED=${SEED}"
-[ -n "${EPOCHS:-}" ]   && EXPORTS="${EXPORTS},EPOCHS=${EPOCHS}"
-[ -n "${PRIOR:-}" ]    && EXPORTS="${EXPORTS},PRIOR=${PRIOR}"
-[ -n "${BACKBONE:-}" ] && EXPORTS="${EXPORTS},BACKBONE=${BACKBONE}"
+[ -n "${EPOCHS:-}" ]     && EXPORTS="${EXPORTS},EPOCHS=${EPOCHS}"
+[ -n "${PRIOR:-}" ]      && EXPORTS="${EXPORTS},PRIOR=${PRIOR}"
+[ -n "${BACKBONE:-}" ]   && EXPORTS="${EXPORTS},BACKBONE=${BACKBONE}"
+[ -n "${EVAL_STEPS:-}" ] && EXPORTS="${EXPORTS},EVAL_STEPS=${EVAL_STEPS}"
+[ -n "${LR:-}" ]         && EXPORTS="${EXPORTS},LR=${LR}"
 
 # per-cluster slurm resources. partition always; qos only if the cluster has
 # one; gres = any gpu by default (pass --gres after the args to pin a type).

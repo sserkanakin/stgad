@@ -23,10 +23,10 @@ from .forward_fcps import TorchPriorTensors
 
 
 def _per_mode_sigma2(c_bar: torch.Tensor, prior_t: TorchPriorTensors) -> torch.Tensor:
-    """per-mode forward noise variance σ²(c̄) = (1 - e^{-2c̄θ})/θ. c_bar (B,) -> (B, N, H)."""
+    """per-mode forward noise variance σ²(c̄) = σ²·(1 - e^{-2c̄θ})/θ. c_bar (B,) -> (B, N, H)."""
     cb = c_bar.view(-1, 1, 1)
     theta = prior_t.theta.unsqueeze(0)
-    return (1.0 - torch.exp(-2.0 * theta * cb)) / theta
+    return prior_t.sigma2_scale * (1.0 - torch.exp(-2.0 * theta * cb)) / theta
 
 
 def masked_mse(R0_hat: torch.Tensor, R0: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
@@ -66,6 +66,29 @@ def mahalanobis_mse(
     C = torch.einsum("ki,bih,hj->bkj", prior_t.V_S.T, err, prior_t.V_T)   # to eigenbasis
     sigma2 = _per_mode_sigma2(c_bar, prior_t).clamp(min=1e-12)
     return (C.pow(2) / sigma2).mean()
+
+
+def gad_snr_weighted_mse(
+    R0_hat: torch.Tensor, R0: torch.Tensor, mask: torch.Tensor,
+    c_t: torch.Tensor, sigma: float = 1.0,
+) -> torch.Tensor:
+    """GAD's exact training loss (exp_gasde.py): masked mse weighted per sample by
+    w = 1/(1 + 2σ²·c(t)), where c(t) is the schedule RATE at the sampled noise level
+    (not the cumulative c̄). σ=1 in GAD. add the TV term separately if enabled."""
+    w = (1.0 / (1.0 + 2.0 * (sigma ** 2) * c_t)).view(-1, 1, 1)     # (B,1,1)
+    m = mask.float()
+    return ((R0_hat - R0).pow(2) * m * w).sum() / ((m * w).sum() + 1e-8)
+
+
+def graph_tv(R0_hat: torch.Tensor, A: torch.Tensor) -> torch.Tensor:
+    """graph total-variation penalty on the prediction (GAD's tv_pred): mean over
+    edges of A_ij·(x_i - x_j)². A is (N, N); R0_hat is (B, N, H). NOTE: GAD applies
+    this to smooth signals; residuals are rough, so this can be misspecified — off
+    by default (tv_weight=0). enable to match GAD's 5e-3·tv_pred."""
+    # x: (B, N, H) -> pairwise node diffs weighted by A, averaged over edges/batch/horizon
+    diff = R0_hat.unsqueeze(2) - R0_hat.unsqueeze(1)               # (B, N, N, H)
+    w = A.unsqueeze(0).unsqueeze(-1)                                # (1, N, N, 1)
+    return (w * diff.pow(2)).sum() / (A.sum() * R0_hat.shape[0] * R0_hat.shape[2] + 1e-8)
 
 
 def compute_loss(

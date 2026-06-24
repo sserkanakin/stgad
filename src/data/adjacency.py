@@ -9,13 +9,14 @@ import numpy as np
 
 from src.utils import paths
 
-# reconnect isolated sensors (degree 0 in the thresholded road graph) so every
-# dataset is a SINGLE connected component — the spatio-temporal heat-equation
-# prior needs one connected graph, not per-component blocks. we have no raw
-# sensor distances (only the thresholded DCRNN adj), so each isolated sensor is
-# linked to its most-correlated neighbour by the train-period signal. set False
-# to get the bare road graph (with isolated singletons) back.
-REPAIR_ISOLATED = True
+# graph surgery is OFF: the structured prior Σ_S = (L + γI)^{-1} uses a fixed
+# γ = 0.8 (GAD), and that shift lifts every Laplacian zero mode — so isolated
+# sensors AND multi-node disconnected components (e.g. pems04's 12 clusters) all
+# get a finite, well-conditioned prior with NO invented edges. this matches how
+# GAD/Vimal handle connectivity (rely on the γ shift, not reconnection). the old
+# repair only reattached degree-0 singletons anyway (a no-op on pems04, which has
+# none). set True to restore the correlation-based reconnection of singletons.
+REPAIR_ISOLATED = False
 _ADJ_CACHE: dict = {}
 
 _NUM_NODES = {

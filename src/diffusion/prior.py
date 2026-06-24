@@ -198,8 +198,9 @@ def load_prior(
         raise ValueError(f"unknown prior {prior!r}; use 'kronecker' or 'isotropic'")
     if spatial not in ("structured", "flat"):
         raise ValueError(f"unknown spatial {spatial!r}; use 'structured' or 'flat'")
-    if dataset not in GAMMA_LOCKED:
-        raise KeyError(f"no locked γ for dataset {dataset!r}; valid: {sorted(GAMMA_LOCKED)}")
+    if gamma is None and spatial == "structured" and dataset not in GAMMA_LOCKED:
+        raise KeyError(f"no locked γ for dataset {dataset!r}; pass gamma= explicitly "
+                       f"or use one of {sorted(GAMMA_LOCKED)}")
 
     R, mask = _load_residuals_train(dataset, seed, backbone)
     _, N, H = R.shape
@@ -242,3 +243,49 @@ def load_prior(
         delta_h=delta_h,
         R_H=R_H,
     )
+
+
+def build_prior_from_R(
+    dataset: str,
+    R_raw: np.ndarray,
+    mask: np.ndarray,
+    spatial: str = "structured",
+    gamma: float = 0.8,
+    stiffness_cap: float | None = None,
+) -> tuple["KroneckerPrior", float]:
+    """Build a prior directly from a RAW residual field (B,N,H) + mask, in unit-variance
+    space. Used by the Tier-3/4 analysis so it works for ANY rung (incl. the climatology
+    'signal') and ANY of the 6 datasets with an explicit γ (e.g. GAD's 0.8).
+
+    spatial: 'structured' Σ_S=(L+γI)^-1 · 'flat' Σ_S=I · 'iso' white Σ=σ²I.
+    Returns (prior, sigma_r) where sigma_r is the masked train residual std used to
+    normalise into unit space.
+    """
+    sigma_r = float(R_raw[mask].std())
+    R = R_raw.astype(np.float64) / sigma_r
+    _, N, H = R.shape
+
+    if spatial == "iso":
+        sigma2 = float(R[mask].var())
+        return KroneckerPrior(
+            dataset=dataset, gamma=0.0, V_S=np.eye(N), lam_S=np.zeros(N),
+            V_T=np.eye(H), mu_T=np.full(H, sigma2), theta=np.full((N, H), 1.0 / sigma2),
+            delta_h=np.full(H, sigma2), R_H=np.eye(H),
+        ), sigma_r
+
+    delta_h, R_H, Sigma_T = _fit_sigma_T(R, mask)
+    mu_T, V_T = np.linalg.eigh(Sigma_T)
+    mu_T = np.clip(mu_T, a_min=1e-12, a_max=None)
+    mu_T = np.maximum(mu_T, mu_T.max() / KAPPA_CAP)
+
+    if spatial == "flat":
+        gamma, V_S, lam_S, q_S = 0.0, np.eye(N), np.zeros(N), np.ones(N)
+    else:
+        lam_S, V_S = _load_laplacian_eig(dataset)
+        q_S = lam_S + gamma
+    tau2 = N / (1.0 / q_S).sum()
+    theta = q_S[:, None] / (tau2 * mu_T[None, :])
+    if stiffness_cap is not None:
+        theta = np.maximum(theta, theta.max() / stiffness_cap)
+    return KroneckerPrior(dataset=dataset, gamma=gamma, V_S=V_S, lam_S=lam_S,
+                          V_T=V_T, mu_T=mu_T, theta=theta, delta_h=delta_h, R_H=R_H), sigma_r

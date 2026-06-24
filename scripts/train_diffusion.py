@@ -706,8 +706,9 @@ def main() -> None:
         row = {"epoch": epoch, "train_loss": train_loss, "val_loss": val_loss,
                "val_crps": vcrps, "val_mae": vmae, "lr": lr_now, "time": elapsed}
         if diag is not None:
-            row.update({"recon_mae": diag["recon_mae"], "w1": diag["w1"],
-                        "mahalanobis": diag["mahalanobis"]})
+            row.update({"recon_mae": diag["recon_mae"], "recon_mse": diag["recon_mse"],
+                        "recon_rmse": diag["recon_mse"] ** 0.5,
+                        "w1": diag["w1"], "mahalanobis": diag["mahalanobis"]})
         history.append(row)
         hist_path.write_text(json.dumps(
             {"select_metric": "crps", "best_epoch": best_epoch, "history": history}, indent=2))

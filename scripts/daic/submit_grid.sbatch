@@ -21,6 +21,7 @@ source "${PROJECT_DIR}/scripts/daic/_common.sh"
 : "${EXP:?Set EXP via --export}"
 : "${SEED:?Set SEED via --export}"
 EVAL_STEPS="${EVAL_STEPS:-100,50,25}"
+EPOCHS="${EPOCHS:-200}"            # max epochs (early-stops on val-CRPS plateau, patience 15)
 
 # pick this task's row (1-indexed line = task id + 1).
 ROW="$(sed -n "$((SLURM_ARRAY_TASK_ID + 1))p" "${GRID_FILE}")"
@@ -33,7 +34,7 @@ scontrol update job="${SLURM_JOB_ID}" JobName="${RUN_NAME}" 2>/dev/null || true
 echo "===== array task ${SLURM_ARRAY_TASK_ID}: ${DATASET} / ${BACKBONE} / ${PRIOR} (EXP=${EXP}) ====="
 
 log_run_header "${DAIC_PYTHON} scripts/train_diffusion.py --dataset ${DATASET} --backbone ${BACKBONE} \
---prior ${PRIOR} --exp ${EXP} --seed ${SEED} --eval-after --eval-steps ${EVAL_STEPS}"
+--prior ${PRIOR} --exp ${EXP} --seed ${SEED} --epochs ${EPOCHS} --eval-after --eval-steps ${EVAL_STEPS}"
 
 # shellcheck disable=SC2086
 srun --unbuffered --export=ALL "${DAIC_PYTHON}" -u scripts/train_diffusion.py \
@@ -42,5 +43,6 @@ srun --unbuffered --export=ALL "${DAIC_PYTHON}" -u scripts/train_diffusion.py \
     --prior "${PRIOR}" \
     --exp "${EXP}" \
     --seed "${SEED}" \
+    --epochs "${EPOCHS}" \
     --eval-after \
     --eval-steps "${EVAL_STEPS}"

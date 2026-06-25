@@ -23,6 +23,14 @@ source "${PROJECT_DIR}/scripts/daic/_common.sh"
 EVAL_STEPS="${EVAL_STEPS:-100,50,25}"
 EPOCHS="${EPOCHS:-200}"            # max epochs (early-stops on val-CRPS plateau, patience 15)
 
+# keep wandb's local staging cache off the (quota'd) linuxhome too — park it next to
+# the outputs under RESULTS_ROOT. paths.py already routes checkpoints/eval there.
+if [ -n "${RESULTS_ROOT:-}" ]; then
+  export WANDB_DIR="${RESULTS_ROOT}/wandb"
+  export WANDB_CACHE_DIR="${RESULTS_ROOT}/wandb/cache"
+  mkdir -p "${WANDB_DIR}" "${WANDB_CACHE_DIR}"
+fi
+
 # pick this task's row (1-indexed line = task id + 1).
 ROW="$(sed -n "$((SLURM_ARRAY_TASK_ID + 1))p" "${GRID_FILE}")"
 read -r IDX DATASET BACKBONE PRIOR <<< "${ROW}"

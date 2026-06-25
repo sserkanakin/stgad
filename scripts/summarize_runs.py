@@ -55,7 +55,7 @@ def main() -> None:
     p.add_argument("--out-md", default=None)
     args = p.parse_args()
 
-    root = paths.RESULTS / "eval" / args.exp
+    root = paths.OUTPUTS / "eval" / args.exp
     if not root.exists():
         raise SystemExit(f"no eval results under {root}")
     rows = _rows(root)

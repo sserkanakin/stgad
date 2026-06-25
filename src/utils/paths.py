@@ -1,11 +1,18 @@
 # all file and folder locations for the project live here.
 # import these helpers instead of hardcoding paths, so the layout is
 # defined in one place and easy to change.
+import os
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-DATA = ROOT / "data"
-RESULTS = ROOT / "results"
+
+# data + results roots are env-overridable so DAIC runs read/write from the large
+# /tudelft.net data share (DAIC_DATA_DIR) instead of the tiny 8 GB home shares. set
+# DATA_ROOT (raw/processed) and RESULTS_ROOT (residuals/backbone/diffusion/eval) to
+# that share; both default to the repo's data/ and results/ for local dev.
+DATA = Path(os.environ["DATA_ROOT"]) if os.environ.get("DATA_ROOT") else ROOT / "data"
+RESULTS = Path(os.environ["RESULTS_ROOT"]) if os.environ.get("RESULTS_ROOT") else ROOT / "results"
+OUTPUTS = RESULTS     # writes (diffusion/eval) go to the same root as the reads
 
 # six variants; raw is grouped by SOURCE (the F/S variants share one raw set).
 _VARIANT_SOURCE = {
@@ -85,14 +92,15 @@ def residual_npz(dataset, split, seed, backbone="gwn"):
 
 
 def diffusion_dir(dataset, prior, seed, exp=None, backbone="gwn"):
-    # exp namespaces a whole experiment run (results/diffusion/<exp>/...), so a
+    # exp namespaces a whole experiment run (<OUTPUTS>/diffusion/<exp>/...), so a
     # fresh launch is fully separate and a re-run never clobbers an old one.
-    base = RESULTS / "diffusion" / exp if exp else RESULTS / "diffusion"
+    # OUTPUTS (writes) may differ from RESULTS (reads) — see RESULTS_ROOT above.
+    base = OUTPUTS / "diffusion" / exp if exp else OUTPUTS / "diffusion"
     return base / dataset / backbone / prior / f"seed{seed}"
 
 
 def eval_dir(dataset, prior, seed, exp=None, backbone="gwn"):
-    base = RESULTS / "eval" / exp if exp else RESULTS / "eval"
+    base = OUTPUTS / "eval" / exp if exp else OUTPUTS / "eval"
     return base / dataset / backbone / prior / f"seed{seed}"
 
 

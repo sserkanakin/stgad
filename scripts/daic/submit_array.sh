@@ -9,6 +9,8 @@
 #
 #   EXP=20260624 scripts/daic/submit_array.sh 42
 #   EXP=20260624 THROTTLE=8 BACKBONES="gwn raw" scripts/daic/submit_array.sh 42
+#   # anything after the seed is passed straight to sbatch (e.g. a dependency):
+#   EXP=... DATASETS="pems04f pems04s pems08s" scripts/daic/submit_array.sh 42 --dependency=afterany:12345
 #
 # backbone residuals (gwn/gcn/mlp) and the raw signal cache must already exist for the
 # (dataset, seed).
@@ -18,14 +20,18 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=/dev/null
 source "${HERE}/env.sh"
 
-SEED="${1:?usage: submit_array.sh <seed>}"
+SEED="${1:?usage: submit_array.sh <seed> [extra sbatch args]}"
+shift                                              # remaining args pass through to sbatch
 export EXP="${EXP:-dev}"
 # dataset-major × method order. raw = pure-signal arm (history-conditioned).
 DATASETS="${DATASETS:-metrla pemsbay pems08f pems04f pems04s pems08s}"
 BACKBONES="${BACKBONES:-gwn gcn mlp raw}"
 PRIORS="${PRIORS:-kronecker isotropic}"
 THROTTLE="${THROTTLE:-8}"
-EVAL_STEPS="${EVAL_STEPS:-100,50,25}"
+# single EM reverse step count (GAD). the eval auto-floors it up per prior stiffness
+# (θ_max·S: gwn ~280, raw ~1200), so passing several sub-floor values just repeats the
+# same eval — use ONE value ≥ the floor.
+EVAL_STEPS="${EVAL_STEPS:-1000}"
 # INPUTS (residuals/processed) read from the data share (DAIC_DATA_DIR, where sync put
 # them); OUTPUTS (checkpoints/eval/logs/wandb) written to windowshome in one clean tree.
 # override OUTPUT_ROOT to write elsewhere. ARRAY_SPEC: re-run only specific failed cells.
@@ -77,7 +83,7 @@ sbatch --array="${ARRAY}" \
        --export="${EXPORTS}" \
        --output="${GRID_DIR}/%A_%a.out" \
        --error="${GRID_DIR}/%A_%a.err" \
-       "${RES[@]}" "${HERE}/submit_grid.sbatch"
+       "${RES[@]}" "$@" "${HERE}/submit_grid.sbatch"
 set +x
 
 echo

@@ -20,8 +20,8 @@ source "${PROJECT_DIR}/scripts/daic/_common.sh"
 : "${GRID_FILE:?Set GRID_FILE via --export (the dataset-major combo list)}"
 : "${EXP:?Set EXP via --export}"
 : "${SEED:?Set SEED via --export}"
-EVAL_STEPS="${EVAL_STEPS:-100,50,25}"
-EPOCHS="${EPOCHS:-200}"            # max epochs (early-stops on val-CRPS plateau, patience 15)
+EVAL_STEPS="${EVAL_STEPS:-1000}"  # single EM step count (auto-floored per prior stiffness)
+EPOCHS="${EPOCHS:-200}"           # max epochs (early-stops on val-CRPS plateau, patience 15)
 
 # keep wandb's local staging cache off the (quota'd) linuxhome too — park it under
 # OUTPUT_ROOT (windowshome) next to the checkpoints/eval/logs.

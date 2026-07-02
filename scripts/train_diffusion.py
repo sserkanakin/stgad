@@ -302,8 +302,9 @@ def _run_test_eval(args, device, best_epoch, run_id, logline) -> None:
     for ns in steps_list:
         res = evaluate(args.dataset, args.prior, args.seed, exp=args.exp, device=device,
                        k=args.eval_k, n_steps=ns, alpha=0.1,
-                       w1_windows=512, w1_samples=4, w1_proj=128, gen_batch=1024,
-                       max_windows=0, generator=gen, backbone=args.backbone, mask_zero=True)
+                       w1_windows=512, w1_samples=4, w1_proj=128, gen_batch=args.eval_gen_batch,
+                       max_windows=args.eval_max_windows, generator=gen,
+                       backbone=args.backbone, mask_zero=True)
         results.append(res)
         logline(f"  [test n_steps={ns}] MAE={res['mae']:.4f} RMSE={res['rmse']:.4f} "
                 f"MAPE={res['mape']:.4f} CRPS={res['crps']:.4f} "
@@ -410,6 +411,11 @@ def main() -> None:
     p.add_argument("--eval-k", type=int, default=30, help="test samples/window")
     p.add_argument("--eval-steps", default="1000",
                    help="comma-separated EM reverse steps for the locked test (GAD uses ~5000)")
+    p.add_argument("--eval-max-windows", type=int, default=0,
+                   help="cap test windows in the --eval-after path (0=all; a smoke sets this small)")
+    p.add_argument("--eval-gen-batch", type=int, default=1024,
+                   help="max trajectories per EM reverse call in the test eval; raise on a big "
+                        "GPU (e.g. 4096 on an A40) to maximise utilisation")
     # ── learning-rate range test (Smith): sweep lr exponentially over a few
     # hundred steps to locate the good lr band, then exit (no full training).
     p.add_argument("--lr-find", type=int, default=0,
@@ -448,6 +454,7 @@ def main() -> None:
         args.val_proj = 16
         args.eval_k = 4
         args.eval_steps = "200"
+        args.eval_max_windows = 64        # cap the combined-job test eval so the smoke stays fast
         os.environ.setdefault("WANDB_MODE", "disabled")
 
     cfg = vars(args).copy()

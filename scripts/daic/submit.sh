@@ -56,10 +56,14 @@ esac
 # everything namespaces under the experiment tag EXP so a fresh launch is fully
 # separate in logs (and wandb/results, via the python --exp). default 'dev'.
 EXP="${EXP:-dev}"
-LOGDIR="logs/${EXP}/${STAGE}/${RUN_NAME}"
-# per-run log subdir so resubmits of the same run group together. slurm opens the
-# --output file before the job body, so the dir must exist now.
+# one flat dir per (exp, stage); the slurm file is named by the RUN itself + job id,
+# so `ls logs/<exp>/<stage>/` shows one line per run (Vimal-style, easy to scan).
+# resubmits of the same run share the <run>_ prefix. slurm opens --output before the
+# job body and won't create parents, so mkdir now.
+LOGDIR="logs/${EXP}/${STAGE}"
 mkdir -p "${LOGDIR}"
+SLURM_OUT="${LOGDIR}/${RUN_NAME}_%j.out"
+SLURM_ERR="${LOGDIR}/${RUN_NAME}_%j.err"
 
 EXPORTS="ALL,DATASET=${DATASET},EXP=${EXP}"
 [ "${STAGE}" != "smoke" ] && EXPORTS="${EXPORTS},SEED=${SEED}"
@@ -78,8 +82,25 @@ RES=(--partition="${DAIC_PARTITION}" --gres="${DAIC_GRES_GPU}")
 # blackwell sm_120 crashes our py-torch). DAIC_GPU_EXCLUDE is set in clusters.sh.
 [ -n "${DAIC_GPU_EXCLUDE:-}" ] && RES+=(--exclude="${DAIC_GPU_EXCLUDE}")
 
+# where to find everything for this run (printed before submit so it's easy to follow).
+RESULTS_HINT=""
+case "${STAGE}" in
+  diffusion|traineval)
+    RUNDIR="results/diffusion/${EXP}/${DATASET}/${BACKBONE:-gwn}/${PRIOR:-kronecker}/seed${SEED}"
+    EVALDIR="results/eval/${EXP}/${DATASET}/${BACKBONE:-gwn}/${PRIOR:-kronecker}/seed${SEED}"
+    RESULTS_HINT="run dir:   ${RUNDIR}/   (train.log · history.csv · config.json · best.pt · last.pt)
+eval dir:  ${EVALDIR}/   (test_results.json · summary.txt)" ;;
+  eval)
+    EVALDIR="results/eval/${EXP}/${DATASET}/${BACKBONE:-gwn}/${PRIOR:-kronecker}/seed${SEED}"
+    RESULTS_HINT="eval dir:  ${EVALDIR}/   (test_metrics.json)" ;;
+esac
+echo "─── submitting ${RUN_NAME} ───────────────────────────────────────"
+echo "slurm log: ${LOGDIR}/${RUN_NAME}_<jobid>.{out,err}"
+[ -n "${RESULTS_HINT}" ] && echo "${RESULTS_HINT}"
+echo "──────────────────────────────────────────────────────────────────"
+
 set -x
 sbatch --job-name="${RUN_NAME}" --export="${EXPORTS}" \
-       --output="${LOGDIR}/%j.out" \
-       --error="${LOGDIR}/%j.err" \
+       --output="${SLURM_OUT}" \
+       --error="${SLURM_ERR}" \
        "${RES[@]}" "$@" "scripts/daic/${SBATCH}"

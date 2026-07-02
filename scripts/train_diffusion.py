@@ -421,9 +421,10 @@ def main() -> None:
                    help="comma-separated EM reverse steps for the locked test (GAD uses ~5000)")
     p.add_argument("--eval-max-windows", type=int, default=0,
                    help="cap test windows in the --eval-after path (0=all; bound the EM eval cost)")
-    p.add_argument("--eval-gen-batch", type=int, default=4096,
-                   help="max trajectories per EM reverse call in the test eval; big batches "
-                        "amortise the per-step overhead of the 1000+ step EM reverse (fill the GPU)")
+    p.add_argument("--eval-gen-batch", type=int, default=1024,
+                   help="max trajectories per EM reverse call in the test eval. 1024 fits the "
+                        "A40/L40 (46GB) across datasets; 4096 OOMs (the UGnet spatial conv spikes). "
+                        "raise cautiously and watch memory")
     # ── learning-rate range test (Smith): sweep lr exponentially over a few
     # hundred steps to locate the good lr band, then exit (no full training).
     p.add_argument("--lr-find", type=int, default=0,

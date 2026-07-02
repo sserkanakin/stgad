@@ -80,6 +80,11 @@ export PIP_CACHE_DIR="${DAIC_DATA_DIR}/.cache/pip"
 # real time instead of waiting for the 4 KB block buffer to fill.
 export PYTHONUNBUFFERED=1
 
+# reduce CUDA fragmentation for the big eval generation batches. must be set BEFORE
+# torch initialises cuda (a later os.environ.setdefault in python is too late), so
+# export it here in the job env for every stage.
+export PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True"
+
 cd "${PROJECT_DIR}"
 
 # symlink the big artefact dirs to the data dir. (re)point a link whenever it's a

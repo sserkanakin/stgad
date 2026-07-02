@@ -32,7 +32,10 @@ _migrate() {
     echo "  linked   ${link} -> ${target}"
   elif [ -d "${link}" ]; then
     echo "  migrating ${link} -> ${target} (moving existing content off linuxhome) ..."
-    rsync -a "${link}/" "${target}/"
+    # windowshome is a windows/CIFS share: it can't set posix perms/owner/times and
+    # rejects rsync's temp-file+rename, so skip all of that and write in place.
+    rsync -rl --inplace --no-perms --no-owner --no-group --no-times --omit-dir-times \
+      "${link}/" "${target}/"
     rm -rf "${link}"
     ln -sfn "${target}" "${link}"
     echo "  migrated ${link} -> ${target}"

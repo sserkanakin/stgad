@@ -22,6 +22,9 @@ source "${PROJECT_DIR}/scripts/daic/_common.sh"
 : "${SEED:?Set SEED via --export}"
 EVAL_STEPS="${EVAL_STEPS:-1000}"  # single EM step count (auto-floored per prior stiffness)
 EPOCHS="${EPOCHS:-200}"           # max epochs (early-stops on val-CRPS plateau, patience 15)
+# bound the (expensive) EM test eval to a fixed window subset so each cell fits the
+# walltime; 0 = full test. re-run best.pt on the full test later for headline numbers.
+TEST_MAX_WINDOWS="${TEST_MAX_WINDOWS:-512}"
 
 # keep wandb's local staging cache off the (quota'd) linuxhome too — park it under
 # OUTPUT_ROOT (windowshome) next to the checkpoints/eval/logs.
@@ -42,7 +45,8 @@ scontrol update job="${SLURM_JOB_ID}" JobName="${RUN_NAME}" 2>/dev/null || true
 echo "===== array task ${SLURM_ARRAY_TASK_ID}: ${DATASET} / ${BACKBONE} / ${PRIOR} (EXP=${EXP}) ====="
 
 log_run_header "${DAIC_PYTHON} scripts/train_diffusion.py --dataset ${DATASET} --backbone ${BACKBONE} \
---prior ${PRIOR} --exp ${EXP} --seed ${SEED} --epochs ${EPOCHS} --eval-after --eval-steps ${EVAL_STEPS}"
+--prior ${PRIOR} --exp ${EXP} --seed ${SEED} --epochs ${EPOCHS} --eval-after --eval-steps ${EVAL_STEPS} \
+--eval-max-windows ${TEST_MAX_WINDOWS}"
 
 # shellcheck disable=SC2086
 srun --unbuffered --export=ALL "${DAIC_PYTHON}" -u scripts/train_diffusion.py \
@@ -53,4 +57,5 @@ srun --unbuffered --export=ALL "${DAIC_PYTHON}" -u scripts/train_diffusion.py \
     --seed "${SEED}" \
     --epochs "${EPOCHS}" \
     --eval-after \
-    --eval-steps "${EVAL_STEPS}"
+    --eval-steps "${EVAL_STEPS}" \
+    --eval-max-windows "${TEST_MAX_WINDOWS}"

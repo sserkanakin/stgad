@@ -253,8 +253,9 @@ def periodic_val_eval(
         crps_n += empirical_crps(samp, R0[s:e]).sum(dim=(0, 1)).cpu()   # per-horizon energy CRPS
         if gen_first is None:                                # keep first chunk for W1/energy
             gen_first, truth_first = samp, R0[s:e]
-    cnt = float(W * N)
-    mae_h = (mae_n / cnt); mse_h = (mse_n / cnt); crps_h = (crps_n / cnt)
+    cnt_h = float(W * N)            # per-horizon denominator (mae_n[h] is summed over B,N)
+    cnt_all = cnt_h * H            # overall denominator (mae_n.sum() is summed over B,N,H)
+    mae_h = (mae_n / cnt_h); mse_h = (mse_n / cnt_h); crps_h = (crps_n / cnt_h)
 
     # distributional comparison on the first chunk (per horizon, node space)
     w1_h, ed_h = [], []
@@ -265,8 +266,8 @@ def periodic_val_eval(
 
     denoiser.train()
     return {
-        "mae": float(mae_n.sum() / cnt), "rmse": float((mse_n.sum() / cnt) ** 0.5),
-        "crps": float(crps_n.sum() / cnt), "mae_h": mae_h.tolist(),
+        "mae": float(mae_n.sum() / cnt_all), "rmse": float((mse_n.sum() / cnt_all) ** 0.5),
+        "crps": float(crps_n.sum() / cnt_all), "mae_h": mae_h.tolist(),
         "w1": float(sum(w1_h) / H), "energy": float(sum(ed_h) / H),
         "w1_h": w1_h, "energy_h": ed_h, "n_windows": W,
     }
@@ -415,14 +416,14 @@ def main() -> None:
     p.add_argument("--eval-after", action="store_true",
                    help="after training, load best.pt and run the test eval in-process, "
                         "writing test_results.json (combined train+eval job)")
-    p.add_argument("--eval-k", type=int, default=30, help="test samples/window")
+    p.add_argument("--eval-k", type=int, default=10, help="test samples/window (EM is costly; Vimal uses 8)")
     p.add_argument("--eval-steps", default="1000",
                    help="comma-separated EM reverse steps for the locked test (GAD uses ~5000)")
     p.add_argument("--eval-max-windows", type=int, default=0,
-                   help="cap test windows in the --eval-after path (0=all; a smoke sets this small)")
-    p.add_argument("--eval-gen-batch", type=int, default=1024,
-                   help="max trajectories per EM reverse call in the test eval; raise on a big "
-                        "GPU (e.g. 4096 on an A40) to maximise utilisation")
+                   help="cap test windows in the --eval-after path (0=all; bound the EM eval cost)")
+    p.add_argument("--eval-gen-batch", type=int, default=4096,
+                   help="max trajectories per EM reverse call in the test eval; big batches "
+                        "amortise the per-step overhead of the 1000+ step EM reverse (fill the GPU)")
     # ── learning-rate range test (Smith): sweep lr exponentially over a few
     # hundred steps to locate the good lr band, then exit (no full training).
     p.add_argument("--lr-find", type=int, default=0,
@@ -431,16 +432,17 @@ def main() -> None:
     p.add_argument("--lr-find-max", type=float, default=1.0)
     # ── periodic full EM reverse eval (Vimal protocol): every --val-every epochs,
     #    sample k trajectories FROM THE PRIOR, compare to val truth (MAE/RMSE/CRPS +
-    #    Wasserstein), and select best.pt by CRPS.
-    p.add_argument("--val-every", type=int, default=5,
+    #    Wasserstein), and select best.pt by CRPS. kept LEAN because the EM reverse is
+    #    ~1000+ steps (stiff prior) — a big windows×k here dominates training wall-time.
+    p.add_argument("--val-every", type=int, default=10,
                    help="run the full EM reverse val eval every N epochs (0 disables selection)")
-    p.add_argument("--val-k", type=int, default=4,
-                   help="samples/window for the periodic val eval (Vimal test uses 8; val cheaper)")
+    p.add_argument("--val-k", type=int, default=2,
+                   help="samples/window for the periodic val eval (kept small — EM is costly)")
     p.add_argument("--val-steps", type=int, default=200,
-                   help="EM reverse steps for the val eval (EM is unstable below ~200)")
-    p.add_argument("--val-windows", type=int, default=512,
-                   help="number of fully-observed val windows used by the eval")
-    p.add_argument("--val-proj", type=int, default=128,
+                   help="EM reverse steps for the val eval (auto-floored per prior stiffness)")
+    p.add_argument("--val-windows", type=int, default=48,
+                   help="fully-observed val windows for the eval (small — cost = windows·k·steps)")
+    p.add_argument("--val-proj", type=int, default=64,
                    help="random projections for the sliced wasserstein-1")
     p.add_argument("--smoke", action="store_true", help="1 epoch, tiny batch, wandb disabled")
     p.add_argument("--fresh", action="store_true", help="delete existing checkpoint dir + restart")

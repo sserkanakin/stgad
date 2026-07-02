@@ -32,6 +32,7 @@ THROTTLE="${THROTTLE:-8}"
 # (θ_max·S: gwn ~280, raw ~1200), so passing several sub-floor values just repeats the
 # same eval — use ONE value ≥ the floor.
 EVAL_STEPS="${EVAL_STEPS:-1000}"
+TEST_MAX_WINDOWS="${TEST_MAX_WINDOWS:-512}"        # cap the EM test eval per cell (0 = full test)
 # INPUTS (residuals/processed) read from the data share (DAIC_DATA_DIR, where sync put
 # them); OUTPUTS (checkpoints/eval/logs/wandb) written to windowshome in one clean tree.
 # override OUTPUT_ROOT to write elsewhere. ARRAY_SPEC: re-run only specific failed cells.
@@ -76,6 +77,7 @@ RES=(--partition="${DAIC_PARTITION}" --gres="${DAIC_GRES_GPU}")
 
 ARRAY="${ARRAY_SPEC:-0-$((N - 1))%${THROTTLE}}"     # full grid, or a failed-index subset
 EXPORTS="ALL,EXP=${EXP},SEED=${SEED},GRID_FILE=${GRID_FILE},EVAL_STEPS=${EVAL_STEPS}"
+EXPORTS="${EXPORTS},TEST_MAX_WINDOWS=${TEST_MAX_WINDOWS}"
 EXPORTS="${EXPORTS},DATA_ROOT=${DATA_ROOT},RESULTS_ROOT=${RESULTS_ROOT},OUTPUT_ROOT=${OUTPUT_ROOT}"
 
 set -x

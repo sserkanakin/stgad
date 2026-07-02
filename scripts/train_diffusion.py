@@ -283,12 +283,12 @@ def _log_val(epoch: int, res: dict, *, to_wandb: bool) -> None:
     if not to_wandb:
         return
     import wandb
-    log = {"val/mae": res["mae"], "val/rmse": res["rmse"], "val/crps": res["crps"],
-           "val/w1": res["w1"], "val/energy": res["energy"], "epoch": epoch}
+    wb = {"val/mae": res["mae"], "val/rmse": res["rmse"], "val/crps": res["crps"],
+          "val/w1": res["w1"], "val/energy": res["energy"], "epoch": epoch}
     for h in hz:
-        log[f"val/mae_h{h}"] = res["mae_h"][h - 1]
-        log[f"val/w1_h{h}"] = res["w1_h"][h - 1]
-    wandb.log(log)
+        wb[f"val/mae_h{h}"] = res["mae_h"][h - 1]
+        wb[f"val/w1_h{h}"] = res["w1_h"][h - 1]
+    wandb.log(wb)
 
 
 def _run_test_eval(args, device, best_epoch, run_id) -> None:

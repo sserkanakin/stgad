@@ -6,13 +6,15 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 
-# data + results roots are env-overridable so DAIC runs read/write from the large
-# /tudelft.net data share (DAIC_DATA_DIR) instead of the tiny 8 GB home shares. set
-# DATA_ROOT (raw/processed) and RESULTS_ROOT (residuals/backbone/diffusion/eval) to
-# that share; both default to the repo's data/ and results/ for local dev.
+# three env-overridable roots so DAIC runs are organized and quota-safe:
+#   DATA_ROOT    inputs: data/raw, data/processed          (the data share)
+#   RESULTS_ROOT inputs: residuals, backbone               (the data share, where sync put them)
+#   OUTPUT_ROOT  WRITES: diffusion checkpoints, eval, logs (windowshome — one clean tree)
+# each defaults to the repo (local dev). keeping reads on the data share and writes on
+# windowshome means linuxhome only ever holds code.
 DATA = Path(os.environ["DATA_ROOT"]) if os.environ.get("DATA_ROOT") else ROOT / "data"
 RESULTS = Path(os.environ["RESULTS_ROOT"]) if os.environ.get("RESULTS_ROOT") else ROOT / "results"
-OUTPUTS = RESULTS     # writes (diffusion/eval) go to the same root as the reads
+OUTPUTS = Path(os.environ["OUTPUT_ROOT"]) if os.environ.get("OUTPUT_ROOT") else RESULTS
 
 # six variants; raw is grouped by SOURCE (the F/S variants share one raw set).
 _VARIANT_SOURCE = {

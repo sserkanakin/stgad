@@ -5,7 +5,7 @@
 # under results/diffusion/<EXP>/... and results/eval/<EXP>/...
 #
 # backbone + residuals must already exist for (dataset, seed) — this launches only the
-# diffusion stage. aggregate afterwards with: python scripts/summarize_runs.py --exp <EXP>
+# diffusion stage.
 #
 #   EXP=20260624 scripts/daic/submit_all.sh 42
 #   EXP=20260624 DATASETS="metrla pems08f" scripts/daic/submit_all.sh 42
@@ -39,4 +39,4 @@ done
 
 echo
 echo "submitted $(echo ${DATASETS} | wc -w | tr -d ' ')×$(echo ${PRIORS} | wc -w | tr -d ' ') combined jobs under EXP=${EXP}."
-echo "watch: squeue --me   |   aggregate: python scripts/summarize_runs.py --exp ${EXP}"
+echo "watch: squeue --me"

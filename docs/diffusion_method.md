@@ -286,7 +286,6 @@ A dedicated RNG (`seed+999`) keeps it comparable across epochs (falls back to CP
 ```
 results/diffusion/<exp>/<ds>/<backbone>/<prior>/seed<s>/   best.pt last.pt config.json train.log validation_history.json
 results/eval/<exp>/<ds>/<backbone>/<prior>/seed<s>/        test_metrics.json  test_results.json
-results/eval/<exp>/summary.csv  summary.md                 (from scripts/summarize_runs.py)
 ```
 `run_id = diff_<backbone>_<ds>_seed<s>_<cfg_hash>`. The 8-char `cfg_hash` excludes
 `{seed, epochs, batch_size, lr, weight_decay, patience, exp, lr_find*}` so the *method* hash is stable.
@@ -388,8 +387,6 @@ datasets × both priors and prints a kron-vs-iso comparison table sorted by metr
   **`validation_history.json`** (epoch-by-epoch `train_loss/val_loss/val_crps/val_mae/lr`, + `best_epoch`).
   `test_results.json` lands under `results/eval/<exp>/<ds>/<bb>/<prior>/seed<s>/`.
 - **`train.log`** line: `epoch | train val | val_CRPS val_MAE | lr | time`, plus `[saved best]` markers.
-- **Leaderboard:** `python scripts/summarize_runs.py --exp <EXP>` → CRPS-sorted `summary.csv`/`.md`
-  + per-dataset kron-vs-iso Δ%.
 - wandb is still logged in parallel. Backbone + residuals shared per `(dataset, seed)`.
 
 ---
@@ -409,7 +406,6 @@ The **math (prior, forward, reverse, loss, denoiser) follows GAD**; the **run ha
 | `test_results.json` | multi `sample_steps` | ✅ multi `--eval-steps` |
 | Test metrics | MAE RMSE MAPE CRPS MIS | ✅ + coverage, W1, energy (superset) |
 | `y==0` masking | yes (PEMS) | ✅ default on (`--no-mask-zero` to disable) |
-| Leaderboard | CRPS-sorted CSV/MD | ✅ `summarize_runs.py` |
 | Two-phase / hybrid loss | MAS + author-eps blend, warm-start | ✗ **not needed** — our GAD x₀ loss is the single principled objective |
 
 **On Vimal's "two phases":** it is *not* pretrain→finetune — it's a hybrid loss

@@ -1,13 +1,9 @@
-"""ddim-style reverse sampler for the gad diffusion sde (forward in forward_fcps).
+"""GAD's Euler–Maruyama reverse SDE sampler (forward in forward_fcps).
 
-at each reverse step t -> t-δ the denoiser predicts R0, and we draw R_{t-δ} from
-p(R_{t-δ} | R_t, R0) in closed form, per eigenmode:
-
-    eps_hat  = (C_t - H_t C0_hat) / sqrt(σ²_t)
-    C_{t-δ}  = H_{t-δ} C0_hat + sqrt(σ²_{t-δ}) eps_hat
-
-with H_t = exp(-c̄(t) θ) and σ²_t = (1 - exp(-2 c̄(t) θ)) / θ. eta in [0, 1] mixes
-in ancestral noise: eta=0 is deterministic ddim, eta=1 is the ddpm noise level.
+this is the ONLY reverse process — the same one GAD uses (exp_gasde_test_only_Em.py:
+sample_reverse_sde_em_in_s). it integrates the reverse-time SDE with EM, adding fresh
+noise at every step, so it IS the stochastic / ancestral (DDPM-equivalent) sampler;
+GAD's GASDE has no separate DDIM or deterministic sampler. see reverse_sample_em.
 """
 from __future__ import annotations
 
@@ -18,12 +14,7 @@ from typing import Callable, Optional
 import numpy as np
 import torch
 
-from .forward_fcps import (
-    FCPSSchedule,
-    c_bar_to_tau,
-    noise_level_bounds,
-    reverse_c_bar_grid,
-)
+from .forward_fcps import FCPSSchedule
 from .prior import KroneckerPrior
 
 
@@ -64,12 +55,24 @@ class ReverseTrace:
     R_hat_0_mean_norm: list[float]
 
 
+def min_em_steps(prior: KroneckerPrior, schedule: FCPSSchedule) -> int:
+    """stability floor on the EM step count for this prior + schedule.
+
+    explicit EM of the linear part dC/dt = -c(t)·θ·C is stable only while c·θ·|dt| ≲ 2.
+    the worst mode is θ_max near t=T (c largest); on the s=c̄ grid |dt|≈(S/n)/c(T), so the
+    condition reduces to θ_max·S / n ≲ 2, i.e. n ≳ θ_max·S. below this EM diverges to NaN
+    (the stiff kronecker/raw priors hit this: raw metrla θ_max≈172 NaNs under ~1000 steps).
+    returns a safe minimum (θ_max·S, floored at 200); callers use max(requested, this)."""
+    theta_max = float(prior.theta.max())
+    return max(200, int(math.ceil(theta_max * schedule.c_0)))
+
+
 def reverse_sample_em(
     prior: KroneckerPrior,
     schedule: FCPSSchedule,
     denoiser: Callable[[torch.Tensor, torch.Tensor, torch.Tensor], torch.Tensor],
     Y_hat: torch.Tensor,
-    n_steps: int = 100,
+    n_steps: int = 1000,
     *,
     sigma: float = 1.0,
     R_T: Optional[torch.Tensor] = None,
@@ -77,19 +80,21 @@ def reverse_sample_em(
     generator: Optional[torch.Generator] = None,
     step_callback: Optional[Callable[[int, float, torch.Tensor], None]] = None,
 ) -> tuple[torch.Tensor, Optional[ReverseTrace]]:
-    """GAD-style Euler–Maruyama reverse SDE (sde.py: euler_maruyama_step_reverse).
+    """GAD's Euler–Maruyama reverse SDE (exp_gasde_test_only_Em.py: sample_reverse_sde_em_in_s).
 
-    steps UNIFORMLY in diffusion time t from T down to 0 (GAD's grid, not the
-    geometric-c̄ grid the DDIM sampler uses). at each t the denoiser predicts R̂₀,
-    we form the score from it, and take one EM step — all per-eigenmode:
+    steps on a grid UNIFORM IN THE HEAT s = c̄ (from S=c_0 down to 0), mapping each
+    s back to the diffusion time t via the schedule — exactly GAD's grid (NOT uniform
+    in t, and not the geometric-c̄ grid the DDIM sampler uses). at each node the
+    denoiser predicts R̂₀, we form the score from it, and take one EM step, all
+    per-eigenmode (identical algebra to GAD, generalised to the kronecker θ):
 
-        score  = (H·Ĉ₀ - C_t) / σ²(c̄)                # ∇log p(x_t|x_0)
+        score  = (H·Ĉ₀ - C_t) / σ²(c̄)                # ∇log p(x_t|x_0), Tweedie
         drift  = -c(t)·θ·C_t - 2·c(t)·σ²·score        # reverse drift (eigenbasis)
         C_next = C_t + drift·dt + sqrt(2 c(t) σ²)·sqrt(|dt|)·z,   dt < 0
 
-    the denoiser is conditioned on t (GAD's convention). WARNING: EM is only
-    conditionally stable; on a stiff prior the step −c(t)·θ·dt can exceed 1 near
-    t=T and diverge — use enough n_steps (and/or the DDIM sampler) if it blows up.
+    the denoiser is conditioned on t (GAD's convention; t = t_of_c̄(s)). WARNING: EM
+    is only conditionally stable; on a stiff prior the step −c(t)·θ·dt can exceed 1
+    near t=T and diverge — GAD uses ~5000 steps. use enough n_steps if it blows up.
     """
     device, dtype, B = Y_hat.device, Y_hat.dtype, Y_hat.shape[0]
     V_S = torch.as_tensor(prior.V_S, device=device, dtype=dtype)
@@ -105,14 +110,16 @@ def reverse_sample_em(
     else:
         R_t = R_T.to(device=device, dtype=dtype)
 
-    ts = np.linspace(schedule.T, 0.0, n_steps + 1)                           # uniform in t
+    # GAD's grid: uniform in the heat s = c̄ from S (=c_0) down to 0, each mapped to t.
+    s_grid = np.linspace(schedule.c_0, 0.0, n_steps + 1)                     # uniform in s=c̄
+    t_grid = schedule.t_of_c_bar(s_grid)                                     # (n_steps+1,)
     trace = ReverseTrace([], [], []) if return_trace else None
 
     for i in range(n_steps):
-        t_cur = float(ts[i])
-        dt = float(ts[i + 1] - ts[i])                                        # < 0
+        c_bar = float(s_grid[i])                                            # heat s at this node
+        t_cur = float(t_grid[i])
+        dt = float(t_grid[i + 1] - t_grid[i])                              # < 0
         c_t = float(schedule.c(t_cur))                                       # rate c(t)
-        c_bar = float(schedule.c_bar(t_cur))                                 # cumulative s(t)
         H = torch.exp(-theta * c_bar)
         var = prior.sigma2_scale * (1.0 - torch.exp(-2.0 * theta * c_bar)) / theta
         var = torch.clamp(var, min=1e-20)
@@ -134,124 +141,6 @@ def reverse_sample_em(
 
         if trace is not None:
             trace.t.append(c_bar)
-            trace.R_t_mean_norm.append(float(R_t.norm(dim=(-1, -2)).mean()))
-            trace.R_hat_0_mean_norm.append(float(R0_hat.norm(dim=(-1, -2)).mean()))
-
-    return R_t, trace
-
-
-def _eigenbasis_HSigma(
-    theta: torch.Tensor, c_bar_t: float, sigma2_scale: float = 1.0
-) -> tuple[torch.Tensor, torch.Tensor]:
-    """Per-eigenmode (H_t, σ²_t) at the given c̄(t). Both shape (N, H)."""
-    Ht = torch.exp(-theta * c_bar_t)
-    sigma2_t = sigma2_scale * (1.0 - torch.exp(-2.0 * theta * c_bar_t)) / theta
-    return Ht, sigma2_t
-
-
-def reverse_sample(
-    prior: KroneckerPrior,
-    schedule: FCPSSchedule,
-    denoiser: Callable[[torch.Tensor, torch.Tensor, torch.Tensor], torch.Tensor],
-    Y_hat: torch.Tensor,
-    n_steps: int = 100,
-    *,
-    eta: float = 0.0,
-    R_T: Optional[torch.Tensor] = None,
-    return_trace: bool = False,
-    generator: Optional[torch.Generator] = None,
-    step_callback: Optional[Callable[[int, float, torch.Tensor], None]] = None,
-) -> tuple[torch.Tensor, Optional[ReverseTrace]]:
-    """reverse-sample from t=T down to t=0.
-
-    denoiser is callable(R_t, t_batch, Y_hat) -> R0_hat. Y_hat (B, N, H) is the
-    backbone forecast used as conditioning. n_steps is the number of uniform
-    reverse steps. eta in [0, 1] mixes in ancestral noise (0 = deterministic).
-    R_T is the starting sample at t=T (drawn from the prior if None).
-    step_callback, if given, is called as step_callback(i, t_cur, R0_hat) each
-    step with the denoiser's R0 estimate (used for trajectory diagnostics).
-    returns (R0, trace), where trace is per-step diagnostics or None.
-    """
-    if not (0.0 <= eta <= 1.0):
-        raise ValueError(f"eta must lie in [0, 1]; got {eta}")
-
-    device = Y_hat.device
-    dtype = Y_hat.dtype
-    B = Y_hat.shape[0]
-
-    V_S = torch.as_tensor(prior.V_S, device=device, dtype=dtype)
-    V_T = torch.as_tensor(prior.V_T, device=device, dtype=dtype)
-    theta = torch.as_tensor(prior.theta, device=device, dtype=dtype)        # (N, H)
-    sigma2_stat = prior.sigma2_scale / theta
-
-    if R_T is None:
-        R_t = _prior_sample_torch(
-            (B,), prior, V_S, V_T, sigma2_stat,
-            generator=generator, device=device, dtype=dtype,
-        )
-    else:
-        if R_T.shape != (B, prior.N, prior.H):
-            raise ValueError(
-                f"R_T shape {R_T.shape} must be ({B}, {prior.N}, {prior.H})"
-            )
-        R_t = R_T.to(device=device, dtype=dtype)
-
-    # reverse trajectory in noise-level (c̄) space: a geometric grid from c̄_hi
-    # (≈ the prior) down to c̄_lo (≈ clean), so steps are even in log-c̄ and
-    # well-spaced for every mode (DDIM is stable on any grid; we don't need GAD's
-    # uniform-t grid here). the denoiser is conditioned on the diffusion time t
-    # (GAD's convention, same axis training used), recovered from c̄ via the schedule.
-    c_lo, c_hi = noise_level_bounds(prior)
-    c_bars = reverse_c_bar_grid(c_lo, c_hi, n_steps)
-
-    trace = ReverseTrace([], [], []) if return_trace else None
-
-    for i in range(n_steps):
-        c_bar_cur = float(c_bars[i])
-        c_bar_next = float(c_bars[i + 1])
-
-        # Per-mode (H, σ²) at the current and next noise level.
-        H_cur, sigma2_cur = _eigenbasis_HSigma(theta, c_bar_cur, prior.sigma2_scale)
-        H_next, sigma2_next = _eigenbasis_HSigma(theta, c_bar_next, prior.sigma2_scale)
-
-        # Denoiser predicts R̂_0, conditioned on the diffusion time t (GAD).
-        t_cur = float(schedule.t_of_c_bar(c_bar_cur))
-        t_batch = torch.full((B,), t_cur, device=device, dtype=dtype)
-        R0_hat = denoiser(R_t, t_batch, Y_hat)                              # (B, N, H)
-
-        if step_callback is not None:
-            step_callback(i, c_bar_cur, R0_hat)
-
-        # Rotate to eigenbasis.
-        C_t = _rotate_to_eig_torch(R_t, V_S, V_T)
-        C0_hat = _rotate_to_eig_torch(R0_hat, V_S, V_T)
-
-        # ε̂ from Tweedie: (C_t - H_t·Ĉ_0) / sqrt(σ²_t). Floor σ² to avoid div-by-zero
-        # at very small c̄; this is a no-op at t_cur > 0 with the FCPS schedule.
-        sigma_cur = torch.sqrt(torch.clamp(sigma2_cur, min=1e-20))
-        eps_hat = (C_t - H_cur * C0_hat) / sigma_cur
-
-        # DDIM update at t_next.
-        # Stochastic σ̃² (eta-controlled noise level). DDIM eta=0 ⇒ deterministic.
-        # Formula: σ̃² = η² · σ²_next · (1 - (σ²_next/σ²_cur)·(H_cur/H_next)²)
-        # Guard: ratio_clip avoids NaN at last step where σ²_next=0.
-        ratio = (sigma2_next / torch.clamp(sigma2_cur, min=1e-20)) * (
-            H_cur / torch.clamp(H_next, min=1e-20)
-        ) ** 2
-        sigma_tilde2 = (eta ** 2) * sigma2_next * torch.clamp(1.0 - ratio, min=0.0)
-        drift_var = torch.clamp(sigma2_next - sigma_tilde2, min=0.0)
-        drift_std = torch.sqrt(drift_var)
-        tilde_std = torch.sqrt(sigma_tilde2)
-
-        C_next = H_next * C0_hat + drift_std * eps_hat
-        if eta > 0:
-            zeta = torch.randn(C_t.shape, generator=generator, device=device, dtype=dtype)
-            C_next = C_next + tilde_std * zeta
-
-        R_t = _rotate_from_eig_torch(C_next, V_S, V_T)
-
-        if trace is not None:
-            trace.t.append(c_bar_cur)
             trace.R_t_mean_norm.append(float(R_t.norm(dim=(-1, -2)).mean()))
             trace.R_hat_0_mean_norm.append(float(R0_hat.norm(dim=(-1, -2)).mean()))
 

@@ -30,7 +30,9 @@ EXP="${EXP:-dev}"
 EPOCHS="${EPOCHS:-200}"
 BATCH_SIZE="${BATCH_SIZE:-32}"
 LR="${LR:-1e-3}"
-EVAL_STEPS="${EVAL_STEPS:-50}"
+# EM reverse (GAD) needs many steps on the stiff prior; GAD uses ~5000. 1000 is the
+# floor for stability/quality — override up for the final locked numbers.
+EVAL_STEPS="${EVAL_STEPS:-1000}"
 EXTRA_FLAGS="${EXTRA_FLAGS:-}"
 
 export STAGE="traineval"

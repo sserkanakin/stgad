@@ -33,17 +33,16 @@ from torch.utils.data import DataLoader
 from src.data.adjacency import load_adjacency
 from src.data.residual_dataset import make_dataset, residual_path, train_residual_sigma
 from src.diffusion.denoiser import R0Denoiser, SignalDenoiser, num_parameters
-from src.diffusion.losses import mahalanobis_mse, gad_snr_weighted_mse, graph_tv
+from src.diffusion.losses import gad_snr_weighted_mse, graph_tv
 from src.diffusion.forward_fcps import (
     FCPSSchedule,
     fcps_rate_torch,
-    noise_level_bounds,
     prior_to_torch,
     sample_c_bar_powerlaw_torch,
     sample_R_t_from_c_bar_torch,
 )
 from src.diffusion.prior import load_prior
-from src.diffusion.reverse import reverse_sample
+from src.diffusion.reverse import reverse_sample_em, min_em_steps
 from src.eval.crps import empirical_crps
 from src.eval.distribution import energy_distance, sliced_wasserstein1
 from src.utils import paths
@@ -65,28 +64,6 @@ _CFG_HASH_EXCLUDE = {"seed", "epochs", "batch_size", "lr", "weight_decay", "pati
 
 
 # ─── Loss / metrics ──────────────────────────────────────────────────────────
-
-
-def masked_mse(pred: torch.Tensor, target: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
-    """Masked mean squared error. pred/target/mask all (B, N, H)."""
-    err2 = (pred - target).pow(2) * mask.float()
-    return err2.sum() / (mask.float().sum() + 1e-8)
-
-
-def masked_mae(pred: torch.Tensor, target: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
-    """Masked mean absolute error. pred/target/mask all (B, N, H)."""
-    err = (pred - target).abs() * mask.float()
-    return err.sum() / (mask.float().sum() + 1e-8)
-
-
-def masked_mae_per_h(
-    pred: torch.Tensor, target: torch.Tensor, mask: torch.Tensor
-) -> torch.Tensor:
-    """Masked mean absolute error per horizon. inputs (B, N, H) -> (H,)."""
-    err = (pred - target).abs() * mask.float()
-    num = err.sum(dim=(0, 1))
-    den = mask.float().sum(dim=(0, 1)).clamp(min=1.0)
-    return num / den
 
 
 def lr_range_test(loader, *, denoiser, prior_t, schedule, tv_weight, A_t, optim, device,
@@ -217,44 +194,6 @@ def validate(
     return total / max(n, 1)
 
 
-@torch.no_grad()
-def val_crps(
-    val_R0: torch.Tensor,
-    val_Yhat: torch.Tensor,
-    *,
-    denoiser: R0Denoiser,
-    prior,
-    schedule: FCPSSchedule,
-    device: torch.device,
-    n_steps: int,
-    k: int,
-    sigma_r: float,
-    generator: Optional[torch.Generator],
-    gen_batch: int = 1024,
-) -> tuple[float, float]:
-    """probabilistic validation on the fixed clean val windows: draw k samples via
-    the (DDIM, eta=1) reverse process, return (mean CRPS, mean MAE) in raw units.
-    this is the metric best.pt is selected by (Vimal's protocol). windows are fully
-    observed so no masking is needed; cost ≈ W·k·n_steps denoiser calls per call."""
-    denoiser.eval()
-    W, N, H = val_R0.shape
-    R0 = val_R0.to(device) * sigma_r                                   # raw residual
-    Y = val_Yhat.to(device)
-    chunk = max(1, gen_batch // k)
-    crps_sum = mae_sum = 0.0
-    for s in range(0, W, chunk):
-        e = min(s + chunk, W)
-        b = e - s
-        samp, _ = reverse_sample(prior, schedule, denoiser, Y[s:e].repeat(k, 1, 1),
-                                 n_steps=n_steps, eta=1.0, R_T=None, generator=generator)
-        samp = samp.view(k, b, N, H) * sigma_r                         # raw units
-        crps_sum += float(empirical_crps(samp, R0[s:e]).sum())
-        mae_sum += float((samp.mean(0) - R0[s:e]).abs().sum())
-    denoiser.train()
-    denom = W * N * H
-    return crps_sum / denom, mae_sum / denom
-
-
 # ─── Validation diagnostic (every few epochs) ────────────────────────────────
 
 
@@ -262,88 +201,84 @@ _HL_HORIZONS = (3, 6, 12)  # horizons highlighted in the printout (1-indexed)
 
 
 @torch.no_grad()
-def val_diagnostic(
+def periodic_val_eval(
     R0_fo: torch.Tensor,
     Y_hat_fo: torch.Tensor,
     *,
-    denoiser: R0Denoiser,
+    denoiser,
     prior,
-    prior_t,
     schedule: FCPSSchedule,
     device: torch.device,
     n_steps: int,
+    k: int,
     n_proj: int,
     sigma_r: float,
-    c_lo: float,
-    c_hi: float,
     generator: Optional[torch.Generator],
+    gen_batch: int = 1024,
 ) -> dict:
-    """end-to-end reverse-process check on fully-observed val windows.
+    """Vimal-style periodic full-reverse validation (runs every --val-every epochs).
 
-    the flow: take a val batch, forward-noise it close to fully-noised (c̄_hi), run
-    the reverse sde back, and score the reconstruction —
-      - MSE / MAE vs the true residual (raw units, overall + per horizon),
-      - Wasserstein: sliced-W1 + energy distance between the reconstructed and true
-        residual clouds, per horizon, in node space,
-      - Mahalanobis: the one-shot denoising error in standardised (per-mode) units —
-        the metric that is comparable across priors (kron vs iso).
-    fully-observed windows only, so the node vectors carry no masked garbage and the
-    eigenbasis rotation (Mahalanobis) is clean. metrics are de-normalized (× sigma_r)
-    to raw units; the backbone term cancels, so only the residual scaler enters.
+    the "full reverse evaluation and comparison": draw k trajectories FROM THE PRIOR
+    via the GAD Euler–Maruyama reverse SDE, conditioned on Y_hat, and compare the sample
+    cloud to the true val target —
+      - MAE / RMSE of the k-sample mean, overall + per horizon (point accuracy),
+      - CRPS of the sample cloud (the probabilistic score best.pt is selected by, Vimal),
+      - sliced-W1 + energy distance vs the true cloud, per horizon (distributional match).
+    clean (fully-observed) windows only; de-normalized to raw units (backbone cancels,
+    so only sigma_r enters). this mirrors Vimal's evals(mode="Val") but with GAD's EM
+    sampler (which needs many steps) at a periodic cadence instead of every epoch.
     """
     denoiser.eval()
-    R0 = R0_fo.to(device)                                    # unit space
-    Y_hat = Y_hat_fo.to(device)
-    W, N, H = R0.shape
-    R0_phys = R0 * sigma_r                                   # raw units
-    full = torch.ones_like(R0)                               # fully observed
+    W, N, H = R0_fo.shape
+    R0 = R0_fo.to(device) * sigma_r                          # raw truth (residual or signal)
+    Y = Y_hat_fo.to(device)
+    chunk = max(1, gen_batch // k)
+    mae_n = torch.zeros(H); mse_n = torch.zeros(H); crps_n = torch.zeros(H)
+    gen_first = truth_first = None
+    for s in range(0, W, chunk):
+        e = min(s + chunk, W); b = e - s
+        samp, _ = reverse_sample_em(prior, schedule, denoiser, Y[s:e].repeat(k, 1, 1),
+                                    n_steps=n_steps, generator=generator)
+        samp = samp.view(k, b, N, H) * sigma_r              # raw sample cloud (k, b, N, H)
+        mean = samp.mean(0)
+        mae_n += (mean - R0[s:e]).abs().sum(dim=(0, 1)).cpu()
+        mse_n += (mean - R0[s:e]).pow(2).sum(dim=(0, 1)).cpu()
+        crps_n += empirical_crps(samp, R0[s:e]).sum(dim=(0, 1)).cpu()   # per-horizon energy CRPS
+        if gen_first is None:                                # keep first chunk for W1/energy
+            gen_first, truth_first = samp, R0[s:e]
+    cnt = float(W * N)
+    mae_h = (mae_n / cnt); mse_h = (mse_n / cnt); crps_h = (crps_n / cnt)
 
-    # ── noise close to full (c̄_hi), then reverse-denoise back to the data ──
-    c_top = torch.full((W,), c_hi, device=device, dtype=R0.dtype)
-    R_T = sample_R_t_from_c_bar_torch(R0, c_top, prior_t, generator=generator)
-    R0_hat, _ = reverse_sample(prior, schedule, denoiser, Y_hat, n_steps=n_steps,
-                               eta=0.0, R_T=R_T, generator=generator)
-    R0_hat_phys = R0_hat * sigma_r
-
-    recon_mae = float(masked_mae(R0_hat_phys, R0_phys, full))
-    recon_mse = float(masked_mse(R0_hat_phys, R0_phys, full))
-    recon_mae_h = masked_mae_per_h(R0_hat_phys, R0_phys, full).tolist()
-
-    # ── Wasserstein on reconstructed vs true residual clouds (per horizon) ──
+    # distributional comparison on the first chunk (per horizon, node space)
     w1_h, ed_h = [], []
     for h in range(H):
-        w1_h.append(sliced_wasserstein1(R0_hat_phys[:, :, h], R0_phys[:, :, h], n_proj, generator))
-        ed_h.append(energy_distance(R0_hat_phys[:, :, h], R0_phys[:, :, h]))
-
-    # ── Mahalanobis: one-shot denoising error in standardised units (cross-prior) ──
-    c_bar = sample_c_bar_powerlaw_torch(schedule.c_0, W, device, R0.dtype)
-    R_t = sample_R_t_from_c_bar_torch(R0, c_bar, prior_t)
-    R0_hat_1 = denoiser(R_t, schedule.t_of_c_bar(c_bar), Y_hat)
-    maha = float(mahalanobis_mse(R0_hat_1, R0, full, c_bar, prior_t))
+        gen_c = gen_first[:, :, :, h].reshape(-1, N)
+        w1_h.append(sliced_wasserstein1(gen_c, truth_first[:, :, h], n_proj, generator))
+        ed_h.append(energy_distance(gen_c, truth_first[:, :, h]))
 
     denoiser.train()
     return {
-        "recon_mae": recon_mae, "recon_mse": recon_mse, "recon_mae_h": recon_mae_h,
-        "w1": float(sum(w1_h) / H), "ed": float(sum(ed_h) / H),
-        "w1_h": w1_h, "ed_h": ed_h, "mahalanobis": maha, "n_windows": W,
+        "mae": float(mae_n.sum() / cnt), "rmse": float((mse_n.sum() / cnt) ** 0.5),
+        "crps": float(crps_n.sum() / cnt), "mae_h": mae_h.tolist(),
+        "w1": float(sum(w1_h) / H), "energy": float(sum(ed_h) / H),
+        "w1_h": w1_h, "energy_h": ed_h, "n_windows": W,
     }
 
 
 def _log_val(epoch: int, res: dict, *, to_wandb: bool) -> None:
-    """print the val diagnostic and optionally push scalars to wandb."""
-    hz = [h for h in _HL_HORIZONS if h <= len(res["recon_mae_h"])]
-    hl = ", ".join(f"h{h}={res['recon_mae_h'][h - 1]:.3f}" for h in hz)
-    print(f"  [val] {res['n_windows']} clean windows | recon MAE={res['recon_mae']:.3f} "
-          f"MSE={res['recon_mse']:.3f} ({hl}) | W1={res['w1']:.3f} ED={res['ed']:.3f} "
-          f"| mahalanobis={res['mahalanobis']:.3f}", flush=True)
+    """print the periodic full-reverse val eval and optionally push scalars to wandb."""
+    hz = [h for h in _HL_HORIZONS if h <= len(res["mae_h"])]
+    hl = ", ".join(f"h{h}={res['mae_h'][h - 1]:.3f}" for h in hz)
+    print(f"  [val-eval] {res['n_windows']} windows | MAE={res['mae']:.3f} "
+          f"RMSE={res['rmse']:.3f} CRPS={res['crps']:.4f} ({hl}) | "
+          f"W1={res['w1']:.3f} ED={res['energy']:.3f}", flush=True)
     if not to_wandb:
         return
     import wandb
-    log = {"val/recon_mae": res["recon_mae"], "val/recon_mse": res["recon_mse"],
-           "val/w1": res["w1"], "val/energy": res["ed"],
-           "val/mahalanobis": res["mahalanobis"], "epoch": epoch}
+    log = {"val/mae": res["mae"], "val/rmse": res["rmse"], "val/crps": res["crps"],
+           "val/w1": res["w1"], "val/energy": res["energy"], "epoch": epoch}
     for h in hz:
-        log[f"val/recon_mae_h{h}"] = res["recon_mae_h"][h - 1]
+        log[f"val/mae_h{h}"] = res["mae_h"][h - 1]
         log[f"val/w1_h{h}"] = res["w1_h"][h - 1]
     wandb.log(log)
 
@@ -366,7 +301,7 @@ def _run_test_eval(args, device, best_epoch, run_id, logline) -> None:
     results = []
     for ns in steps_list:
         res = evaluate(args.dataset, args.prior, args.seed, exp=args.exp, device=device,
-                       k=args.eval_k, n_steps=ns, eta=1.0, alpha=0.1,
+                       k=args.eval_k, n_steps=ns, alpha=0.1,
                        w1_windows=512, w1_samples=4, w1_proj=128, gen_batch=1024,
                        max_windows=0, generator=gen, backbone=args.backbone, mask_zero=True)
         results.append(res)
@@ -378,6 +313,43 @@ def _run_test_eval(args, device, best_epoch, run_id, logline) -> None:
                "best_epoch": best_epoch, "select_metric": "crps", "test_results": results}
     (out_dir / "test_results.json").write_text(json.dumps(payload, indent=2))
     logline(f"[test] wrote {out_dir / 'test_results.json'}")
+    _write_run_summary(payload, out_dir, logline)
+
+
+def _write_run_summary(payload: dict, out_dir, logline) -> None:
+    """readable end-of-run summary (Vimal-style): a boxed header + a metric table over
+    the eval sample-step settings + per-horizon MAE for the best (largest-n_steps) run.
+    printed to the log AND saved to summary.txt next to test_results.json."""
+    hl = _HL_HORIZONS
+    res_list = payload["test_results"]
+    L: list[str] = []
+    L.append("=" * 72)
+    L.append(f" RUN SUMMARY  {payload['run_id']}")
+    L.append("=" * 72)
+    L.append(f" dataset={payload['dataset']}  prior={payload['prior']}  "
+             f"backbone={payload['backbone']}  seed={payload['seed']}  exp={payload['exp']}")
+    L.append(f" reverse=EM (GAD)  select={payload['select_metric']}  "
+             f"best_epoch={payload['best_epoch']}")
+    L.append("-" * 72)
+    L.append(f" {'n_steps':>7} | {'MAE':>8} {'RMSE':>8} {'MAPE':>7} {'CRPS':>7} "
+             f"{'Winkler':>8} {'cov':>5}")
+    L.append("-" * 72)
+    for r in res_list:
+        L.append(f" {r['n_steps']:>7} | {r['mae']:>8.4f} {r['rmse']:>8.4f} "
+                 f"{r['mape']:>7.4f} {r['crps']:>7.4f} {r['winkler']:>8.4f} "
+                 f"{r['coverage']:>5.3f}")
+    L.append("-" * 72)
+    if res_list:
+        best = max(res_list, key=lambda r: r["n_steps"])          # most steps = reference run
+        mae_h = best.get("mae_h", [])
+        ph = "  ".join(f"h{h}={mae_h[h-1]:.3f}" for h in hl if h <= len(mae_h))
+        L.append(f" per-horizon MAE (n_steps={best['n_steps']}):  {ph}")
+    L.append("=" * 72)
+    text = "\n".join(L)
+    (out_dir / "summary.txt").write_text(text + "\n")
+    for line in L:
+        logline(line)
+    logline(f"[test] wrote {out_dir / 'summary.txt'}")
 
 
 # ─── Main ────────────────────────────────────────────────────────────────────
@@ -410,9 +382,12 @@ def main() -> None:
     p.add_argument("--d-h", type=int, default=32)
     p.add_argument("--channel-multipliers", type=int, nargs="+", default=[1, 2])
     p.add_argument("--n-blocks", type=int, default=2)
-    p.add_argument("--c-min", type=float, default=0.05)
-    p.add_argument("--c-0", type=float, default=20000.0)
-    p.add_argument("--alpha", type=float, default=7.0)
+    # FCPS schedule = GAD-literal (exp_gasde.py): S=c_0=7, alpha=4, c_min=0.1, sigma=1.
+    # the θ→GAD-scale reparam in load_prior puts θ_min=γ=0.8, so 2·S·θ_min=11.2 mixes
+    # the slowest mode exactly as GAD does — S is a fixed number, NOT auto-derived.
+    p.add_argument("--c-min", type=float, default=0.1, help="GAD c_min (0.1)")
+    p.add_argument("--c-0", type=float, default=7.0, help="GAD S = c̄(T), the total heat (7.0)")
+    p.add_argument("--alpha", type=float, default=4.0, help="GAD schedule exponent α (4.0)")
     p.add_argument("--t-eps", type=float, default=1e-3, help="lower bound on t to avoid σ²=0")
     p.add_argument("--loss", choices=("snr", "mse", "mahalanobis"), default="snr",
                    help="(legacy) loss name kept for the validate/diagnostic dispatch; "
@@ -420,41 +395,38 @@ def main() -> None:
     p.add_argument("--tv-weight", type=float, default=0.0,
                    help="GAD's graph-TV penalty weight on predictions (GAD uses 5e-3). "
                         "off by default: residuals are rough, so TV may be misspecified")
-    # ── checkpoint selection by validation CRPS (Vimal's protocol). this is only the
-    # SELECTION signal (which epoch's best.pt to keep) — it does NOT affect the final
-    # test metrics (those use --eval-k / --eval-steps). kept lean so it isn't the bulk
-    # of per-epoch time: k=4 draws, 20 reverse steps (still 4× Vimal's n_samples=1 val).
-    p.add_argument("--crps-k", type=int, default=4,
-                   help="samples per window for the val-CRPS used to select best.pt (selection only)")
-    p.add_argument("--crps-steps", type=int, default=20,
-                   help="reverse steps for val-CRPS (selection only; final eval uses --eval-steps)")
-    p.add_argument("--crps-windows", type=int, default=256,
-                   help="clean val windows scored for selection (subset; <= --val-windows)")
+    # ── best.pt is selected by GAD's own validation loss (SNR-weighted MSE, no sampling).
+    # EM is the only reverse process (GAD parity) and is too costly/unstable at low step
+    # counts to sample every epoch, so we rank epochs by the cheap val loss and reserve
+    # EM sampling for the periodic diagnostic + the final locked test eval.
     p.add_argument("--lr-factor", type=float, default=0.5,
-                   help="ReduceLROnPlateau factor on the val-CRPS plateau")
+                   help="ReduceLROnPlateau factor on the val-loss plateau")
     p.add_argument("--lr-patience", type=int, default=5,
-                   help="ReduceLROnPlateau patience (epochs) on val-CRPS")
+                   help="ReduceLROnPlateau patience (epochs) on val-loss")
     # ── combined test eval after training (one job, Vimal-style) ──
     p.add_argument("--eval-after", action="store_true",
                    help="after training, load best.pt and run the test eval in-process, "
                         "writing test_results.json (combined train+eval job)")
     p.add_argument("--eval-k", type=int, default=30, help="test samples/window")
-    p.add_argument("--eval-steps", default="50",
-                   help="comma-separated reverse steps for the locked test (e.g. 100,50,25)")
+    p.add_argument("--eval-steps", default="1000",
+                   help="comma-separated EM reverse steps for the locked test (GAD uses ~5000)")
     # ── learning-rate range test (Smith): sweep lr exponentially over a few
     # hundred steps to locate the good lr band, then exit (no full training).
     p.add_argument("--lr-find", type=int, default=0,
                    help="if >0, run an lr range test for this many steps and exit")
     p.add_argument("--lr-find-min", type=float, default=1e-6)
     p.add_argument("--lr-find-max", type=float, default=1.0)
-    # ── val diagnostic (every N epochs): noise a clean val batch close to full,
-    #    reverse it, score recon MSE/MAE + Wasserstein + the mahalanobis metric.
+    # ── periodic full EM reverse eval (Vimal protocol): every --val-every epochs,
+    #    sample k trajectories FROM THE PRIOR, compare to val truth (MAE/RMSE/CRPS +
+    #    Wasserstein), and select best.pt by CRPS.
     p.add_argument("--val-every", type=int, default=5,
-                   help="run the val diagnostic every N epochs (0 disables)")
-    p.add_argument("--val-steps", type=int, default=100,
-                   help="reverse-sampler steps for the val diagnostic")
+                   help="run the full EM reverse val eval every N epochs (0 disables selection)")
+    p.add_argument("--val-k", type=int, default=4,
+                   help="samples/window for the periodic val eval (Vimal test uses 8; val cheaper)")
+    p.add_argument("--val-steps", type=int, default=200,
+                   help="EM reverse steps for the val eval (EM is unstable below ~200)")
     p.add_argument("--val-windows", type=int, default=512,
-                   help="number of fully-observed val windows used by the diagnostic")
+                   help="number of fully-observed val windows used by the eval")
     p.add_argument("--val-proj", type=int, default=128,
                    help="random projections for the sliced wasserstein-1")
     p.add_argument("--smoke", action="store_true", help="1 epoch, tiny batch, wandb disabled")
@@ -467,15 +439,15 @@ def main() -> None:
         args.epochs = 2
         args.batch_size = 8
         args.max_train_batches = max(args.max_train_batches, 5)
-        # exercise the val diagnostic + CRPS selection cheaply on the smoke epochs
+        # exercise the full EM reverse val eval cheaply; 200 EM steps keeps it stable on
+        # the real prior (EM blows up below ~200) while staying fast on 16 windows.
         args.val_every = 1
-        args.val_steps = 20
+        args.val_k = 2
+        args.val_steps = 200
         args.val_windows = 16
         args.val_proj = 16
-        args.crps_k = 4
-        args.crps_steps = 10
         args.eval_k = 4
-        args.eval_steps = "10"
+        args.eval_steps = "200"
         os.environ.setdefault("WANDB_MODE", "disabled")
 
     cfg = vars(args).copy()
@@ -534,24 +506,27 @@ def main() -> None:
                        spatial=args.spatial, stiffness_cap=(args.stiffness_cap or None),
                        backbone=args.backbone)
     prior_t = prior_to_torch(prior, device=device, dtype=torch.float32)
-    # c_0 is auto-derived from the fitted prior (5/θ_min), never a CLI number -
-        # the human-typed-c_0 footgun bites the same at 35 as at 27000. --c-0 is ignored.
-    schedule = FCPSSchedule.for_prior(prior, c_min=args.c_min, alpha=args.alpha, T=1.0)
-    print(f"[train_diffusion] schedule c_0 auto-derived = {schedule.c_0:.1f} "
-          f"(--c-0 ignored)", flush=True)
-    # persist the derived c_0 so config.json describes the schedule actually used
-    # (it used to record the ignored CLI value, which misled eval_diffusion)
-    cfg["c_0"] = schedule.c_0
-    (ckpt_dir / "config.json").write_text(json.dumps(cfg, indent=2, default=str))
-    # noise-level (c̄) bounds the training sampler and reverse grid span — derived
-    # from the prior spectrum. training draws c̄ log-uniformly in [c_lo, c_hi].
-    c_lo, c_hi = noise_level_bounds(prior)
+    # GAD-literal FCPS schedule: fixed S=c_0, α, c_min (no per-dataset auto-derivation).
+    # the θ→GAD-scale reparam already set θ_min=γ=0.8, so a fixed S=7 reproduces GAD's
+    # mixing (2·S·θ_min≈11.2) on every dataset.
+    schedule = FCPSSchedule(c_min=args.c_min, c_0=args.c_0, alpha=args.alpha, T=1.0)
+    print(f"[train_diffusion] schedule (GAD-literal): S=c_0={schedule.c_0:.2f} "
+          f"α={schedule.alpha:.1f} c_min={schedule.c_min:.2f}", flush=True)
     print(
         f"[train_diffusion] prior N={prior.N} H={prior.H} γ={prior.gamma:.4f}  "
         f"θ_min={float(prior.theta.min()):.4f}  θ_max={float(prior.theta.max()):.2f}  "
-        f"noise-level c̄ = c_0·u^0.65 ∈ [0, {schedule.c_0:.3g}] (GAD power-law sampling)",
+        f"2·S·θ_min={2*schedule.c_0*float(prior.theta.min()):.2f} (GAD target ≈11.2)  "
+        f"train noise c̄ = S·u^0.65 ∈ [0, {schedule.c_0:.3g}]",
         flush=True,
     )
+    # EM stability floor: explicit EM diverges to NaN when the step count is too low for
+    # this prior's stiffness (θ_max·S). floor both the periodic val eval and the test eval
+    # so every dataset/backbone runs correctly (the stiff raw prior needs ~1000+ steps).
+    em_floor = min_em_steps(prior, schedule)
+    val_steps_eff = max(args.val_steps, em_floor)
+    if val_steps_eff != args.val_steps:
+        print(f"[train_diffusion] EM stability floor: val eval steps "
+              f"{args.val_steps} → {val_steps_eff} (θ_max·S={em_floor})", flush=True)
 
     # ── Model. backbone='raw' → history-conditioned SignalDenoiser (T_h from the
     # conditioning width); else the forecast-conditioned R0Denoiser.
@@ -596,7 +571,6 @@ def main() -> None:
     start_epoch = 0
     best_crps = float("inf")
     best_epoch = -1
-    bad_epochs = 0
     ckpt_path = find_latest_checkpoint(ckpt_dir)
     if ckpt_path is not None and not args.fresh:
         ckpt = load_checkpoint(ckpt_path)
@@ -610,7 +584,7 @@ def main() -> None:
         _hist = ckpt_dir / "validation_history.json"
         if _hist.exists():
             best_epoch = int(json.loads(_hist.read_text()).get("best_epoch", -1))
-        print(f"[train_diffusion] resumed from epoch {start_epoch}  best_crps={best_crps:.4f}",
+        print(f"[train_diffusion] resumed from epoch {start_epoch}  best_val_CRPS={best_crps:.4f}",
               flush=True)
 
     # ── wandb
@@ -633,24 +607,10 @@ def main() -> None:
     valid_idx = full_valid.nonzero(as_tuple=True)[0]
     n_val = min(args.val_windows, valid_idx.numel())
     val_R0, val_Yhat = val_ds.R0[valid_idx[:n_val]], val_ds.Y_hat[valid_idx[:n_val]]
-    # smaller subset for the per-epoch CRPS selection (it runs every epoch); the
-    # richer diagnostic still uses the full n_val windows but only every --val-every.
-    n_crps = min(args.crps_windows, n_val)
-    crps_R0, crps_Yhat = val_R0[:n_crps], val_Yhat[:n_crps]
-    print(f"[train_diffusion] selection = val-CRPS on {n_crps} clean windows "
-          f"(k={args.crps_k}, steps={args.crps_steps}); diagnostic on {n_val}; "
+    print(f"[train_diffusion] per-epoch val_loss (GAD SNR-MSE) for the curve + LR plateau; "
+          f"FULL EM reverse eval every {args.val_every} epochs on {n_val} clean windows "
+          f"(k={args.val_k}, steps={args.val_steps}) → best.pt selected by CRPS (Vimal protocol); "
           f"{float(full_valid.float().mean()):.2f} of val fully observed", flush=True)
-
-    def _maybe_diag(epoch: int, is_last: bool):
-        if not args.val_every or (epoch % args.val_every != 0 and not is_last):
-            return None
-        res = val_diagnostic(
-            val_R0, val_Yhat, denoiser=denoiser, prior=prior, prior_t=prior_t,
-            schedule=schedule, device=device, n_steps=args.val_steps,
-            n_proj=args.val_proj, sigma_r=sigma_r, c_lo=c_lo, c_hi=c_hi, generator=val_gen,
-        )
-        _log_val(epoch, res, to_wandb=os.environ.get("WANDB_MODE", "online") != "disabled")
-        return res
 
     # ── Vimal-style readable log + epoch-by-epoch history json (per-run folder)
     log_path = ckpt_dir / "train.log"
@@ -658,16 +618,32 @@ def main() -> None:
     history: list[dict] = []
     wandb_on = os.environ.get("WANDB_MODE", "online") != "disabled"
 
+    def _maybe_eval(epoch: int, is_last: bool):
+        """full EM reverse eval + comparison, every --val-every epochs (and on the last)."""
+        if not args.val_every or (epoch % args.val_every != 0 and not is_last):
+            return None
+        res = periodic_val_eval(
+            val_R0, val_Yhat, denoiser=denoiser, prior=prior, schedule=schedule,
+            device=device, n_steps=val_steps_eff, k=args.val_k, n_proj=args.val_proj,
+            sigma_r=sigma_r, generator=val_gen,
+        )
+        _log_val(epoch, res, to_wandb=wandb_on)
+        return res
+
     def _logline(msg: str) -> None:
         print(msg, flush=True)
         with open(log_path, "a") as f:
             f.write(msg + "\n")
 
     _logline(f"# {run_id} | {args.dataset} prior={args.prior} backbone={args.backbone} "
-             f"seed={args.seed} | select=val-CRPS | c_0={schedule.c_0:.2f}")
-    _logline("epoch | train | val_CRPS val_MAE | lr | time   (+ recon MAE/MSE every val-every)")
+             f"seed={args.seed} | select=val_CRPS (full EM reverse every {args.val_every} ep) | "
+             f"schedule S={schedule.c_0:.1f} α={schedule.alpha:.0f} c_min={schedule.c_min:.2f} | "
+             f"reverse=EM")
+    _logline(f"epoch | train | val_loss | lr | time   "
+             f"(+ full EM eval MAE/RMSE/CRPS every {args.val_every} ep)")
 
-    # ── Train (best.pt selected by val-CRPS, Vimal's protocol)
+    # ── Train. per-epoch val_loss drives the curve + LR plateau; best.pt is selected by
+    # the CRPS of the periodic full EM reverse eval (Vimal's protocol, GAD's sampler).
     for epoch in range(start_epoch, args.epochs):
         denoiser.train()
         t0 = time.time()
@@ -688,40 +664,32 @@ def main() -> None:
             n_batches += 1
 
         train_loss = running / max(n_batches, 1)
-        # selection metric: probabilistic val-CRPS on a fixed clean val subset (Vimal's
-        # protocol = ONE val pass per epoch). we do NOT also run a full-val-loss pass —
-        # that was redundant (never used for selection) and the bulk of the old overhead.
-        vcrps, vmae = val_crps(
-            crps_R0, crps_Yhat, denoiser=denoiser, prior=prior, schedule=schedule,
-            device=device, n_steps=args.crps_steps, k=args.crps_k, sigma_r=sigma_r,
-            generator=val_gen,
-        )
-        sched.step(vcrps)
+        # cheap per-epoch val loss (GAD SNR-weighted MSE, sampler-free): the training
+        # curve + the LR plateau signal (NOT the checkpoint-selection metric).
+        vloss = validate(val_loader, denoiser=denoiser, prior_t=prior_t, schedule=schedule,
+                         tv_weight=args.tv_weight, A_t=A_t, device=device)
+        sched.step(vloss)
         lr_now = optim.param_groups[0]["lr"]
         elapsed = time.time() - t0
         _logline(f"{epoch:04d}  | train={train_loss:7.4f} | "
-                 f"val_CRPS={vcrps:7.4f} val_MAE={vmae:7.4f} | {lr_now:.1e} | {elapsed:5.1f}s")
+                 f"val_loss={vloss:7.4f} | {lr_now:.1e} | {elapsed:5.1f}s")
 
-        diag = _maybe_diag(epoch, is_last=(epoch == args.epochs - 1))
-
-        improved = vcrps < best_crps
-        if improved:
-            best_crps, best_epoch, bad_epochs = vcrps, epoch, 0
-        else:
-            bad_epochs += 1
+        ev = _maybe_eval(epoch, is_last=(epoch == args.epochs - 1))
 
         row = {"epoch": epoch, "train_loss": train_loss,
-               "val_crps": vcrps, "val_mae": vmae, "lr": lr_now, "time": elapsed}
-        if diag is not None:
-            row.update({"recon_mae": diag["recon_mae"], "recon_mse": diag["recon_mse"],
-                        "recon_rmse": diag["recon_mse"] ** 0.5,
-                        "w1": diag["w1"], "mahalanobis": diag["mahalanobis"]})
+               "val_loss": vloss, "lr": lr_now, "time": elapsed}
+        improved = False
+        if ev is not None:
+            row.update({"val_mae": ev["mae"], "val_rmse": ev["rmse"], "val_crps": ev["crps"],
+                        "val_w1": ev["w1"], "val_energy": ev["energy"]})
+            if ev["crps"] < best_crps:
+                best_crps, best_epoch, improved = ev["crps"], epoch, True
         history.append(row)
         hist_path.write_text(json.dumps(
             {"select_metric": "crps", "best_epoch": best_epoch, "history": history}, indent=2))
         if wandb_on:
-            wandb.log({"train/loss": train_loss,
-                       "val/crps": vcrps, "val/mae": vmae, "lr": lr_now, "epoch": epoch})
+            wandb.log({"train/loss": train_loss, "val/loss": vloss,
+                       "lr": lr_now, "epoch": epoch})
 
         save_checkpoint(ckpt_dir / "last.pt", denoiser, optim, sched,
                         epoch=epoch, best_val_mae=best_crps, rng_states=get_rng_states())
@@ -730,14 +698,15 @@ def main() -> None:
                             epoch=epoch, best_val_mae=best_crps, rng_states=get_rng_states())
             _logline(f"  [saved best] epoch={epoch} val_CRPS={best_crps:.5f}")
 
-        if bad_epochs >= args.patience:
+        # early stop (Vimal): no CRPS improvement for `patience` epochs since the best.
+        if best_epoch >= 0 and (epoch - best_epoch) >= args.patience:
             _logline(f"[early stop] epoch {epoch} (patience={args.patience}, "
-                     f"best_epoch={best_epoch}, best_CRPS={best_crps:.5f})")
+                     f"best_epoch={best_epoch}, best_val_CRPS={best_crps:.5f})")
             break
 
     _logline(f"[done] best_epoch={best_epoch} best_val_CRPS={best_crps:.5f}")
 
-    # ── Combined test eval (one job): load best.pt, run the locked test, write json
+    # ── Combined test eval (one job): load best.pt, run the locked EM test, write json + summary
     if args.eval_after:
         _run_test_eval(args, device, best_epoch, run_id, _logline)
 

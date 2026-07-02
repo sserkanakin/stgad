@@ -34,11 +34,11 @@ from .prior import KroneckerPrior
 class FCPSSchedule:
     """floor-constrained polynomial schedule from gad (rozada et al. 2025).
 
-    defaults match the GAD reference (alpha=4, c_min=0.1). c_0 (= GAD's S) is the
-    cumulative noise at t=T; GAD fixes S=7 for its spatial prior (θ_min≈0.8), but
-    our kronecker Q has a smaller θ_min, so c_0 is auto-derived (FCPSSchedule.for_prior)
-    to give GAD-equivalent mixing (2·c_0·θ_min ≈ 2·7·0.8). this is the one schedule
-    knob the Q change forces; everything else (the c(t)/c̄(t) form) is GAD's.
+    GAD-literal defaults: c_min=0.1, c_0 (= GAD's S) = 7.0, alpha=4.0, T=1.0 — the exact
+    values in exp_gasde.py. these are FIXED, not auto-derived: the θ→GAD-scale reparam in
+    load_prior already puts θ_min=γ=0.8, so a fixed S=7 reproduces GAD's mixing
+    (2·S·θ_min ≈ 2·7·0.8 = 11.2) on every dataset. the c(t)/c̄(t) form is GAD's verbatim.
+    (for_prior below is legacy and no longer used by the pipeline.)
     """
 
     c_min: float = 0.1

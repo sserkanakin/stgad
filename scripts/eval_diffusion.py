@@ -9,8 +9,8 @@ backbone term cancels and we score residuals):
   - Winkler interval score + empirical coverage at level alpha   (calibration)
   - sliced wasserstein-1 + energy distance vs the true residual cloud   (fidelity)
 
-samples use the full stochastic reverse sde (eta=1) by default, so the intervals
-are properly dispersed (the during-training Winkler used eta=0 and under-covered).
+samples come from GAD's Euler–Maruyama reverse SDE (the only sampler — stochastic /
+ancestral, so the intervals are properly dispersed).
 
 writes results/eval/<ds>/<prior>/seed<seed>/test_metrics.json and, with --all,
 prints a kronecker-vs-isotropic comparison table.
@@ -44,7 +44,7 @@ from src.data.residual_dataset import make_dataset, residual_path, train_residua
 from src.diffusion.denoiser import R0Denoiser, SignalDenoiser
 from src.diffusion.forward_fcps import FCPSSchedule, prior_to_torch
 from src.diffusion.prior import load_prior
-from src.diffusion.reverse import reverse_sample
+from src.diffusion.reverse import reverse_sample_em, min_em_steps
 from src.eval.distribution import energy_distance, sliced_wasserstein1
 from src.eval.intervals import winkler_score
 from src.utils import paths
@@ -78,12 +78,14 @@ def load_run(dataset, prior, seed, exp, device, backbone="gwn"):
                            spatial=cfg.get("spatial", "structured"),
                            stiffness_cap=(cfg.get("stiffness_cap") or None),
                            backbone=backbone)
-    # rebuild the schedule exactly as training does: c_0 auto-derived from the
-    # prior (5/θ_min). config.json's c_0 was the ignored CLI default (20000)
-    # until 2026-06-11 - using it here was a bug that broke all earlier evals.
-    schedule = FCPSSchedule.for_prior(prior_obj, c_min=cfg["c_min"], alpha=cfg["alpha"], T=1.0)
-    print(f"[eval_diffusion] schedule c_0 = {schedule.c_0:.2f} (derived from prior, "
-          f"θ_min={float(prior_obj.theta.min()):.4f})", flush=True)
+    # rebuild the GAD-literal schedule exactly as training used it (fixed S/α/c_min
+    # from config.json). default S=7/α=4/c_min=0.1 for back-compat with any config
+    # written before the schedule was fixed.
+    schedule = FCPSSchedule(c_min=cfg.get("c_min", 0.1), c_0=cfg.get("c_0", 7.0),
+                            alpha=cfg.get("alpha", 4.0), T=1.0)
+    print(f"[eval_diffusion] schedule (GAD-literal): S=c_0={schedule.c_0:.2f} "
+          f"α={schedule.alpha:.1f} c_min={schedule.c_min:.2f} "
+          f"θ_min={float(prior_obj.theta.min()):.4f}", flush=True)
     if backbone == "raw":
         import numpy as _np
         T_h = int(_np.load(residual_path(dataset, "test", seed, backbone))["history"].shape[-1])
@@ -107,11 +109,25 @@ def load_run(dataset, prior, seed, exp, device, backbone="gwn"):
 
 
 @torch.no_grad()
-def evaluate(dataset, prior, seed, *, exp, device, k, n_steps, eta, alpha,
+def evaluate(dataset, prior, seed, *, exp, device, k, n_steps, alpha,
              w1_windows, w1_samples, w1_proj, gen_batch, max_windows, generator,
              backbone="gwn", mask_zero=True):
     denoiser, prior_obj, schedule, cfg, ckpt_epoch = load_run(dataset, prior, seed, exp, device, backbone)
     N, H = prior_obj.N, prior_obj.H
+
+    # EM stability floor: explicit EM NaNs when the step count is too low for this prior's
+    # stiffness (θ_max·S). floor n_steps so stiff priors (esp. raw) run correctly.
+    floor = min_em_steps(prior_obj, schedule)
+    if n_steps < floor:
+        print(f"[eval] EM stability floor: n_steps {n_steps} → {floor} (θ_max·S)", flush=True)
+        n_steps = floor
+
+    # reverse process: GAD's Euler–Maruyama SDE — the only sampler (stochastic /
+    # ancestral, the DDPM-equivalent; GAD's GASDE has no DDIM/deterministic variant).
+    def _reverse(Y_cond):
+        s, _ = reverse_sample_em(prior_obj, schedule, denoiser, Y_cond,
+                                 n_steps=n_steps, R_T=None, generator=generator)
+        return s
 
     sigma_r = train_residual_sigma(dataset, seed, backbone)   # same scalar used in training
     test = make_dataset(dataset, "test", seed, backbone, sigma_r)
@@ -146,10 +162,7 @@ def evaluate(dataset, prior, seed, *, exp, device, k, n_steps, eta, alpha,
         yt = Ytrue_all[start:end].to(device)              # raw ground-truth signal
         yp = yt - R0                                      # raw backbone forecast (0 for 'raw')
         b = R0.shape[0]
-        samp, _ = reverse_sample(
-            prior_obj, schedule, denoiser, Y.repeat(k, 1, 1),
-            n_steps=n_steps, eta=eta, R_T=None, generator=generator,
-        )
+        samp = _reverse(Y.repeat(k, 1, 1))
         samp = samp.view(k, b, N, H) * sigma_r            # raw residual samples
         # reconstruct the forecast and clip to [0,∞) (non-negative flow/speed; matches DiffSTG).
         # all metrics are now in raw FORECAST space (= residual space + y_pred, then clip).
@@ -192,10 +205,7 @@ def evaluate(dataset, prior, seed, *, exp, device, k, n_steps, eta, alpha,
     gen_parts = []
     for s in range(0, n_w1, wb):
         e = min(s + wb, n_w1)
-        g, _ = reverse_sample(
-            prior_obj, schedule, denoiser, Yv[s:e].repeat(w1_samples, 1, 1),
-            n_steps=n_steps, eta=eta, R_T=None, generator=generator,
-        )
+        g = _reverse(Yv[s:e].repeat(w1_samples, 1, 1))
         gen_parts.append(g.view(w1_samples, e - s, N, H))
     gen = torch.cat(gen_parts, dim=1) * sigma_r    # (w1_samples, n_w1, N, H), raw units
     w1_h, ed_h = [], []
@@ -209,7 +219,7 @@ def evaluate(dataset, prior, seed, *, exp, device, k, n_steps, eta, alpha,
         "dataset": dataset, "backbone": backbone, "prior": prior, "seed": seed,
         "exp": exp, "ckpt_epoch": ckpt_epoch,
         "n_test_windows": int(n_total), "k_samples": k, "n_steps": n_steps,
-        "eta": eta, "alpha": alpha, "mask_zero": bool(mask_zero),
+        "sampler": "em", "alpha": alpha, "mask_zero": bool(mask_zero),
         "mae": overall(mae_n), "mse": overall(mse_n), "rmse": float((mse_n.sum()/cnt.sum())**0.5),
         "mape": overall(mape_n),
         "winkler": overall(wink_n), "coverage": overall(cov_n),
@@ -235,7 +245,8 @@ def _save(res):
 
 def _print_one(res):
     print(f"\n=== {res['dataset']}/{res['prior']} (best.pt epoch {res['ckpt_epoch']}, "
-          f"{res['n_test_windows']} test windows, K={res['k_samples']}, eta={res['eta']}) ===")
+          f"{res['n_test_windows']} test windows, K={res['k_samples']}, "
+          f"sampler={res.get('sampler','em')}, n_steps={res['n_steps']}) ===")
     print(f"  MAE={res['mae']:.4f}  RMSE={res['mse']**0.5:.4f}  MAPE={res['mape']:.4f}  "
           f"Winkler{int((1-res['alpha'])*100)}={res['winkler']:.4f}  coverage={res['coverage']:.3f}")
     print(f"  CRPS(norm)={res['crps']:.4f}  CRPS(energy)={res.get('crps_energy', float('nan')):.4f}  "
@@ -280,8 +291,8 @@ def main():
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--all", action="store_true", help="eval all datasets x both priors")
     p.add_argument("--k", type=int, default=50, help="samples per window for MAE/MSE/Winkler")
-    p.add_argument("--n-steps", type=int, default=100)
-    p.add_argument("--eta", type=float, default=1.0, help="1.0 = full stochastic reverse sde")
+    p.add_argument("--n-steps", type=int, default=1000,
+                   help="GAD Euler–Maruyama reverse steps (stiff prior needs many; GAD uses ~5000)")
     p.add_argument("--alpha", type=float, default=0.1, help="0.1 -> central 90%% interval")
     p.add_argument("--w1-windows", type=int, default=512)
     p.add_argument("--w1-samples", type=int, default=4)
@@ -306,11 +317,11 @@ def main():
             p.error("give --dataset and --prior, or --all")
         jobs = [(args.dataset, args.prior)]
 
-    print(f"[eval] device={device}  k={args.k}  n_steps={args.n_steps}  eta={args.eta}")
+    print(f"[eval] device={device}  sampler=EM (GAD)  k={args.k}  n_steps={args.n_steps}")
     results = []
     for ds, pr in jobs:
         res = evaluate(ds, pr, args.seed, exp=args.exp, device=device, k=args.k,
-                       n_steps=args.n_steps, eta=args.eta, alpha=args.alpha,
+                       n_steps=args.n_steps, alpha=args.alpha,
                        w1_windows=args.w1_windows, w1_samples=args.w1_samples,
                        w1_proj=args.w1_proj, gen_batch=args.gen_batch,
                        max_windows=args.max_windows, generator=g, backbone=args.backbone,

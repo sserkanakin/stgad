@@ -27,9 +27,11 @@ case "$DATASET" in
 esac
 RES_TIME="${RES_TIME:-00:30:00}"
 DIFF_TIME="${DIFF_TIME:-10:00:00}"
-EVAL_TIME="${EVAL_TIME:-03:00:00}"
-# full test set (no --max-windows), CRPS auto. k/steps kept light enough to fit.
-EVAL_CFG="--exp ${EXP} --seed ${SEED} --k 30 --n-steps 50 --gen-batch 1024 --w1-samples 4"
+# EM reverse at 1000 steps is ~20x the old DDIM-50 eval; give it room (pemsbay slowest).
+EVAL_TIME="${EVAL_TIME:-08:00:00}"
+# full test set (no --max-windows). EM reverse (GAD) needs many steps on the stiff
+# prior (GAD uses ~5000); 1000 is the stability floor, so EVAL_TIME is generous.
+EVAL_CFG="--exp ${EXP} --seed ${SEED} --k 30 --n-steps 1000 --gen-batch 1024 --w1-samples 4"
 
 jobid_of() { awk '/Submitted batch job/{print $NF}'; }
 

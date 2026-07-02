@@ -32,9 +32,12 @@ EXP="${EXP:-dev}"
 EPOCHS="${EPOCHS:-200}"
 BATCH_SIZE="${BATCH_SIZE:-32}"
 LR="${LR:-1e-3}"
+# FCPS schedule = GAD-literal (S=7, α=4, c_min=0.1). these are fixed GAD values,
+# not per-dataset knobs; override only for a schedule ablation.
 D_H="${D_H:-32}"
-C_0="${C_0:-20000}"
-ALPHA="${ALPHA:-7.0}"
+C_0="${C_0:-7.0}"
+ALPHA="${ALPHA:-4.0}"
+C_MIN="${C_MIN:-0.1}"
 EXTRA_FLAGS="${EXTRA_FLAGS:-}"
 
 export STAGE="diffusion"
@@ -42,7 +45,7 @@ RUN_NAME="diffusion_${BACKBONE}_${DATASET}_${PRIOR}_seed${SEED}"
 scontrol update job="${SLURM_JOB_ID}" JobName="${RUN_NAME}" 2>/dev/null || true
 
 log_run_header "${DAIC_PYTHON} scripts/train_diffusion.py --dataset ${DATASET} --prior ${PRIOR} --exp ${EXP} --seed ${SEED} \
---epochs ${EPOCHS} --batch-size ${BATCH_SIZE} --lr ${LR} --d-h ${D_H} --c-0 ${C_0} --alpha ${ALPHA} ${EXTRA_FLAGS}"
+--epochs ${EPOCHS} --batch-size ${BATCH_SIZE} --lr ${LR} --d-h ${D_H} --c-0 ${C_0} --alpha ${ALPHA} --c-min ${C_MIN} ${EXTRA_FLAGS}"
 
 # resource profiling: sample GPU memory + utilisation every 10s in the background
 # so we can size production resources from a smoke run. cleaned up on exit.
@@ -66,6 +69,7 @@ srun --export=ALL "${DAIC_PYTHON}" scripts/train_diffusion.py \
     --d-h "${D_H}" \
     --c-0 "${C_0}" \
     --alpha "${ALPHA}" \
+    --c-min "${C_MIN}" \
     ${EXTRA_FLAGS}
 RC=$?
 set -e

@@ -19,9 +19,11 @@ usage:
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import os
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -54,8 +56,13 @@ from src.utils.checkpoint import (
     save_checkpoint,
 )
 from src.utils.config import hash_config
+from src.utils.logging_setup import get_logger, setup_logging
 from src.utils.seed import set_seed
 from src.utils.wandb_setup import init_wandb
+
+# shared timestamped logger (configured in main() once the run dir is known); module
+# helpers below log through it so every line lands in both stdout and the run's train.log.
+log = get_logger()
 
 # Config keys whose value should NOT contribute to the hash — varying them
 # should NOT trigger a fresh wandb run / fresh checkpoint dir.
@@ -269,9 +276,9 @@ def _log_val(epoch: int, res: dict, *, to_wandb: bool) -> None:
     """print the periodic full-reverse val eval and optionally push scalars to wandb."""
     hz = [h for h in _HL_HORIZONS if h <= len(res["mae_h"])]
     hl = ", ".join(f"h{h}={res['mae_h'][h - 1]:.3f}" for h in hz)
-    print(f"  [val-eval] {res['n_windows']} windows | MAE={res['mae']:.3f} "
-          f"RMSE={res['rmse']:.3f} CRPS={res['crps']:.4f} ({hl}) | "
-          f"W1={res['w1']:.3f} ED={res['energy']:.3f}", flush=True)
+    log.info(f"  [val-eval] {res['n_windows']} windows | MAE={res['mae']:.3f} "
+             f"RMSE={res['rmse']:.3f} CRPS={res['crps']:.4f} ({hl}) | "
+             f"W1={res['w1']:.3f} ED={res['energy']:.3f}")
     if not to_wandb:
         return
     import wandb
@@ -283,7 +290,7 @@ def _log_val(epoch: int, res: dict, *, to_wandb: bool) -> None:
     wandb.log(log)
 
 
-def _run_test_eval(args, device, best_epoch, run_id, logline) -> None:
+def _run_test_eval(args, device, best_epoch, run_id) -> None:
     """combined-job test eval: reload best.pt and evaluate on the test split at each
     --eval-steps value, writing test_results.json next to the eval outputs (Vimal-style:
     one payload with the best_epoch and a per-sample-steps results list)."""
@@ -297,7 +304,7 @@ def _run_test_eval(args, device, best_epoch, run_id, logline) -> None:
     gen = (None if device.type == "mps"
            else torch.Generator(device=device.type).manual_seed(args.seed))
     steps_list = [int(x) for x in str(args.eval_steps).split(",") if x.strip()]
-    logline(f"[test] best.pt (epoch {best_epoch}); eval at sample_steps={steps_list}")
+    log.info(f"[test] best.pt (epoch {best_epoch}); eval at sample_steps={steps_list}")
     results = []
     for ns in steps_list:
         res = evaluate(args.dataset, args.prior, args.seed, exp=args.exp, device=device,
@@ -306,18 +313,18 @@ def _run_test_eval(args, device, best_epoch, run_id, logline) -> None:
                        max_windows=args.eval_max_windows, generator=gen,
                        backbone=args.backbone, mask_zero=True)
         results.append(res)
-        logline(f"  [test n_steps={ns}] MAE={res['mae']:.4f} RMSE={res['rmse']:.4f} "
-                f"MAPE={res['mape']:.4f} CRPS={res['crps']:.4f} "
-                f"Winkler={res['winkler']:.4f} cov={res['coverage']:.3f}")
+        log.info(f"  [test n_steps={ns}] MAE={res['mae']:.4f} RMSE={res['rmse']:.4f} "
+                 f"MAPE={res['mape']:.4f} CRPS={res['crps']:.4f} "
+                 f"Winkler={res['winkler']:.4f} cov={res['coverage']:.3f}")
     payload = {"run_id": run_id, "dataset": args.dataset, "prior": args.prior,
                "backbone": args.backbone, "seed": args.seed, "exp": args.exp,
                "best_epoch": best_epoch, "select_metric": "crps", "test_results": results}
     (out_dir / "test_results.json").write_text(json.dumps(payload, indent=2))
-    logline(f"[test] wrote {out_dir / 'test_results.json'}")
-    _write_run_summary(payload, out_dir, logline)
+    log.info(f"[test] wrote {out_dir / 'test_results.json'}")
+    _write_run_summary(payload, out_dir)
 
 
-def _write_run_summary(payload: dict, out_dir, logline) -> None:
+def _write_run_summary(payload: dict, out_dir) -> None:
     """readable end-of-run summary (Vimal-style): a boxed header + a metric table over
     the eval sample-step settings + per-horizon MAE for the best (largest-n_steps) run.
     printed to the log AND saved to summary.txt next to test_results.json."""
@@ -349,8 +356,8 @@ def _write_run_summary(payload: dict, out_dir, logline) -> None:
     text = "\n".join(L)
     (out_dir / "summary.txt").write_text(text + "\n")
     for line in L:
-        logline(line)
-    logline(f"[test] wrote {out_dir / 'summary.txt'}")
+        log.info(line)
+    log.info(f"[test] wrote {out_dir / 'summary.txt'}")
 
 
 # ─── Main ────────────────────────────────────────────────────────────────────
@@ -471,11 +478,16 @@ def main() -> None:
     ckpt_dir.mkdir(parents=True, exist_ok=True)
     (ckpt_dir / "config.json").write_text(json.dumps(cfg, indent=2, default=str))
 
+    # timestamped logging → stdout (slurm .out) AND the per-run train.log (Vimal-style).
+    setup_logging(ckpt_dir / "train.log")
+    log.info(f"===== run {run_id} =====")
+    log.info(f"run dir: {ckpt_dir}")
+
     device = torch.device(
         "cuda" if torch.cuda.is_available()
         else ("mps" if torch.backends.mps.is_available() else "cpu")
     )
-    print(f"[train_diffusion] device={device}  run_id={run_id}", flush=True)
+    log.info(f"device={device}  run_id={run_id}")
 
     set_seed(args.seed)
 
@@ -495,8 +507,8 @@ def main() -> None:
     sigma_r = train_residual_sigma(args.dataset, args.seed, args.backbone)
     train_ds = make_dataset(args.dataset, "train", args.seed, args.backbone, sigma_r)
     val_ds = make_dataset(args.dataset, "val", args.seed, args.backbone, sigma_r)
-    print(f"[train_diffusion] train={len(train_ds)}  val={len(val_ds)}  "
-          f"sigma_r={sigma_r:.4f} (residuals modeled in unit space)", flush=True)
+    log.info(f"train={len(train_ds)}  val={len(val_ds)}  "
+             f"sigma_r={sigma_r:.4f} (residuals modeled in unit space)")
 
     pin = device.type == "cuda"
     train_loader = DataLoader(
@@ -517,14 +529,13 @@ def main() -> None:
     # the θ→GAD-scale reparam already set θ_min=γ=0.8, so a fixed S=7 reproduces GAD's
     # mixing (2·S·θ_min≈11.2) on every dataset.
     schedule = FCPSSchedule(c_min=args.c_min, c_0=args.c_0, alpha=args.alpha, T=1.0)
-    print(f"[train_diffusion] schedule (GAD-literal): S=c_0={schedule.c_0:.2f} "
-          f"α={schedule.alpha:.1f} c_min={schedule.c_min:.2f}", flush=True)
-    print(
-        f"[train_diffusion] prior N={prior.N} H={prior.H} γ={prior.gamma:.4f}  "
+    log.info(f"schedule (GAD-literal): S=c_0={schedule.c_0:.2f} "
+             f"α={schedule.alpha:.1f} c_min={schedule.c_min:.2f}")
+    log.info(
+        f"prior N={prior.N} H={prior.H} γ={prior.gamma:.4f}  "
         f"θ_min={float(prior.theta.min()):.4f}  θ_max={float(prior.theta.max()):.2f}  "
         f"2·S·θ_min={2*schedule.c_0*float(prior.theta.min()):.2f} (GAD target ≈11.2)  "
-        f"train noise c̄ = S·u^0.65 ∈ [0, {schedule.c_0:.3g}]",
-        flush=True,
+        f"train noise c̄ = S·u^0.65 ∈ [0, {schedule.c_0:.3g}]"
     )
     # EM stability floor: explicit EM diverges to NaN when the step count is too low for
     # this prior's stiffness (θ_max·S). floor both the periodic val eval and the test eval
@@ -532,8 +543,8 @@ def main() -> None:
     em_floor = min_em_steps(prior, schedule)
     val_steps_eff = max(args.val_steps, em_floor)
     if val_steps_eff != args.val_steps:
-        print(f"[train_diffusion] EM stability floor: val eval steps "
-              f"{args.val_steps} → {val_steps_eff} (θ_max·S={em_floor})", flush=True)
+        log.info(f"EM stability floor: val eval steps "
+                 f"{args.val_steps} → {val_steps_eff} (θ_max·S={em_floor})")
 
     # ── Model. backbone='raw' → history-conditioned SignalDenoiser (T_h from the
     # conditioning width); else the forecast-conditioned R0Denoiser.
@@ -551,7 +562,7 @@ def main() -> None:
             d_h=args.d_h, channel_multipliers=tuple(args.channel_multipliers),
             n_blocks=args.n_blocks, device=str(device),
         ).to(device)
-    print(f"[train_diffusion] denoiser params: {num_parameters(denoiser):,}", flush=True)
+    log.info(f"denoiser params: {num_parameters(denoiser):,}")
 
     # GAD's TV penalty (off by default; residuals are rough, may be misspecified).
     A_t = torch.as_tensor(A, device=device, dtype=torch.float32) if args.tv_weight else None
@@ -591,8 +602,7 @@ def main() -> None:
         _hist = ckpt_dir / "validation_history.json"
         if _hist.exists():
             best_epoch = int(json.loads(_hist.read_text()).get("best_epoch", -1))
-        print(f"[train_diffusion] resumed from epoch {start_epoch}  best_val_CRPS={best_crps:.4f}",
-              flush=True)
+        log.info(f"resumed from epoch {start_epoch}  best_val_CRPS={best_crps:.4f}")
 
     # ── wandb
     if os.environ.get("WANDB_MODE", "online") != "disabled":
@@ -614,14 +624,20 @@ def main() -> None:
     valid_idx = full_valid.nonzero(as_tuple=True)[0]
     n_val = min(args.val_windows, valid_idx.numel())
     val_R0, val_Yhat = val_ds.R0[valid_idx[:n_val]], val_ds.Y_hat[valid_idx[:n_val]]
-    print(f"[train_diffusion] per-epoch val_loss (GAD SNR-MSE) for the curve + LR plateau; "
-          f"FULL EM reverse eval every {args.val_every} epochs on {n_val} clean windows "
-          f"(k={args.val_k}, steps={args.val_steps}) → best.pt selected by CRPS (Vimal protocol); "
-          f"{float(full_valid.float().mean()):.2f} of val fully observed", flush=True)
+    log.info(f"per-epoch val_loss (GAD SNR-MSE) for the curve + LR plateau; "
+             f"FULL EM reverse eval every {args.val_every} epochs on {n_val} clean windows "
+             f"(k={args.val_k}, steps={val_steps_eff}) → best.pt selected by CRPS (Vimal protocol); "
+             f"{float(full_valid.float().mean()):.2f} of val fully observed")
 
-    # ── Vimal-style readable log + epoch-by-epoch history json (per-run folder)
-    log_path = ckpt_dir / "train.log"
+    # per-run artefacts (easy navigation): validation_history.json (full, for resume) +
+    # history.csv (flat, one row/epoch — open in a spreadsheet or grep/plot directly).
     hist_path = ckpt_dir / "validation_history.json"
+    csv_path = ckpt_dir / "history.csv"
+    _CSV_COLS = ["timestamp", "epoch", "train_loss", "val_loss", "lr", "time_s",
+                 "val_mae", "val_rmse", "val_crps", "val_w1", "val_energy"]
+    if not csv_path.exists():                       # keep one continuous file across resumes
+        with open(csv_path, "w", newline="") as f:
+            csv.writer(f).writerow(_CSV_COLS)
     history: list[dict] = []
     wandb_on = os.environ.get("WANDB_MODE", "online") != "disabled"
 
@@ -637,16 +653,11 @@ def main() -> None:
         _log_val(epoch, res, to_wandb=wandb_on)
         return res
 
-    def _logline(msg: str) -> None:
-        print(msg, flush=True)
-        with open(log_path, "a") as f:
-            f.write(msg + "\n")
-
-    _logline(f"# {run_id} | {args.dataset} prior={args.prior} backbone={args.backbone} "
+    log.info(f"# {run_id} | {args.dataset} prior={args.prior} backbone={args.backbone} "
              f"seed={args.seed} | select=val_CRPS (full EM reverse every {args.val_every} ep) | "
              f"schedule S={schedule.c_0:.1f} α={schedule.alpha:.0f} c_min={schedule.c_min:.2f} | "
              f"reverse=EM")
-    _logline(f"epoch | train | val_loss | lr | time   "
+    log.info(f"epoch | train | val_loss | lr | time   "
              f"(+ full EM eval MAE/RMSE/CRPS every {args.val_every} ep)")
 
     # ── Train. per-epoch val_loss drives the curve + LR plateau; best.pt is selected by
@@ -678,7 +689,7 @@ def main() -> None:
         sched.step(vloss)
         lr_now = optim.param_groups[0]["lr"]
         elapsed = time.time() - t0
-        _logline(f"{epoch:04d}  | train={train_loss:7.4f} | "
+        log.info(f"{epoch:04d}  | train={train_loss:7.4f} | "
                  f"val_loss={vloss:7.4f} | {lr_now:.1e} | {elapsed:5.1f}s")
 
         ev = _maybe_eval(epoch, is_last=(epoch == args.epochs - 1))
@@ -694,6 +705,12 @@ def main() -> None:
         history.append(row)
         hist_path.write_text(json.dumps(
             {"select_metric": "crps", "best_epoch": best_epoch, "history": history}, indent=2))
+        # flat per-epoch row for easy scanning/plotting (blank cells on non-eval epochs)
+        with open(csv_path, "a", newline="") as f:
+            csv.writer(f).writerow(
+                [datetime.now().strftime("%Y-%m-%d %H:%M:%S"), epoch,
+                 f"{train_loss:.6f}", f"{vloss:.6f}", f"{lr_now:.3e}", f"{elapsed:.1f}"]
+                + [f"{row[c]:.6f}" if c in row else "" for c in _CSV_COLS[6:]])
         if wandb_on:
             wandb.log({"train/loss": train_loss, "val/loss": vloss,
                        "lr": lr_now, "epoch": epoch})
@@ -703,19 +720,19 @@ def main() -> None:
         if improved:
             save_checkpoint(ckpt_dir / "best.pt", denoiser, optim, sched,
                             epoch=epoch, best_val_mae=best_crps, rng_states=get_rng_states())
-            _logline(f"  [saved best] epoch={epoch} val_CRPS={best_crps:.5f}")
+            log.info(f"  [saved best] epoch={epoch} val_CRPS={best_crps:.5f}")
 
         # early stop (Vimal): no CRPS improvement for `patience` epochs since the best.
         if best_epoch >= 0 and (epoch - best_epoch) >= args.patience:
-            _logline(f"[early stop] epoch {epoch} (patience={args.patience}, "
+            log.info(f"[early stop] epoch {epoch} (patience={args.patience}, "
                      f"best_epoch={best_epoch}, best_val_CRPS={best_crps:.5f})")
             break
 
-    _logline(f"[done] best_epoch={best_epoch} best_val_CRPS={best_crps:.5f}")
+    log.info(f"[done] best_epoch={best_epoch} best_val_CRPS={best_crps:.5f}")
 
     # ── Combined test eval (one job): load best.pt, run the locked EM test, write json + summary
     if args.eval_after:
-        _run_test_eval(args, device, best_epoch, run_id, _logline)
+        _run_test_eval(args, device, best_epoch, run_id)
 
 
 if __name__ == "__main__":

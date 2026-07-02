@@ -48,6 +48,12 @@ from src.diffusion.reverse import reverse_sample_em, min_em_steps
 from src.eval.distribution import energy_distance, sliced_wasserstein1
 from src.eval.intervals import winkler_score
 from src.utils import paths
+from src.utils.logging_setup import get_logger, setup_logging
+
+# shared timestamped logger. when eval runs inside the combined traineval job the logger
+# is already configured (lines land in the run's train.log too); standalone, main() sets
+# it up for stdout. formatted comparison tables stay on plain print (kept clean).
+log = get_logger()
 
 _HL = (3, 6, 12)  # highlighted horizons (1-indexed)
 
@@ -83,9 +89,9 @@ def load_run(dataset, prior, seed, exp, device, backbone="gwn"):
     # written before the schedule was fixed.
     schedule = FCPSSchedule(c_min=cfg.get("c_min", 0.1), c_0=cfg.get("c_0", 7.0),
                             alpha=cfg.get("alpha", 4.0), T=1.0)
-    print(f"[eval_diffusion] schedule (GAD-literal): S=c_0={schedule.c_0:.2f} "
-          f"α={schedule.alpha:.1f} c_min={schedule.c_min:.2f} "
-          f"θ_min={float(prior_obj.theta.min()):.4f}", flush=True)
+    log.info(f"[eval] schedule (GAD-literal): S=c_0={schedule.c_0:.2f} "
+             f"α={schedule.alpha:.1f} c_min={schedule.c_min:.2f} "
+             f"θ_min={float(prior_obj.theta.min()):.4f}")
     if backbone == "raw":
         import numpy as _np
         T_h = int(_np.load(residual_path(dataset, "test", seed, backbone))["history"].shape[-1])
@@ -119,7 +125,7 @@ def evaluate(dataset, prior, seed, *, exp, device, k, n_steps, alpha,
     # stiffness (θ_max·S). floor n_steps so stiff priors (esp. raw) run correctly.
     floor = min_em_steps(prior_obj, schedule)
     if n_steps < floor:
-        print(f"[eval] EM stability floor: n_steps {n_steps} → {floor} (θ_max·S)", flush=True)
+        log.info(f"[eval] EM stability floor: n_steps {n_steps} → {floor} (θ_max·S)")
         n_steps = floor
 
     # reverse process: GAD's Euler–Maruyama SDE — the only sampler (stochastic /
@@ -146,8 +152,8 @@ def evaluate(dataset, prior, seed, *, exp, device, k, n_steps, alpha,
 
     import time
     nchunks = (n_total + chunk - 1) // chunk
-    print(f"[eval] {dataset}/{prior}: {n_total} test windows, k={k}, chunk={chunk}, "
-          f"{nchunks} chunks", flush=True)
+    log.info(f"[eval] {dataset}/{prior}: {n_total} test windows, k={k}, chunk={chunk}, "
+             f"{nchunks} chunks")
     t0 = time.time()
 
     # ── point accuracy + Winkler: K samples per window, chunked over windows ──
@@ -182,11 +188,10 @@ def evaluate(dataset, prior, seed, *, exp, device, k, n_steps, alpha,
         if ci % max(1, nchunks // 10) == 0 or ci == nchunks - 1:
             el = time.time() - t0
             remaining = el / (ci + 1) * (nchunks - ci - 1)   # don't shadow the sde `eta`
-            print(f"  [{dataset}/{prior}] point {ci+1}/{nchunks} "
-                  f"({100*(ci+1)/nchunks:.0f}%)  elapsed={el:.0f}s  eta={remaining:.0f}s", flush=True)
+            log.info(f"  [{dataset}/{prior}] point {ci+1}/{nchunks} "
+                     f"({100*(ci+1)/nchunks:.0f}%)  elapsed={el:.0f}s  eta={remaining:.0f}s")
 
-    print(f"  [{dataset}/{prior}] point done in {time.time()-t0:.0f}s; computing W1/energy...",
-          flush=True)
+    log.info(f"  [{dataset}/{prior}] point done in {time.time()-t0:.0f}s; computing W1/energy...")
     cnt = cnt.clamp(min=1.0)
     mae_h = (mae_n / cnt); mse_h = (mse_n / cnt); mape_h = (mape_n / cnt)
     wink_h = (wink_n / cnt); cov_h = (cov_n / cnt); crps_h = (crps_n / cnt)
@@ -303,6 +308,8 @@ def main():
     p.add_argument("--no-mask-zero", dest="mask_zero", action="store_false",
                    help="keep y==0 points in the metrics (default: drop them, SpecSTG/DiffSTG convention)")
     args = p.parse_args()
+
+    setup_logging(None)        # standalone: timestamped lines to stdout (traineval configures its own)
 
     device = torch.device("cuda" if torch.cuda.is_available()
                           else "mps" if torch.backends.mps.is_available() else "cpu")

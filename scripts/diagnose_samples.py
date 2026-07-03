@@ -171,8 +171,8 @@ def check_reverse(args, device, gen_) -> None:
     Y = ds.Y_hat[idx].to(device)
     W, N, H = R0.shape
 
-    # generate K samples per window (raw units)
-    chunk = max(1, 1024 // args.k)
+    # generate K samples per window (raw units); cap trajectories/call to avoid OOM
+    chunk = max(1, args.gen_batch // args.k)
     gens = []
     for s in range(0, W, chunk):
         e = min(s + chunk, W)
@@ -207,6 +207,8 @@ def main() -> None:
     p.add_argument("--windows", type=int, default=256, help="clean val windows to use")
     p.add_argument("--n-steps", type=int, default=1000, help="EM reverse steps (auto-floored)")
     p.add_argument("--n-proj", type=int, default=256, help="projections for sliced-W1")
+    p.add_argument("--gen-batch", type=int, default=512,
+                   help="max trajectories per reverse call (lower on small GPUs; ~128 for MPS)")
     args = p.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available()

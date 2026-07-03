@@ -74,6 +74,13 @@ EXPORTS="ALL,DATASET=${DATASET},EXP=${EXP}"
 [ -n "${PRIOR:-}" ]      && EXPORTS="${EXPORTS},PRIOR=${PRIOR}"
 [ -n "${BACKBONE:-}" ]   && EXPORTS="${EXPORTS},BACKBONE=${BACKBONE}"
 [ -n "${EVAL_STEPS:-}" ] && EXPORTS="${EXPORTS},EVAL_STEPS=${EVAL_STEPS}"
+# diagnose stage knobs (single-value only — never space-containing strings, which
+# slurm --export mangles; that's why we build args from these, not a DIAG_ARGS blob).
+[ -n "${CHECK:-}" ]         && EXPORTS="${EXPORTS},CHECK=${CHECK}"
+[ -n "${DIAG_K:-}" ]        && EXPORTS="${EXPORTS},DIAG_K=${DIAG_K}"
+[ -n "${DIAG_WINDOWS:-}" ]  && EXPORTS="${EXPORTS},DIAG_WINDOWS=${DIAG_WINDOWS}"
+[ -n "${DIAG_STEPS:-}" ]    && EXPORTS="${EXPORTS},DIAG_STEPS=${DIAG_STEPS}"
+[ -n "${DIAG_GENBATCH:-}" ] && EXPORTS="${EXPORTS},DIAG_GENBATCH=${DIAG_GENBATCH}"
 [ -n "${LR:-}" ]         && EXPORTS="${EXPORTS},LR=${LR}"
 
 # per-cluster slurm resources. partition always; qos only if the cluster has

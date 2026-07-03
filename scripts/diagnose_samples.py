@@ -171,15 +171,20 @@ def check_reverse(args, device, gen_) -> None:
     Y = ds.Y_hat[idx].to(device)
     W, N, H = R0.shape
 
-    # generate K samples per window (raw units); cap trajectories/call to avoid OOM
+    # generate K samples per window (raw units); cap trajectories/call to avoid OOM and
+    # move each chunk to CPU immediately so the GPU only ever holds one reverse call.
     chunk = max(1, args.gen_batch // args.k)
     gens = []
     for s in range(0, W, chunk):
         e = min(s + chunk, W)
         samp, _ = reverse_sample_em(prior, schedule, denoiser, Y[s:e].repeat(args.k, 1, 1),
                                     n_steps=args.n_steps, generator=gen_)
-        gens.append(samp.view(args.k, e - s, N, H) * sigma_r)
-    gen = torch.cat(gens, dim=1)                                           # (K, W, N, H) raw
+        gens.append((samp.view(args.k, e - s, N, H) * sigma_r).cpu())
+        del samp
+        if device.type == "cuda":
+            torch.cuda.empty_cache()
+    gen = torch.cat(gens, dim=1)                                           # (K, W, N, H) raw, CPU
+    R0 = R0.cpu()
     print(f"[reverse] {args.dataset}/{args.prior}/{args.backbone} best.pt(ep {ep}): "
           f"K={args.k} × {W} windows, {args.n_steps} EM steps")
 
@@ -203,12 +208,12 @@ def main() -> None:
     p.add_argument("--backbone", default="gwn")
     p.add_argument("--exp", default="dev")
     p.add_argument("--seed", type=int, default=42)
-    p.add_argument("--k", type=int, default=100, help="samples/window for the reverse check")
-    p.add_argument("--windows", type=int, default=256, help="clean val windows to use")
+    p.add_argument("--k", type=int, default=50, help="samples/window for the reverse check")
+    p.add_argument("--windows", type=int, default=128, help="clean val windows to use")
     p.add_argument("--n-steps", type=int, default=1000, help="EM reverse steps (auto-floored)")
     p.add_argument("--n-proj", type=int, default=256, help="projections for sliced-W1")
-    p.add_argument("--gen-batch", type=int, default=512,
-                   help="max trajectories per reverse call (lower on small GPUs; ~128 for MPS)")
+    p.add_argument("--gen-batch", type=int, default=256,
+                   help="max trajectories per reverse call (lower on small GPUs; ~64 for MPS)")
     args = p.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available()

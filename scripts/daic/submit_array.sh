@@ -67,6 +67,10 @@ echo "backbones: ${BACKBONES}   priors: ${PRIORS}"
 echo "${N} cells (dataset-major), throttle ${THROTTLE} concurrent. config: ${GRID_FILE}"
 echo "inputs (residuals): ${RESULTS_ROOT}"
 echo "OUTPUTS (ckpt/eval/logs): ${OUTPUT_ROOT}"
+# convenience symlink so the array's OUTPUT_ROOT tree is browsable from the project
+# root as ./out/ (it lives on windowshome, separate from results/ → research-tud-data).
+ln -sfn "${OUTPUT_ROOT}" "$(cd "${HERE}/../.." && pwd)/out" 2>/dev/null || true
+echo "browse from project: ./out/diffusion/${EXP}/  ·  ./out/logs/${EXP}/grid/"
 column -t "${GRID_FILE}" | sed 's/^/  /'
 echo
 

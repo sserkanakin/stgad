@@ -50,7 +50,10 @@ case "$STAGE" in
   eval)
     SEED="${3:?seed}"; SBATCH=submit_eval.sbatch
     RUN_NAME="eval_${DATASET}_${PRIOR:-kronecker}_seed${SEED}"; shift 3 ;;
-  *) echo "stage must be: smoke | backbone | residuals | diffusion | traineval | eval" >&2; exit 2 ;;
+  diagnose)
+    SEED="${3:?seed}"; SBATCH=submit_diagnose.sbatch
+    RUN_NAME="diagnose_${DATASET}_${PRIOR:-kronecker}_${BACKBONE:-gwn}_seed${SEED}"; shift 3 ;;
+  *) echo "stage must be: smoke | backbone | residuals | diffusion | traineval | eval | diagnose" >&2; exit 2 ;;
 esac
 
 # everything namespaces under the experiment tag EXP so a fresh launch is fully

@@ -1,9 +1,11 @@
 #!/bin/bash
 #SBATCH --job-name=grid_diffusion
-# one array TASK = one (dataset, backbone, prior) combined train+eval. 16h covers the
-# slowest cell (pemsbay train + full test eval). best.pt is checkpointed on every CRPS
-# improvement, so a walltime kill still keeps the best model.
-#SBATCH --time=16:00:00
+# one array TASK = one (dataset, backbone, prior) combined train+eval. 24h covers the
+# slowest cell: pemsbay raw ~285s/epoch × up to 200 epochs (~16h) + val-evals + the EM
+# test eval. best.pt is checkpointed on every CRPS improvement, so a walltime kill still
+# keeps the best model (just re-run its eval). override higher via submit_array.sh's
+# passthrough, e.g. `scripts/daic/submit_array.sh 42 --time=36:00:00`.
+#SBATCH --time=24:00:00
 # partition / qos / gres + --array + --output are injected by submit_array.sh.
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=64G

@@ -20,8 +20,11 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# ALWAYS re-source env.sh (not just when DAIC_CLUSTER is unset): a shell that
+# sourced an OLDER env.sh keeps stale DAIC_* vars, so newly-added config (e.g.
+# DAIC_PIP_EXTRAS) would be silently ignored and setup would use wrong defaults.
 # shellcheck source=/dev/null
-[ -n "${DAIC_CLUSTER:-}" ] || source "${HERE}/env.sh"
+source "${HERE}/env.sh"
 
 PYVER="${DAIC_PYTHON_VERSION:-3.11}"
 
@@ -59,7 +62,7 @@ setup_conda() {
   pip install --prefer-binary --index-url https://download.pytorch.org/whl/cu121 "torch>=2.2,<2.7"
 
   echo "[5/6] Project (editable) + remaining deps ..."
-  pip install --prefer-binary -e ".${DAIC_PIP_EXTRAS:-[dev]}"
+  pip install --prefer-binary -e ".${DAIC_PIP_EXTRAS-[dev]}"
 }
 
 # ── experimental DAIC: module tree + venv overlay ───────────────────────────
@@ -96,12 +99,12 @@ setup_venv() {
     # torch on PYTHONPATH. the wheel pulls its own nvidia-* cuda libs + numpy.
     pip install --prefer-binary --index-url "${DAIC_TORCH_PIP_INDEX}" "${DAIC_TORCH_SPEC}"
     # remaining pure-python deps from PyPI (torch already satisfied above).
-    pip install --prefer-binary -e ".${DAIC_PIP_EXTRAS:-[dev]}"
+    pip install --prefer-binary -e ".${DAIC_PIP_EXTRAS-[dev]}"
   else
     echo "[3/4] Project (editable) + remaining deps ..."
     # torch/numpy come from the module via --system-site-packages, so pip sees
     # them satisfied and installs only the rest (wandb, easydict, einops, ...).
-    pip install --prefer-binary -e ".${DAIC_PIP_EXTRAS:-[dev]}"
+    pip install --prefer-binary -e ".${DAIC_PIP_EXTRAS-[dev]}"
   fi
 }
 

@@ -115,19 +115,35 @@ class FCPSSchedule:
 
 @dataclass(frozen=True)
 class ULSchedule:
-    """linear baseline schedule: c(t) = slope t/T, c̄(t) = slope t²/(2T).
+    """linear rate schedule: c(t) = slope t/T, c̄(t) = slope t²/(2T).
 
-    for parity with an fcps schedule at the same c̄(T)=c_0, set slope = 2 c_0.
+    the reverse/training schedule for the ISOTROPIC arm: with a uniform θ there
+    are no slow graph modes to protect, so FCPS's floor-constrained polynomial is
+    unnecessary — a plain linear rate does the job. for heat parity with an fcps
+    schedule at the same total heat c̄(T)=c_0, set slope = 2·c_0 (c_0=7 → slope 14).
+    duck-types FCPSSchedule (c_0 / c / c_bar / t_of_c_bar), so the trainer and the
+    EM reverse sampler work unchanged.
     """
 
-    slope: float = 200.0
+    slope: float = 14.0
     T: float = 1.0
+
+    @property
+    def c_0(self) -> float:
+        """total heat c̄(T) = slope·T/2 — the same role as FCPSSchedule.c_0."""
+        return self.slope * self.T / 2.0
 
     def c(self, t):  # noqa: A003 — match FCPSSchedule
         return self.slope * np.asarray(t) / self.T
 
     def c_bar(self, t):
         return self.slope * np.asarray(t) ** 2 / (2.0 * self.T)
+
+    def t_of_c_bar(self, c_bar):
+        """invert c̄(t) → t ∈ [0, T]: t = T·sqrt(c̄/c_0), closed form. np or torch."""
+        if isinstance(c_bar, torch.Tensor):
+            return self.T * torch.clamp(c_bar / self.c_0, min=0.0).sqrt()
+        return self.T * np.sqrt(np.clip(np.asarray(c_bar, dtype=float) / self.c_0, 0.0, None))
 
 
 # ─── Forward sampler ─────────────────────────────────────────────────────────

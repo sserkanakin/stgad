@@ -3,20 +3,21 @@
 # The (N, N) source adjacency is precomputed per variant by
 # scripts/build_datasets.py and stored in data/processed/<variant>/adj.npz as
 # A (weighted for the speed datasets, binary for the flow datasets), A_sym and
-# the symmetric normalised Laplacian L. We read A here and (optionally) repair
-# isolated nodes for the connected-graph prior.
+# the symmetric normalised Laplacian L. We read A here and repair it to a single
+# connected component for the heat-equation prior (see REPAIR_GRAPH below).
 import numpy as np
 
 from src.utils import paths
 
-# graph surgery is OFF: the structured prior Σ_S = (L + γI)^{-1} uses a fixed
-# γ = 0.8 (GAD), and that shift lifts every Laplacian zero mode — so isolated
-# sensors AND multi-node disconnected components (e.g. pems04's 12 clusters) all
-# get a finite, well-conditioned prior with NO invented edges. this matches how
-# GAD/Vimal handle connectivity (rely on the γ shift, not reconnection). the old
-# repair only reattached degree-0 singletons anyway (a no-op on pems04, which has
-# none). set True to restore the correlation-based reconnection of singletons.
-REPAIR_ISOLATED = False
+# graph surgery is ON (2026-07-06, supervisor requirement): the heat-equation
+# prior must run on a SINGLE connected component — isolated sensors and multi-node
+# clusters (pems04 has 12 components) are reconnected, not merely lifted by the
+# γ-shift. repair_adjacency adds exactly (n_components - 1) edges: per non-giant
+# component, ONE edge to the giant component at the most train-signal-correlated
+# node pair, weight = median existing edge weight. this deviates from GAD-literal
+# "no invented edges" (GAD/Vimal rely on γ alone) — every added edge is logged and
+# recorded in the experiment's connectivity.json. set False for the bare road graph.
+REPAIR_GRAPH = True
 _ADJ_CACHE: dict = {}
 
 _NUM_NODES = {
@@ -49,12 +50,16 @@ def _load_raw_adjacency(dataset: str) -> np.ndarray:
     return np.load(path)["A"].astype(np.float32)
 
 
-def _isolated_nodes(adj: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """indices of zero-degree sensors in the symmetrised, self-loop-free graph."""
+def _components(adj: np.ndarray) -> tuple[int, np.ndarray, np.ndarray]:
+    """(n_components, labels, A_sym) on the symmetrised, self-loop-free graph."""
+    from scipy.sparse import csr_matrix
+    from scipy.sparse.csgraph import connected_components
+
     A = adj.astype(np.float64).copy()
     np.fill_diagonal(A, 0.0)
     A = (A + A.T) / 2.0
-    return np.where(A.sum(axis=1) == 0)[0], A
+    n_comp, labels = connected_components(csr_matrix(A > 0), directed=False)
+    return int(n_comp), labels, A
 
 
 def _train_signal_corr(dataset: str) -> np.ndarray:
@@ -77,30 +82,47 @@ def _train_signal_corr(dataset: str) -> np.ndarray:
 
 
 def repair_adjacency(dataset: str, adj: np.ndarray) -> np.ndarray:
-    """connect each isolated sensor to its most-correlated neighbour (train
-    signal), so the graph becomes a single connected component. minimal: adds
-    one edge per isolated sensor, weight = median existing edge weight. returns
-    the repaired adjacency (unchanged if nothing is isolated or no train signal).
+    """connect every disconnected component to the giant one, so the graph becomes
+    a SINGLE connected component (no clusters, no isolated sensors).
+
+    minimal surgery: per non-giant component, add ONE symmetric edge — the
+    (component node, giant node) pair with the highest |train-signal correlation| —
+    with weight = median existing edge weight. exactly n_components - 1 edges,
+    deterministic given the train split. returns the input unchanged if the graph
+    is already connected (pems08) or the train signal is missing (loud warning).
     """
-    iso, Asym = _isolated_nodes(adj)
-    if len(iso) == 0 or not paths.split_npz(dataset, "train").exists():
+    n_comp, labels, Asym = _components(adj)
+    if n_comp == 1:
         return adj
+    if not paths.split_npz(dataset, "train").exists():
+        print(f"[adjacency] WARNING: {dataset} has {n_comp} components but no train "
+              f"split to pick repair edges from — returning UNREPAIRED", flush=True)
+        return adj
+
     C = _train_signal_corr(dataset)
     w = float(np.median(Asym[Asym > 0]))
-    connected = np.where(Asym.sum(axis=1) > 0)[0]
+    sizes = np.bincount(labels)
+    giant = int(np.argmax(sizes))
+    giant_nodes = np.where(labels == giant)[0]
     out = adj.astype(np.float64).copy()
-    for i in iso:
-        j = int(connected[np.argmax(np.abs(C[i, connected]))])
+    for comp in range(n_comp):
+        if comp == giant:
+            continue
+        nodes = np.where(labels == comp)[0]
+        # best cross pair between this component and the giant one
+        sub = np.abs(C[np.ix_(nodes, giant_nodes)])
+        i_loc, j_loc = np.unravel_index(int(np.argmax(sub)), sub.shape)
+        i, j = int(nodes[i_loc]), int(giant_nodes[j_loc])
         out[i, j] = out[j, i] = w
-        print(f"[adjacency] {dataset}: reconnected isolated sensor {i} -> {j} "
-              f"(corr={C[i, j]:.2f}, w={w:.3f})", flush=True)
+        print(f"[adjacency] {dataset}: component of {len(nodes)} node(s) connected "
+              f"via edge {i} -- {j} (corr={C[i, j]:.2f}, w={w:.3f})", flush=True)
     return out.astype(adj.dtype, copy=False)        # preserve the raw loader's dtype
 
 
-def load_adjacency(dataset: str, repair: bool = REPAIR_ISOLATED) -> np.ndarray:
-    """load the (N, N) adjacency, reconnecting isolated sensors by default so the
-    graph is a single connected component (see repair_adjacency). pass
-    repair=False for the bare road graph. cached per (dataset, repair)."""
+def load_adjacency(dataset: str, repair: bool = REPAIR_GRAPH) -> np.ndarray:
+    """load the (N, N) adjacency, reconnecting ALL disconnected components by
+    default so the graph is a single connected component (see repair_adjacency).
+    pass repair=False for the bare road graph. cached per (dataset, repair)."""
     key = (dataset, repair)
     if key not in _ADJ_CACHE:
         A = _load_raw_adjacency(dataset)
@@ -119,7 +141,8 @@ def compute_normalized_laplacian(adj: np.ndarray) -> np.ndarray:
     np.fill_diagonal(adj, 0)               # remove self-loops
     adj = (adj + adj.T) / 2                # symmetrise
     d = adj.sum(axis=1)
-    d_inv_sqrt = np.where(d > 0, 1.0 / np.sqrt(d), 0.0)
+    with np.errstate(divide="ignore"):                 # d=0 rows are masked below
+        d_inv_sqrt = np.where(d > 0, 1.0 / np.sqrt(d), 0.0)
     D_inv_sqrt = np.diag(d_inv_sqrt)
     return np.eye(adj.shape[0]) - D_inv_sqrt @ adj @ D_inv_sqrt
 
@@ -131,7 +154,7 @@ def compute_scaled_laplacian(adj: np.ndarray) -> np.ndarray:
     return (2.0 / lambda_max) * L - np.eye(L.shape[0])
 
 
-def connectivity(dataset: str, repair: bool = REPAIR_ISOLATED) -> dict:
+def connectivity(dataset: str, repair: bool = REPAIR_GRAPH) -> dict:
     """verify the graph is a SINGLE connected component.
 
     repairing isolated (degree-0) sensors is not enough: a graph can have every
@@ -168,14 +191,15 @@ def connectivity(dataset: str, repair: bool = REPAIR_ISOLATED) -> dict:
 
 
 def laplacian_eigendecomposition(
-    L: np.ndarray, dataset: str, cache: bool = True
+    L: np.ndarray, dataset: str, cache: bool = True, repaired: bool = REPAIR_GRAPH
 ) -> tuple[np.ndarray, np.ndarray]:
     """eigendecompose the symmetric laplacian (ascending eigenvalues).
 
-    cached per dataset (see src.utils.paths.laplacian_eigs). returns
+    cached per (dataset, repaired) — the repaired single-component graph gets its
+    own cache file so old raw-graph analyses stay valid. returns
     (eigenvalues (N,), eigenvectors (N, N)).
     """
-    cache_path = paths.laplacian_eigs(dataset)
+    cache_path = paths.laplacian_eigs(dataset, repaired)
 
     if cache and cache_path.exists():
         data = np.load(cache_path)

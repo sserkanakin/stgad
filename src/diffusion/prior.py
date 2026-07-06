@@ -113,18 +113,19 @@ def _load_residuals_train(dataset: str, seed: int = 0, backbone: str = "gwn") ->
     return R / sigma_r, mask
 
 
-def _load_laplacian_eig(dataset: str) -> tuple[np.ndarray, np.ndarray]:
+def _load_laplacian_eig(dataset: str, repaired: bool) -> tuple[np.ndarray, np.ndarray]:
     # self-healing: if the eig cache isn't there yet, build it from the
-    # adjacency and cache it, so a missing file never crashes a run.
-    cache = paths.laplacian_eigs(dataset)
+    # adjacency (repaired to one connected component by default) and cache it,
+    # so a missing file never crashes a run.
+    cache = paths.laplacian_eigs(dataset, repaired)
     if not cache.exists():
         from src.data.adjacency import (
             compute_normalized_laplacian,
             laplacian_eigendecomposition,
             load_adjacency,
         )
-        L = compute_normalized_laplacian(load_adjacency(dataset))
-        laplacian_eigendecomposition(L, dataset, cache=True)
+        L = compute_normalized_laplacian(load_adjacency(dataset, repair=repaired))
+        laplacian_eigendecomposition(L, dataset, cache=True, repaired=repaired)
     d = np.load(cache)
     return d["eigenvalues"].astype(np.float64), d["eigenvectors"].astype(np.float64)
 
@@ -196,6 +197,7 @@ def load_prior(
     gamma: float | None = None,
     shrink_t: float | None = None,
     backbone: str = "gwn",
+    repair: bool | None = None,
 ) -> KroneckerPrior:
     """Fit and cache the diffusion noise prior for a dataset.
 
@@ -210,6 +212,8 @@ def load_prior(
       γ tames κ(Q_S) at the cost of a less smoothness-committed prior).
     shrink_t: override the temporal ridge fraction ρ (μ_T ← (1-ρ)μ_T + ρ·μ̄, the
       temporal twin of γ). None = use SHRINK_T (0.1). 0 = faithful empirical Σ_T.
+    repair: use the component-repaired (single connected) graph for the laplacian.
+      None = follow adjacency.REPAIR_GRAPH (the global default, True).
     """
     if prior == "isotropic":
         return _build_isotropic_prior(dataset, seed, backbone)
@@ -238,7 +242,10 @@ def load_prior(
         q_S = np.ones(N)                          # spatial precision = 1 (Σ_S = I)
     else:
         gamma = GAMMA_DEFAULT if gamma is None else gamma
-        lam_S, V_S = _load_laplacian_eig(dataset)
+        if repair is None:
+            from src.data.adjacency import REPAIR_GRAPH
+            repair = REPAIR_GRAPH
+        lam_S, V_S = _load_laplacian_eig(dataset, repaired=repair)
         q_S = lam_S + gamma                       # spatial precision = L + γI
 
     # τ²: trace-calibrate so Σ_S's average eigenvalue doesn't shift the variance
@@ -275,6 +282,7 @@ def build_prior_from_R(
     spatial: str = "structured",
     gamma: float = 0.8,
     stiffness_cap: float | None = None,
+    repair: bool | None = None,
 ) -> tuple["KroneckerPrior", float]:
     """Build a prior directly from a RAW residual field (B,N,H) + mask, in unit-variance
     space. Used by the Tier-3/4 analysis so it works for ANY rung (incl. the climatology
@@ -306,7 +314,10 @@ def build_prior_from_R(
     if spatial == "flat":
         gamma, V_S, lam_S, q_S = 0.0, np.eye(N), np.zeros(N), np.ones(N)
     else:
-        lam_S, V_S = _load_laplacian_eig(dataset)
+        if repair is None:
+            from src.data.adjacency import REPAIR_GRAPH
+            repair = REPAIR_GRAPH
+        lam_S, V_S = _load_laplacian_eig(dataset, repaired=repair)
         q_S = lam_S + gamma
     tau2 = N / (1.0 / q_S).sum()
     theta = q_S[:, None] / (tau2 * mu_T[None, :])

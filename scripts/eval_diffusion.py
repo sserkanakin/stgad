@@ -1,7 +1,7 @@
-"""evaluate trained diffusion checkpoints on the TEST split.
+"""evaluate trained diffusion checkpoints on the VAL or TEST split (--split).
 
 for each (dataset, prior, seed) this loads best.pt, generates reverse-sde samples
-on the test residuals, and reports per-horizon + overall (all in raw units;
+on the split's residuals, and reports per-horizon + overall (all in raw units;
 forecast_err = Y_hat + R0_hat - (Y_hat + R0_true) = R0_hat - R0_true, so the
 backbone term cancels and we score residuals):
 
@@ -12,11 +12,11 @@ backbone term cancels and we score residuals):
 samples come from GAD's Euler–Maruyama reverse SDE (the only sampler — stochastic /
 ancestral, so the intervals are properly dispersed).
 
-writes results/eval/<ds>/<prior>/seed<seed>/test_metrics.json and, with --all,
-prints a kronecker-vs-isotropic comparison table.
+writes <eval_dir>/{split}_metrics_steps{n}.json (per-steps filename, so parallel
+step-count evals never clobber) and, with --all, prints a kron-vs-iso table.
 
 usage:
-    python scripts/eval_diffusion.py --dataset metrla --prior kronecker --seed 0
+    python scripts/eval_diffusion.py --dataset metrla --prior kronecker --seed 42 --split val
     python scripts/eval_diffusion.py --all
 """
 from __future__ import annotations
@@ -42,7 +42,7 @@ torch.backends.cudnn.allow_tf32 = True
 from src.data.adjacency import load_adjacency
 from src.data.residual_dataset import make_dataset, residual_path, train_residual_sigma
 from src.diffusion.denoiser import R0Denoiser, SignalDenoiser
-from src.diffusion.forward_fcps import FCPSSchedule, prior_to_torch
+from src.diffusion.forward_fcps import FCPSSchedule, ULSchedule, prior_to_torch
 from src.diffusion.prior import load_prior
 from src.diffusion.reverse import reverse_sample_em, min_em_steps
 from src.eval.distribution import energy_distance, sliced_wasserstein1
@@ -78,20 +78,27 @@ def load_run(dataset, prior, seed, exp, device, backbone="gwn"):
     cfg = json.loads((ckpt_dir / "config.json").read_text())
     ckpt = torch.load(ckpt_dir / "best.pt", map_location=device, weights_only=False)
 
-    # rebuild the SAME prior the run trained with (spatial + stiffness cap from config;
-    # default structured for back-compat with configs written before --spatial existed)
+    # rebuild the SAME prior the run trained with (spatial + stiffness cap + graph
+    # repair from config; defaults keep back-compat with configs written before
+    # those flags existed — repair=None follows the global REPAIR_GRAPH default).
     prior_obj = load_prior(dataset, prior, seed,
                            spatial=cfg.get("spatial", "structured"),
                            stiffness_cap=(cfg.get("stiffness_cap") or None),
-                           backbone=backbone)
-    # rebuild the GAD-literal schedule exactly as training used it (fixed S/α/c_min
-    # from config.json). default S=7/α=4/c_min=0.1 for back-compat with any config
-    # written before the schedule was fixed.
-    schedule = FCPSSchedule(c_min=cfg.get("c_min", 0.1), c_0=cfg.get("c_0", 7.0),
-                            alpha=cfg.get("alpha", 4.0), T=1.0)
-    log.info(f"[eval] schedule (GAD-literal): S=c_0={schedule.c_0:.2f} "
-             f"α={schedule.alpha:.1f} c_min={schedule.c_min:.2f} "
-             f"θ_min={float(prior_obj.theta.min()):.4f}")
+                           backbone=backbone,
+                           repair=cfg.get("repair_graph"))
+    # rebuild the schedule exactly as training used it: uls (isotropic arm, linear
+    # rate at the same total heat) or the GAD-literal fcps. old configs have no
+    # schedule_resolved field → fcps with the recorded/default S, α, c_min.
+    if cfg.get("schedule_resolved") == "uls":
+        schedule = ULSchedule(slope=2.0 * cfg.get("c_0", 7.0), T=1.0)
+        log.info(f"[eval] schedule: ULS slope={schedule.slope:.1f} "
+                 f"(c̄(T)={schedule.c_0:.2f})  θ_min={float(prior_obj.theta.min()):.4f}")
+    else:
+        schedule = FCPSSchedule(c_min=cfg.get("c_min", 0.1), c_0=cfg.get("c_0", 7.0),
+                                alpha=cfg.get("alpha", 4.0), T=1.0)
+        log.info(f"[eval] schedule (GAD-literal FCPS): S=c_0={schedule.c_0:.2f} "
+                 f"α={schedule.alpha:.1f} c_min={schedule.c_min:.2f} "
+                 f"θ_min={float(prior_obj.theta.min()):.4f}")
     if backbone == "raw":
         import numpy as _np
         T_h = int(_np.load(residual_path(dataset, "test", seed, backbone))["history"].shape[-1])
@@ -117,7 +124,7 @@ def load_run(dataset, prior, seed, exp, device, backbone="gwn"):
 @torch.no_grad()
 def evaluate(dataset, prior, seed, *, exp, device, k, n_steps, alpha,
              w1_windows, w1_samples, w1_proj, gen_batch, max_windows, generator,
-             backbone="gwn", mask_zero=True):
+             backbone="gwn", mask_zero=True, split="test"):
     denoiser, prior_obj, schedule, cfg, ckpt_epoch = load_run(dataset, prior, seed, exp, device, backbone)
     N, H = prior_obj.N, prior_obj.H
 
@@ -128,17 +135,28 @@ def evaluate(dataset, prior, seed, *, exp, device, k, n_steps, alpha,
         log.info(f"[eval] EM stability floor: n_steps {n_steps} → {floor} (θ_max·S)")
         n_steps = floor
 
+    import time
+
     # reverse process: GAD's Euler–Maruyama SDE — the only sampler (stochastic /
     # ancestral, the DDPM-equivalent; GAD's GASDE has no DDIM/deterministic variant).
-    def _reverse(Y_cond):
+    # each call logs a heartbeat every ~25% of its EM steps so a long chunk (3500
+    # steps on pemsbay takes minutes) never looks frozen in the slurm log.
+    def _reverse(Y_cond, tag=""):
+        t0 = time.time()
+        hb = max(1, n_steps // 4)
+        def _cb(i, _c, _R):
+            if (i + 1) % hb == 0 and (i + 1) < n_steps:
+                log.info(f"    [{dataset}/{prior}] {tag} EM {i + 1}/{n_steps} steps "
+                         f"({time.time() - t0:.0f}s)")
         s, _ = reverse_sample_em(prior_obj, schedule, denoiser, Y_cond,
-                                 n_steps=n_steps, R_T=None, generator=generator)
+                                 n_steps=n_steps, R_T=None, generator=generator,
+                                 step_callback=_cb)
         return s
 
     sigma_r = train_residual_sigma(dataset, seed, backbone)   # same scalar used in training
-    test = make_dataset(dataset, "test", seed, backbone, sigma_r)
-    R0_all, Y_all, M_all = test.R0, test.Y_hat, test.mask
-    Ytrue_all = test.y_true_raw                               # raw ground truth (y_pred+residual)
+    ds = make_dataset(dataset, split, seed, backbone, sigma_r)
+    R0_all, Y_all, M_all = ds.R0, ds.Y_hat, ds.mask
+    Ytrue_all = ds.y_true_raw                                 # raw ground truth (y_pred+residual)
     # match SpecSTG/DiffSTG: drop y==0 points from the metrics. for the speed datasets
     # the stored mask already excludes zeros (null_val=0); for the flow datasets
     # (null_val=nan) the stored mask keeps them, so this is where it bites.
@@ -150,10 +168,9 @@ def evaluate(dataset, prior, seed, *, exp, device, k, n_steps, alpha,
     # don't OOM: process chunk windows at a time with chunk*k <= gen_batch.
     chunk = max(1, gen_batch // k)
 
-    import time
     nchunks = (n_total + chunk - 1) // chunk
-    log.info(f"[eval] {dataset}/{prior}: {n_total} test windows, k={k}, chunk={chunk}, "
-             f"{nchunks} chunks")
+    log.info(f"[eval] {dataset}/{prior}: {n_total} {split} windows, k={k}, chunk={chunk}, "
+             f"{nchunks} chunks, n_steps={n_steps}")
     t0 = time.time()
 
     # ── point accuracy + Winkler: K samples per window, chunked over windows ──
@@ -168,7 +185,7 @@ def evaluate(dataset, prior, seed, *, exp, device, k, n_steps, alpha,
         yt = Ytrue_all[start:end].to(device)              # raw ground-truth signal
         yp = yt - R0                                      # raw backbone forecast (0 for 'raw')
         b = R0.shape[0]
-        samp = _reverse(Y.repeat(k, 1, 1))
+        samp = _reverse(Y.repeat(k, 1, 1), tag=f"point {ci + 1}/{nchunks}")
         samp = samp.view(k, b, N, H) * sigma_r            # raw residual samples
         # reconstruct the forecast and clip to [0,∞) (non-negative flow/speed; matches DiffSTG).
         # all metrics are now in raw FORECAST space (= residual space + y_pred, then clip).
@@ -207,11 +224,19 @@ def evaluate(dataset, prior, seed, *, exp, device, k, n_steps, alpha,
     R0v = R0_all[sel].to(device) * sigma_r; Yv = Y_all[sel].to(device)   # de-norm R0 to raw
     # sub-batch windows so w1_samples * sub <= gen_batch (same OOM guard)
     wb = max(1, gen_batch // w1_samples)
+    n_w1_chunks = (n_w1 + wb - 1) // wb
+    log.info(f"  [{dataset}/{prior}] W1/energy phase: {n_w1} clean windows × "
+             f"{w1_samples} samples, {n_w1_chunks} chunks")
+    t1 = time.time()
     gen_parts = []
-    for s in range(0, n_w1, wb):
+    for wi, s in enumerate(range(0, n_w1, wb)):
         e = min(s + wb, n_w1)
-        g = _reverse(Yv[s:e].repeat(w1_samples, 1, 1))
+        g = _reverse(Yv[s:e].repeat(w1_samples, 1, 1), tag=f"W1 {wi + 1}/{n_w1_chunks}")
         gen_parts.append(g.view(w1_samples, e - s, N, H))
+        el = time.time() - t1
+        remaining = el / (wi + 1) * (n_w1_chunks - wi - 1)
+        log.info(f"  [{dataset}/{prior}] W1 {wi + 1}/{n_w1_chunks} "
+                 f"({100 * (wi + 1) / n_w1_chunks:.0f}%)  elapsed={el:.0f}s  eta={remaining:.0f}s")
     gen = torch.cat(gen_parts, dim=1) * sigma_r    # (w1_samples, n_w1, N, H), raw units
     w1_h, ed_h = [], []
     for h in range(H):
@@ -222,7 +247,7 @@ def evaluate(dataset, prior, seed, *, exp, device, k, n_steps, alpha,
 
     return {
         "dataset": dataset, "backbone": backbone, "prior": prior, "seed": seed,
-        "exp": exp, "ckpt_epoch": ckpt_epoch,
+        "exp": exp, "ckpt_epoch": ckpt_epoch, "split": split,
         "n_test_windows": int(n_total), "k_samples": k, "n_steps": n_steps,
         "sampler": "em", "alpha": alpha, "mask_zero": bool(mask_zero),
         "mae": overall(mae_n), "mse": overall(mse_n), "rmse": float((mse_n.sum()/cnt.sum())**0.5),
@@ -243,14 +268,15 @@ def _save(res):
     out = paths.eval_dir(res["dataset"], res["prior"], res["seed"], exp=res.get("exp"),
                          backbone=res.get("backbone", "gwn"))
     out.mkdir(parents=True, exist_ok=True)
-    path = out / "test_metrics.json"
+    # per-(split, steps) filename so parallel step-count evals never clobber
+    path = out / f"{res.get('split', 'test')}_metrics_steps{res['n_steps']}.json"
     path.write_text(json.dumps(res, indent=2))
     return path
 
 
 def _print_one(res):
     print(f"\n=== {res['dataset']}/{res['prior']} (best.pt epoch {res['ckpt_epoch']}, "
-          f"{res['n_test_windows']} test windows, K={res['k_samples']}, "
+          f"{res['n_test_windows']} {res.get('split', 'test')} windows, K={res['k_samples']}, "
           f"sampler={res.get('sampler','em')}, n_steps={res['n_steps']}) ===")
     print(f"  MAE={res['mae']:.4f}  RMSE={res['mse']**0.5:.4f}  MAPE={res['mape']:.4f}  "
           f"Winkler{int((1-res['alpha'])*100)}={res['winkler']:.4f}  coverage={res['coverage']:.3f}")
@@ -294,8 +320,10 @@ def main():
                    help="which backbone's diffusion runs to eval (namespaces results)")
     p.add_argument("--exp", default="dev", help="experiment tag (matches training --exp)")
     p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--split", choices=("test", "val"), default="test",
+                   help="which split to evaluate (val = the pre-test protocol)")
     p.add_argument("--all", action="store_true", help="eval all datasets x both priors")
-    p.add_argument("--k", type=int, default=50, help="samples per window for MAE/MSE/Winkler")
+    p.add_argument("--k", type=int, default=8, help="samples per window (Vimal uses 8)")
     p.add_argument("--n-steps", type=int, default=1000,
                    help="GAD Euler–Maruyama reverse steps (stiff prior needs many; GAD uses ~5000)")
     p.add_argument("--alpha", type=float, default=0.1, help="0.1 -> central 90%% interval")
@@ -332,7 +360,7 @@ def main():
                        w1_windows=args.w1_windows, w1_samples=args.w1_samples,
                        w1_proj=args.w1_proj, gen_batch=args.gen_batch,
                        max_windows=args.max_windows, generator=g, backbone=args.backbone,
-                       mask_zero=args.mask_zero)
+                       mask_zero=args.mask_zero, split=args.split)
         _print_one(res)
         print(f"  wrote {_save(res)}")
         results.append(res)

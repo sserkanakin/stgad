@@ -72,8 +72,11 @@ def gwn_native_dir(dataset):
     return processed_dir(dataset) / "gwn_native"
 
 
-def laplacian_eigs(dataset):
-    return processed_dir(dataset) / "laplacian_eigs.npz"
+def laplacian_eigs(dataset, repaired=False):
+    # separate cache for the repaired (single-component) graph so old analyses
+    # built on the raw graph stay valid side by side.
+    name = "laplacian_eigs_repaired.npz" if repaired else "laplacian_eigs.npz"
+    return processed_dir(dataset) / name
 
 
 # --- results, grouped by stage then dataset ---
@@ -94,16 +97,25 @@ def residual_npz(dataset, split, seed, backbone="gwn"):
 
 
 def diffusion_dir(dataset, prior, seed, exp=None, backbone="gwn"):
-    # exp namespaces a whole experiment run (<OUTPUTS>/diffusion/<exp>/...), so a
-    # fresh launch is fully separate and a re-run never clobbers an old one.
+    # with an exp tag the tree is EXPERIMENT-FIRST (one dated folder per launch,
+    # per-dataset inside, train + eval side by side — easy to browse):
+    #   <OUTPUTS>/<exp>/<dataset>/<backbone>/<prior>/seed<seed>/{train,eval}
+    # without exp (local dev) the legacy flat layout is kept.
     # OUTPUTS (writes) may differ from RESULTS (reads) — see RESULTS_ROOT above.
-    base = OUTPUTS / "diffusion" / exp if exp else OUTPUTS / "diffusion"
-    return base / dataset / backbone / prior / f"seed{seed}"
+    if exp:
+        return OUTPUTS / exp / dataset / backbone / prior / f"seed{seed}" / "train"
+    return OUTPUTS / "diffusion" / dataset / backbone / prior / f"seed{seed}"
 
 
 def eval_dir(dataset, prior, seed, exp=None, backbone="gwn"):
-    base = OUTPUTS / "eval" / exp if exp else OUTPUTS / "eval"
-    return base / dataset / backbone / prior / f"seed{seed}"
+    if exp:
+        return OUTPUTS / exp / dataset / backbone / prior / f"seed{seed}" / "eval"
+    return OUTPUTS / "eval" / dataset / backbone / prior / f"seed{seed}"
+
+
+def exp_root(exp):
+    """root of one experiment launch (connectivity.json, summary.md live here)."""
+    return OUTPUTS / exp
 
 
 # --- run naming ---

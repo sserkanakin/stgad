@@ -104,6 +104,11 @@ def init_wandb(
         tags.append(prior)
     if exp:
         tags.append(exp)
+    # make the arms distinguishable at a glance in the dashboard
+    if cfg.get("schedule_resolved"):
+        tags.append(f"sched:{cfg['schedule_resolved']}")
+    if cfg.get("repair_graph") is not None:
+        tags.append(f"repair:{'on' if cfg['repair_graph'] else 'off'}")
 
     run = wandb.init(
         project=os.environ.get("WANDB_PROJECT", "thesis-diffusion"),

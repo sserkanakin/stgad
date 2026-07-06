@@ -41,6 +41,12 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 
+# TF32 matmuls: ~1.5-2x on the L40/A40 denoiser (spatial conv + linears), and the
+# EM sampling diagnostics are monte-carlo anyway (precision loss ≪ sampling noise).
+# the eval script sets the same flags — keep train + eval numerics consistent.
+torch.backends.cuda.matmul.allow_tf32 = True
+torch.backends.cudnn.allow_tf32 = True
+
 from src.data.adjacency import REPAIR_GRAPH, load_adjacency
 from src.data.residual_dataset import make_dataset, residual_path, train_residual_sigma
 from src.diffusion.denoiser import R0Denoiser, SignalDenoiser, num_parameters
@@ -189,6 +195,17 @@ def train_step(
 # draws, so the val loss is comparable across epochs and best-by-val-loss
 # selection doesn't jitter with the noise lottery.
 _VAL_NOISE_SEED = 777
+
+
+def _parse_steps(spec: str, floor: int) -> list[int]:
+    """comma list → ints, each raised to the EM stability floor, deduped in order."""
+    out: list[int] = []
+    for x in str(spec).split(","):
+        if x.strip():
+            ns = max(int(x), floor)
+            if ns not in out:
+                out.append(ns)
+    return out
 
 
 @torch.no_grad()
@@ -412,12 +429,12 @@ def _run_test_eval(args, device, best_epoch, run_id) -> None:
 
 
 def _run_final_val(args, device, best_epoch, run_id, *, sigma_r, val_R0, val_Yhat,
-                   val_ypred, val_ytrue, steps_list) -> None:
-    """final phase of the one-command lifecycle: reload best.pt, re-run the reverse
-    step sweep ON IT (the periodic sweeps tracked the trend; the choice must be made
-    on the selected weights), pick the fewest steps within 1% of the min CRPS, then
-    run the FULL val-set eval at that count. writes val_results.json + val_summary.txt.
-    the test split is NOT touched — that comes later, once val looks right."""
+                   val_ypred, val_ytrue) -> None:
+    """final phase of the one-command lifecycle: reload best.pt, sweep the FULL
+    --final-steps-list ON IT (the periodic sweeps tracked a lean trend; the choice is
+    made on the selected weights over all candidate counts), pick the fewest steps
+    within 1% of the min CRPS, then run the FULL val-set eval at that count. writes
+    val_results.json + val_summary.txt. the test split is NOT touched."""
     try:                                                        # heavy import, deferred
         from eval_diffusion import evaluate, load_run            # run as a script
     except ModuleNotFoundError:
@@ -425,6 +442,8 @@ def _run_final_val(args, device, best_epoch, run_id, *, sigma_r, val_R0, val_Yha
     denoiser, prior_obj, schedule_obj, _cfg, ckpt_epoch = load_run(
         args.dataset, args.prior, args.seed, args.exp, device, args.backbone)
 
+    steps_list = _parse_steps(args.final_steps_list,
+                              min_em_steps(prior_obj, schedule_obj))
     log.info(f"[final-val] best.pt (epoch {ckpt_epoch}); step sweep {steps_list} "
              f"on {val_R0.shape[0]} clean windows, then full val eval")
     sweep = periodic_val_eval(
@@ -614,12 +633,16 @@ def main() -> None:
     #    cost per eval = windows·k·Σsteps forwards.
     p.add_argument("--val-every", type=int, default=10,
                    help="run the EM reverse step-sweep diagnostic every N epochs (0 = off)")
-    p.add_argument("--val-k", type=int, default=8,
-                   help="samples/window for the periodic diagnostic (Vimal uses 8)")
-    p.add_argument("--val-steps-list", default="1000,1500,2000,2500,3000,3500",
-                   help="comma-separated EM reverse step counts swept in the diagnostic "
-                        "(each auto-floored per prior stiffness)")
-    p.add_argument("--val-windows", type=int, default=96,
+    p.add_argument("--val-k", type=int, default=4,
+                   help="samples/window for the diagnostic AND the final full-val eval "
+                        "(k=4 keeps the EM budget sane; test runs can use 8+)")
+    p.add_argument("--val-steps-list", default="1000,2000,3000",
+                   help="EM step counts swept DURING training (the trend; lean). the "
+                        "final choice sweeps --final-steps-list on best.pt. auto-floored")
+    p.add_argument("--final-steps-list", default="1000,1500,2000,2500,3000,3500",
+                   help="EM step counts swept ONCE on best.pt in --final-val (the "
+                        "step-count decision). auto-floored per prior stiffness")
+    p.add_argument("--val-windows", type=int, default=64,
                    help="fully-observed val windows for the diagnostic, strided across "
                         "the val period (cost = windows·k·Σsteps)")
     p.add_argument("--val-proj", type=int, default=64,
@@ -640,6 +663,7 @@ def main() -> None:
         args.val_every = 2
         args.val_k = 2
         args.val_steps_list = "200,300"
+        args.final_steps_list = "200,300"
         args.val_windows = 8
         args.val_proj = 8
         args.final_val = True
@@ -740,11 +764,7 @@ def main() -> None:
     # dedup, keeping order) so all datasets/backbones run correctly.
     em_floor = min_em_steps(prior, schedule)
     requested = [int(x) for x in str(args.val_steps_list).split(",") if x.strip()]
-    steps_list: list[int] = []
-    for ns in requested:
-        ns = max(ns, em_floor)
-        if ns not in steps_list:
-            steps_list.append(ns)
+    steps_list = _parse_steps(args.val_steps_list, em_floor)
     if steps_list != requested:
         log.info(f"EM stability floor (θ_max·S={em_floor}): "
                  f"step sweep {requested} → {steps_list}")
@@ -957,7 +977,7 @@ def main() -> None:
     if args.final_val:
         _run_final_val(args, device, best_epoch, run_id, sigma_r=sigma_r,
                        val_R0=val_R0, val_Yhat=val_Yhat, val_ypred=val_ypred,
-                       val_ytrue=val_ytrue, steps_list=steps_list)
+                       val_ytrue=val_ytrue)
 
     # ── locked TEST eval (separate decision, only once val is trusted)
     if args.eval_after:

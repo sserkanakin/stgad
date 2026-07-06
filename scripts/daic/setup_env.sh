@@ -59,7 +59,7 @@ setup_conda() {
   pip install --prefer-binary --index-url https://download.pytorch.org/whl/cu121 "torch>=2.2,<2.7"
 
   echo "[5/6] Project (editable) + remaining deps ..."
-  pip install --prefer-binary -e ".[dev]"
+  pip install --prefer-binary -e ".${DAIC_PIP_EXTRAS:-[dev]}"
 }
 
 # ── experimental DAIC: module tree + venv overlay ───────────────────────────
@@ -96,12 +96,12 @@ setup_venv() {
     # torch on PYTHONPATH. the wheel pulls its own nvidia-* cuda libs + numpy.
     pip install --prefer-binary --index-url "${DAIC_TORCH_PIP_INDEX}" "${DAIC_TORCH_SPEC}"
     # remaining pure-python deps from PyPI (torch already satisfied above).
-    pip install --prefer-binary -e ".[dev]"
+    pip install --prefer-binary -e ".${DAIC_PIP_EXTRAS:-[dev]}"
   else
     echo "[3/4] Project (editable) + remaining deps ..."
     # torch/numpy come from the module via --system-site-packages, so pip sees
     # them satisfied and installs only the rest (wandb, easydict, einops, ...).
-    pip install --prefer-binary -e ".[dev]"
+    pip install --prefer-binary -e ".${DAIC_PIP_EXTRAS:-[dev]}"
   fi
 }
 
@@ -151,6 +151,8 @@ echo "Project:  ${DAIC_PROJECT_DIR}"
 echo "Data:     ${DAIC_DATA_DIR}"
 if [ "${DAIC_PYTHON_KIND}" = "conda" ]; then
   echo "Env:      ${DAIC_CONDA_PREFIX}  (conda, python ${PYVER})"
+elif [ "${DAIC_TORCH_KIND:-module}" = "pip-cu128" ]; then
+  echo "Env:      ${DAIC_VENV_DIR}  (venv + pip ${DAIC_TORCH_SPEC} cu128)"
 else
   echo "Env:      ${DAIC_VENV_DIR}  (venv over ${DAIC_TORCH_MODULE})"
 fi

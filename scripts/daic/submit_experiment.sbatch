@@ -2,10 +2,11 @@
 #SBATCH --job-name=experiment
 # one array TASK = one (dataset, prior) full lifecycle: train (val-loss selection,
 # EM step-sweep diagnostic every 10 epochs) → auto-pick reverse steps on best.pt →
-# FULL val-set eval at that count. 20h covers the slowest cell (pemsbay: ~4-6h train
-# incl. sweeps + ~4h full-val eval); best.pt is checkpointed every improvement, so a
-# walltime kill keeps the model (re-run only the final-val part).
-#SBATCH --time=20:00:00
+# FULL val-set eval at that count. EM sampling is the dominant cost (~0.9ms/traj-step
+# fp32 at N=207, measured); 3 days is a generous ceiling so even pemsbay finishes
+# with margin. best.pt is checkpointed every improvement, so a walltime kill keeps
+# the model (re-run only the final-val part).
+#SBATCH --time=72:00:00
 # partition / qos / gres + --array + --output are injected by submit_experiment.sh.
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=64G
@@ -41,7 +42,10 @@ read -r IDX DATASET PRIOR RUN_DIR <<< "${ROW}"
 PRIOR_SHORT="$([ "${PRIOR}" = "kronecker" ] && echo kron || echo iso)"
 export STAGE="diffusion"
 RUN_NAME="${EXP}_${DATASET}_${PRIOR_SHORT}_s${SEED}"
-scontrol update job="${SLURM_JOB_ID}" JobName="${RUN_NAME}" 2>/dev/null || true
+# rename THIS array element (jobid_taskid). renaming by SLURM_JOB_ID is wrong here:
+# one task's raw id equals the array master id, and renaming that renames ALL tasks.
+scontrol update job="${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_TASK_ID}" \
+  JobName="${RUN_NAME}" 2>/dev/null || true
 echo "===== array task ${SLURM_ARRAY_TASK_ID}: ${DATASET} / ${PRIOR} (EXP=${EXP}) ====="
 echo "run dir: ${RUN_DIR}"
 

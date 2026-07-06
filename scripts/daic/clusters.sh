@@ -38,6 +38,8 @@ case "$DAIC_CLUSTER" in
     export DAIC_CONDA_MODULE="miniconda/3"
     export DAIC_CONDA_ENV="thesis-diffusion"
     export DAIC_CONDA_PREFIX="${HOME}/.conda/envs/${DAIC_CONDA_ENV}"
+    # NFS home has room here, so keep the dev tooling (jupyter/black/ruff/pytest).
+    export DAIC_PIP_EXTRAS="[dev]"
 
     # slurm: 'general' partition with short/medium/long QoS.
     export DAIC_PARTITION="general"
@@ -76,6 +78,11 @@ case "$DAIC_CLUSTER" in
     export DAIC_TORCH_KIND="pip-cu128"
     export DAIC_TORCH_PIP_INDEX="https://download.pytorch.org/whl/cu128"
     export DAIC_TORCH_SPEC="torch==2.7.1"
+    # the cu128 torch + cuda libs are ~6.7 GB and the venv must live on linuxhome
+    # (8 GB quota; windowshome can't create venvs — smb share, ensurepip fails).
+    # so skip the dev extras (jupyter/black/ruff/pytest — not needed for jobs;
+    # notebooks are local-only) to leave headroom for .vscode-server + code.
+    export DAIC_PIP_EXTRAS=""
     # venv lives on linuxhome (POSIX share, sibling of the project dir, outside
     # the git tree). NOT on windowshome: that share's odd permissions break
     # `python -m venv` ensurepip. linuxhome is small (8 GB) but big enough once

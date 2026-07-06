@@ -8,9 +8,13 @@ version = "0.1.0"
 requires-python = ">=3.11"
 dependencies = [
     "torch>=2.2",
-    "numpy",
-    "scipy",
-    "pandas",
+    # pin the numeric stack to the versions the DAIC module used to ship (numpy
+    # 1.26 / scipy 1.14 / pandas 2.2). now that these come from pip (not the
+    # py-torch module) an unpinned install pulls numpy 2 / pandas 3, whose
+    # breaking changes could silently alter results mid-study. keep them frozen.
+    "numpy<2",
+    "scipy<1.15",
+    "pandas<3",
     "h5py",
     "pyyaml",
     "wandb",

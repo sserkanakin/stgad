@@ -68,7 +68,11 @@ if [ "${DAIC_PYTHON_KIND}" = "conda" ]; then
   fi
 else
   # experimental DAIC: 2025 Lmod tree + venv overlay.
-  for m in "${DAIC_MODULE_TREE}" "${DAIC_PYTHON_MODULE}" "${DAIC_TORCH_MODULE}"; do
+  _mods=("${DAIC_MODULE_TREE}" "${DAIC_PYTHON_MODULE}")
+  # torch comes from a pip cu128 wheel in the venv when pip-cu128, so the
+  # py-torch module isn't loaded in jobs — don't require it here either.
+  [ "${DAIC_TORCH_KIND:-module}" = "module" ] && _mods+=("${DAIC_TORCH_MODULE}")
+  for m in "${_mods[@]}"; do
     module load "$m" 2>/dev/null && ok "loaded $m" || fail "could not load $m"
   done
   [ -n "${DAIC_CUDNN_MODULE:-}" ] && { module load "${DAIC_CUDNN_MODULE}" 2>/dev/null \

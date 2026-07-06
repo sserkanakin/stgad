@@ -67,7 +67,12 @@ setup_venv() {
   echo "[1/4] Loading modules (experimental DAIC) ..."
   module load "${DAIC_MODULE_TREE}"
   module load "${DAIC_PYTHON_MODULE}"
-  module load "${DAIC_TORCH_MODULE}"   # provides cuda torch + numpy
+  # torch: either the module (built for sm_80/sm_90 only) or our own cu128 wheel
+  # (>=2.7, adds sm_120 / Blackwell). when pip-cu128 we deliberately do NOT load
+  # py-torch so its bundled cuda libs don't clash with the wheel's — see clusters.sh.
+  if [ "${DAIC_TORCH_KIND:-module}" = "module" ]; then
+    module load "${DAIC_TORCH_MODULE}"   # provides cuda torch + numpy
+  fi
   [ -n "${DAIC_CUDNN_MODULE:-}" ] && module load "${DAIC_CUDNN_MODULE}" 2>/dev/null || true
 
   export PIP_CACHE_DIR="${DAIC_DATA_DIR}/.cache/pip"
@@ -85,10 +90,19 @@ setup_venv() {
   export PYTHONPATH="${DAIC_VENV_DIR}/lib/python${DAIC_PYTHON_VERSION}/site-packages:${PYTHONPATH:-}"
   python -m pip install --upgrade pip setuptools wheel
 
-  echo "[3/4] Project (editable) + remaining deps ..."
-  # torch/numpy come from the module via --system-site-packages, so pip sees
-  # them satisfied and installs only the rest (wandb, easydict, einops, ...).
-  pip install --prefer-binary -e ".[dev]"
+  if [ "${DAIC_TORCH_KIND:-module}" = "pip-cu128" ]; then
+    echo "[3/4] PyTorch (${DAIC_TORCH_SPEC}, cu128 wheel — Blackwell/sm_120 capable) + project ..."
+    # install torch from the cu128 index INTO the venv so it overrides any module
+    # torch on PYTHONPATH. the wheel pulls its own nvidia-* cuda libs + numpy.
+    pip install --prefer-binary --index-url "${DAIC_TORCH_PIP_INDEX}" "${DAIC_TORCH_SPEC}"
+    # remaining pure-python deps from PyPI (torch already satisfied above).
+    pip install --prefer-binary -e ".[dev]"
+  else
+    echo "[3/4] Project (editable) + remaining deps ..."
+    # torch/numpy come from the module via --system-site-packages, so pip sees
+    # them satisfied and installs only the rest (wandb, easydict, einops, ...).
+    pip install --prefer-binary -e ".[dev]"
+  fi
 }
 
 if [ "${DAIC_PYTHON_KIND}" = "conda" ]; then setup_conda; STEP="[6/6]"; else setup_venv; STEP="[4/4]"; fi
@@ -103,8 +117,7 @@ if torch.cuda.is_available():
 PY
 
 # artefact directories + symlinks (match _common.sh).
-mkdir -p "${DAIC_DATA_DIR}"/{raw,processed,backbone,diffusion,residuals,eval,wandb}
-mkdir -p "${DAIC_PROJECT_DIR}/logs"
+mkdir -p "${DAIC_DATA_DIR}"/{raw,processed,backbone,diffusion,residuals,eval,wandb,logs}
 cd "${DAIC_PROJECT_DIR}"
 mkdir -p data results
 ln -sfn "${DAIC_DATA_DIR}/raw"        data/raw
@@ -113,6 +126,15 @@ ln -sfn "${DAIC_DATA_DIR}/backbone"   results/backbone
 ln -sfn "${DAIC_DATA_DIR}/diffusion"  results/diffusion
 ln -sfn "${DAIC_DATA_DIR}/residuals"  results/residuals
 ln -sfn "${DAIC_DATA_DIR}/eval"       results/eval
+# logs live on the data share too, so slurm .out/.err don't eat the tight
+# linuxhome quota that now holds the cu128 torch venv. only replace logs/ with a
+# symlink when it's safe (a symlink, missing, or empty) — never clobber real logs.
+if [ -L logs ] || [ ! -e logs ] || [ -z "$(ls -A logs 2>/dev/null)" ]; then
+  rm -rf logs 2>/dev/null || true
+  ln -sfn "${DAIC_DATA_DIR}/logs" logs
+else
+  echo "      [warn] logs/ is a non-empty real dir — leaving it on linuxhome"
+fi
 
 echo
 echo "[bonus] wandb login (one-time; only needed for live dashboards):"

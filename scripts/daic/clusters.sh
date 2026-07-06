@@ -64,6 +64,18 @@ case "$DAIC_CLUSTER" in
     export DAIC_TORCH_MODULE="py-torch/2.5.1"
     export DAIC_CUDA_MODULE="cuda/12.9"
     export DAIC_CUDNN_MODULE="cudnn/8.9.7.29-12"
+    # torch source. the module py-torch/2.5.1 is built for sm_80/sm_90 only, so it
+    # crashes on the rtx pro 6000 / Blackwell cards (sm_120). the cluster ships no
+    # newer torch module (checked: only 2.5.1 + cuda/12.9), so instead of loading
+    # py-torch we pip-install a cu128 wheel (>=2.7, first with sm_120 kernels) INTO
+    # the venv on linuxhome. that one wheel also keeps sm_80/86/89/90, so it runs on
+    # a40 + l40 + Blackwell alike — which lets us drop the node exclude below and
+    # queue across the whole gpu pool. the wheel bundles its own cuda runtime, so we
+    # do NOT load py-torch (avoids its cuda libs clashing with the wheel's on
+    # LD_LIBRARY_PATH); numpy + our other deps come via `pip install -e .[dev]`.
+    export DAIC_TORCH_KIND="pip-cu128"
+    export DAIC_TORCH_PIP_INDEX="https://download.pytorch.org/whl/cu128"
+    export DAIC_TORCH_SPEC="torch==2.7.1"
     # venv lives on linuxhome (POSIX share, sibling of the project dir, outside
     # the git tree). NOT on windowshome: that share's odd permissions break
     # `python -m venv` ensurepip. linuxhome is small (8 GB) but big enough once
@@ -77,13 +89,13 @@ case "$DAIC_CLUSTER" in
     export DAIC_QOS_SHORT=""
     export DAIC_QOS_MEDIUM=""
     export DAIC_QOS_LONG=""
-    # request ANY working gpu, not just a40: ask for a generic gpu:1 and exclude
-    # the rtx pro 6000 nodes (gpu36-53), which are Blackwell (sm_120) and crash
-    # py-torch/2.5.1 (built for sm_80/sm_90). this opens both supported pools —
-    # a40 (gpu12,23,24,29 = 12 cards) + l40 (gpu30,31 = 6 cards) — so jobs queue
-    # across 18 gpus and schedule faster. see [[daic-cluster-reference]].
+    # request ANY working gpu. with the cu128 torch above (sm_120 kernels) the
+    # rtx pro 6000 / Blackwell nodes (gpu36-53) now work too, so we no longer
+    # exclude them — jobs queue across the full pool: a40 + l40 + Blackwell.
+    # (to fall back to the module torch, set DAIC_GPU_EXCLUDE="gpu[36-53]" and
+    # DAIC_TORCH_KIND="module".) see [[daic-cluster-reference]].
     export DAIC_GRES_GPU="gpu:1"
-    export DAIC_GPU_EXCLUDE="gpu[36-53]"
+    export DAIC_GPU_EXCLUDE=""
     export DAIC_GRES_GPU_TYPED="gpu:nvidia_a40:1"   # for pinning one type if ever needed
     ;;
 

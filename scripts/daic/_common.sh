@@ -52,7 +52,12 @@ else
   module purge 2>/dev/null || true
   module load "${DAIC_MODULE_TREE}"
   module load "${DAIC_PYTHON_MODULE}"
-  module load "${DAIC_TORCH_MODULE}"
+  # torch comes either from the module (sm_80/sm_90) or a pip cu128 wheel in the
+  # venv (adds sm_120 / Blackwell). when pip-cu128 we skip the py-torch module so
+  # its cuda libs don't clash with the wheel's bundled ones — see clusters.sh.
+  if [ "${DAIC_TORCH_KIND:-module}" = "module" ]; then
+    module load "${DAIC_TORCH_MODULE}"
+  fi
   [ -n "${DAIC_CUDNN_MODULE:-}" ] && module load "${DAIC_CUDNN_MODULE}" 2>/dev/null || true
   if [ ! -x "${DAIC_VENV_DIR}/bin/python" ]; then
     echo "ERROR: venv not found at ${DAIC_VENV_DIR} — run setup_env.sh first." >&2
@@ -92,10 +97,11 @@ cd "${PROJECT_DIR}"
 # "[ -e ] ||" guard left stale symlinks pointing at the previous data dir). a
 # populated real dir (e.g. results/backbone) is left untouched so we never clobber.
 mkdir -p data results
-mkdir -p "${DAIC_DATA_DIR}"/{raw,processed,backbone,diffusion,residuals,eval}
+mkdir -p "${DAIC_DATA_DIR}"/{raw,processed,backbone,diffusion,residuals,eval,logs}
 _relink() {
   if [ -L "$1" ] || [ ! -e "$1" ]; then ln -sfn "$2" "$1"; fi
 }
+_relink logs              "${DAIC_DATA_DIR}/logs"
 _relink data/raw          "${DAIC_DATA_DIR}/raw"
 _relink data/processed    "${DAIC_DATA_DIR}/processed"
 _relink results/backbone  "${DAIC_DATA_DIR}/backbone"

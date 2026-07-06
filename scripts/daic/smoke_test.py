@@ -83,7 +83,21 @@ def main() -> int:
     print("\n-- 1. device --")
     def _device_matmul():
         if device.type == "cuda":
-            print(f"      {torch.cuda.get_device_name(0)}  cap={torch.cuda.get_device_capability(0)}")
+            cap = torch.cuda.get_device_capability(0)
+            print(f"      {torch.cuda.get_device_name(0)}  cap={cap}")
+            # fail early + clearly if this torch build has no kernels for the gpu's
+            # sm (the Blackwell sm_120 case with the old py-torch/2.5.1 module). a
+            # bare matmul would otherwise die with a cryptic "no kernel image" error.
+            arch_list = torch.cuda.get_arch_list()
+            sm = f"sm_{cap[0]}{cap[1]}"
+            print(f"      torch arch list: {arch_list}")
+            has_cubin = sm in arch_list
+            has_ptx = any(a.startswith("compute_") and int(a.split("_")[1]) <= cap[0] * 10 + cap[1]
+                          for a in arch_list)
+            if not (has_cubin or has_ptx):
+                raise RuntimeError(
+                    f"this torch ({torch.__version__}) has no kernels for {sm}; "
+                    f"need a cu128 build (>=2.7) — see scripts/daic/clusters.sh DAIC_TORCH_KIND")
         x = torch.randn(1024, 1024, device=device)
         (x @ x.T).sum().item()
     step("device matmul", _device_matmul)

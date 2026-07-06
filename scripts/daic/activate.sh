@@ -33,7 +33,11 @@ else
   module purge 2>/dev/null || true
   module load "${DAIC_MODULE_TREE}"
   module load "${DAIC_PYTHON_MODULE}"
-  module load "${DAIC_TORCH_MODULE}"           # provides cuda torch + numpy
+  # torch from the module (sm_80/sm_90) or a pip cu128 wheel in the venv (adds
+  # sm_120 / Blackwell). skip the py-torch module when pip-cu128 — see clusters.sh.
+  if [ "${DAIC_TORCH_KIND:-module}" = "module" ]; then
+    module load "${DAIC_TORCH_MODULE}"         # provides cuda torch + numpy
+  fi
   [ -n "${DAIC_CUDNN_MODULE:-}" ] && module load "${DAIC_CUDNN_MODULE}" 2>/dev/null || true
   if [ ! -x "${DAIC_VENV_DIR}/bin/python" ]; then
     echo "ERROR: venv not found at ${DAIC_VENV_DIR} — run scripts/daic/setup_env.sh first." >&2

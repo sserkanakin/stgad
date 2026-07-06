@@ -619,9 +619,9 @@ def main() -> None:
     p.add_argument("--val-steps-list", default="1000,1500,2000,2500,3000,3500",
                    help="comma-separated EM reverse step counts swept in the diagnostic "
                         "(each auto-floored per prior stiffness)")
-    p.add_argument("--val-windows", type=int, default=48,
-                   help="fully-observed val windows for the diagnostic (small — "
-                        "cost = windows·k·Σsteps)")
+    p.add_argument("--val-windows", type=int, default=96,
+                   help="fully-observed val windows for the diagnostic, strided across "
+                        "the val period (cost = windows·k·Σsteps)")
     p.add_argument("--val-proj", type=int, default=64,
                    help="random projections for the sliced wasserstein-1")
     p.add_argument("--smoke", action="store_true", help="1 epoch, tiny batch, wandb disabled")
@@ -823,7 +823,12 @@ def main() -> None:
     full_valid = val_ds.mask.reshape(len(val_ds), -1).all(dim=1)       # (Nval,)
     valid_idx = full_valid.nonzero(as_tuple=True)[0]
     n_val = min(args.val_windows, valid_idx.numel())
-    sel = valid_idx[:n_val]
+    # deterministic STRIDED subset of the clean windows: consecutive windows overlap
+    # 11/12 steps, so first-N would be one ~4h block at a single time of day. striding
+    # spreads the diagnostic across the whole val period — same windows every epoch
+    # and every arm (comparability preserved, no rng).
+    stride = max(1, valid_idx.numel() // max(n_val, 1))
+    sel = valid_idx[::stride][:n_val]
     val_R0, val_Yhat = val_ds.R0[sel], val_ds.Y_hat[sel]
     val_ypred, val_ytrue = val_ds.y_pred_raw[sel], val_ds.y_true_raw[sel]
     log.info(f"per-epoch val_loss ({args.loss}, deterministic draws) selects best.pt "

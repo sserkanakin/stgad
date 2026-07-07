@@ -32,6 +32,8 @@ PRIORS="${PRIORS:-kronecker isotropic}"
 BACKBONE="${BACKBONE:-gwn}"
 THROTTLE="${THROTTLE:-6}"
 EPOCHS="${EPOCHS:-200}"
+LR="${LR:-1e-3}"
+LOSS="${LOSS:-mse}"          # mse (default) or snr (GAD's rate-weighted mse)
 
 # reads from the data share; ALL writes into one dated tree on windowshome.
 export DATA_ROOT="${DATA_ROOT:-${DAIC_DATA_DIR}}"
@@ -53,7 +55,7 @@ done
 N="${idx}"
 
 echo "===== experiment ${EXP}  seed=${SEED}  (${N} tasks, throttle ${THROTTLE}) ====="
-echo "datasets: ${DATASETS}   priors: ${PRIORS}   backbone: ${BACKBONE}"
+echo "datasets: ${DATASETS}   priors: ${PRIORS}   backbone: ${BACKBONE}   lr=${LR}   loss=${LOSS}"
 echo "tree:     ${OUTPUT_ROOT}/${EXP}/"
 echo "logs:     ${LOG_DIR}/"
 column -t "${GRID_FILE}" | sed 's/^/  /'
@@ -67,7 +69,7 @@ RES=(--partition="${DAIC_PARTITION}" --gres="${DAIC_GRES_GPU}")
 [ -n "${DAIC_GPU_EXCLUDE:-}" ] && RES+=(--exclude="${DAIC_GPU_EXCLUDE}")
 
 EXPORTS="ALL,EXP=${EXP},SEED=${SEED},BACKBONE=${BACKBONE},GRID_FILE=${GRID_FILE}"
-EXPORTS="${EXPORTS},EPOCHS=${EPOCHS}"
+EXPORTS="${EXPORTS},EPOCHS=${EPOCHS},LR=${LR},LOSS=${LOSS}"
 EXPORTS="${EXPORTS},DATA_ROOT=${DATA_ROOT},RESULTS_ROOT=${RESULTS_ROOT},OUTPUT_ROOT=${OUTPUT_ROOT}"
 
 JOBID="$(sbatch --parsable \

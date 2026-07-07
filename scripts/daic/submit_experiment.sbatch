@@ -25,6 +25,8 @@ source "${PROJECT_DIR}/scripts/daic/_common.sh"
 : "${SEED:?Set SEED via --export}"
 BACKBONE="${BACKBONE:-gwn}"
 EPOCHS="${EPOCHS:-200}"
+LR="${LR:-1e-3}"
+LOSS="${LOSS:-mse}"
 
 # wandb's local staging cache off the (quota'd) linuxhome — park it on windowshome.
 if [ -n "${OUTPUT_ROOT:-}" ]; then
@@ -60,7 +62,7 @@ copy_logs() {
 trap copy_logs EXIT
 
 log_run_header "${DAIC_PYTHON} scripts/train_diffusion.py --dataset ${DATASET} --prior ${PRIOR} \
---backbone ${BACKBONE} --exp ${EXP} --seed ${SEED} --epochs ${EPOCHS} --final-val"
+--backbone ${BACKBONE} --exp ${EXP} --seed ${SEED} --epochs ${EPOCHS} --lr ${LR} --loss ${LOSS} --final-val"
 
 srun --unbuffered --export=ALL "${DAIC_PYTHON}" -u scripts/train_diffusion.py \
     --dataset "${DATASET}" \
@@ -69,4 +71,6 @@ srun --unbuffered --export=ALL "${DAIC_PYTHON}" -u scripts/train_diffusion.py \
     --exp "${EXP}" \
     --seed "${SEED}" \
     --epochs "${EPOCHS}" \
+    --lr "${LR}" \
+    --loss "${LOSS}" \
     --final-val

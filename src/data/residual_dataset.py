@@ -25,35 +25,79 @@ from src.utils import paths
 
 
 @lru_cache(maxsize=8)
-def train_residual_sigma(dataset: str, seed: int = 0, backbone: str = "gwn") -> float:
-    """single global std of the TRAIN residuals (masked). one scalar per dataset,
-    computed on train only and reused verbatim for val/test, so the modeling
-    space is unit-variance without leaking the val distribution (which differs
-    from train by design on pems-bay - that drift is a result, not noise)."""
+def train_residual_sigma(dataset: str, seed: int = 0, backbone: str = "gwn",
+                         norm: str = "global"):
+    """residual scale from the TRAIN split (masked), reused verbatim for val/test.
+
+    norm="global":  one scalar std over all masked entries (the historical default).
+    norm="pernode": per-sensor std, shape (N,) — sensors differ 3-4x in residual
+        scale (heteroscedastic), so per-node unit variance removes the static part
+        of that spread before the prior/denoiser see the data (HySRD-Net's node-wise
+        normalization ablation: global costs 5-7% CRPS). floored at 10% of the
+        global std so a nearly-always-masked sensor cannot blow up the division."""
     d = np.load(paths.residual_npz(dataset, "train", seed, backbone))
     R = d["residuals"].astype(np.float64)
     M = d["mask"].astype(bool)
-    return float(R[M].std())
+    g = float(R[M].std())
+    if norm == "global":
+        return g
+    Rm = np.where(M, R, 0.0)
+    cnt = M.sum(axis=(0, 2)).clip(min=1)                       # valid entries per node
+    var = (Rm ** 2).sum(axis=(0, 2)) / cnt                      # per-node second moment
+    return np.sqrt(var).clip(min=0.1 * g)                       # (N,)
+
+
+def sigma_to_torch(sigma_r, device=None) -> torch.Tensor:
+    """broadcastable residual scale: scalar -> (1,1), per-node (N,) -> (N,1).
+    multiplies/divides tensors shaped (..., N, H) either way."""
+    t = torch.as_tensor(np.asarray(sigma_r), dtype=torch.float32, device=device)
+    return t.reshape(1, 1) if t.ndim == 0 else t.reshape(-1, 1)
 
 
 class ResidualDataset(Dataset):
     """In-memory wrapper around a residuals .npz, normalized to unit space.
 
-    sigma_r is the train-split residual std (pass the same value for every split).
-    """
+    sigma_r is the train-split residual scale (scalar or per-node (N,); pass the
+    same value for every split).
 
-    def __init__(self, npz_path: str | Path, sigma_r: float) -> None:
+    zero_masked: masked coordinates (y_true==0, sensor offline) hold residuals of
+        -y_pred — up to ~11 sigma on metrla. the loss never scores them, but the
+        graph convs smear them into scored neighbors, so we zero them at the INPUT
+        (loss mask + raw y tensors untouched).
+    cond_past: prepend the PREVIOUS window's residual field (window i-H, whose
+        forecast horizons end exactly at this window's origin — fully observed at
+        forecast time, no leakage) to the conditioning: cond = [R_past | Y_hat_z]
+        along time, (B, N, H+H). carries recent backbone-error volatility, the
+        heteroscedastic structure the forecast alone cannot signal."""
+
+    def __init__(self, npz_path: str | Path, sigma_r, *,
+                 cond_past: bool = False, zero_masked: bool = True) -> None:
         d = np.load(npz_path)
-        self.sigma_r = float(sigma_r)
+        self.sigma_r = sigma_r
+        self.cond_past = bool(cond_past)
+        sig = sigma_to_torch(sigma_r).numpy()                             # (1,1) or (N,1)
         mean = float(d["mean"])
         std = float(d["std"])
         R0 = d["residuals"].astype(np.float32)
         Y_hat = d["y_pred"].astype(np.float32)
+        mask = d["mask"].astype(bool)
         # model residuals in unit-variance space (divide by the residual scaler)
-        self.R0 = torch.from_numpy(R0 / np.float32(self.sigma_r))         # (B, N, H)
+        R0u = R0 / sig[None, :, :]                                        # (B, N, H)
+        if zero_masked:
+            R0u = np.where(mask, R0u, 0.0).astype(np.float32)
+        self.R0 = torch.from_numpy(R0u)
         # condition on the z-scored backbone forecast (the signal scaler, distinct)
-        self.Y_hat = torch.from_numpy((Y_hat - mean) / std)              # (B, N, H)
-        self.mask = torch.from_numpy(d["mask"].astype(bool))             # (B, N, H)
+        Yz = (Y_hat - mean) / std                                         # (B, N, H)
+        if cond_past:
+            H = R0u.shape[-1]
+            past = np.zeros_like(R0u)                                     # first H windows: none
+            src = R0u if zero_masked else np.where(mask, R0u, 0.0).astype(np.float32)
+            past[H:] = src[:-H]                                           # window i-H
+            self.Y_hat = torch.from_numpy(
+                np.concatenate([past, Yz], axis=-1).astype(np.float32))   # (B, N, 2H)
+        else:
+            self.Y_hat = torch.from_numpy(Yz.astype(np.float32))          # (B, N, H)
+        self.mask = torch.from_numpy(mask)                                # (B, N, H)
         # raw backbone forecast + ground truth (raw units), for MAPE and the PEMS
         # y==0 eval mask. y_true = y_pred + residual (both raw); residual = R0·sigma_r.
         self.y_pred_raw = torch.from_numpy(Y_hat)                         # (B, N, H) raw
@@ -100,10 +144,14 @@ class SignalDataset(Dataset):
         return {"R0": self.R0[idx], "Y_hat": self.Y_hat[idx], "mask": self.mask[idx]}
 
 
-def make_dataset(dataset: str, split: str, seed: int, backbone: str, sigma_r: float):
-    """ResidualDataset for a trained backbone, or SignalDataset for backbone='raw'."""
+def make_dataset(dataset: str, split: str, seed: int, backbone: str, sigma_r,
+                 *, cond_past: bool = False, zero_masked: bool = True):
+    """ResidualDataset for a trained backbone, or SignalDataset for backbone='raw'
+    (the signal arm has no backbone residual to condition on or zero)."""
     path = residual_path(dataset, split, seed, backbone)
-    return SignalDataset(path, sigma_r) if backbone == "raw" else ResidualDataset(path, sigma_r)
+    if backbone == "raw":
+        return SignalDataset(path, sigma_r)
+    return ResidualDataset(path, sigma_r, cond_past=cond_past, zero_masked=zero_masked)
 
 
 def residual_path(dataset: str, split: str, seed: int = 0, backbone: str = "gwn") -> Path:

@@ -1,9 +1,16 @@
-"""GAD's Euler–Maruyama reverse SDE sampler (forward in forward_fcps).
+"""reverse samplers for the GAD forward SDE (forward in forward_fcps).
 
-this is the ONLY reverse process — the same one GAD uses (exp_gasde_test_only_Em.py:
-sample_reverse_sde_em_in_s). it integrates the reverse-time SDE with EM, adding fresh
-noise at every step, so it IS the stochastic / ancestral (DDPM-equivalent) sampler;
-GAD's GASDE has no separate DDIM or deterministic sampler. see reverse_sample_em.
+reverse_sample_em        GAD's Euler-Maruyama reverse SDE (exp_gasde_test_only_Em.py:
+                         sample_reverse_sde_em_in_s) — the GAD-parity headline sampler.
+                         explicit Euler, so the stiff kronecker prior needs
+                         n_steps >= theta_max * S for stability (min_em_steps).
+reverse_sample_ancestral the DDPM-ancestral analogue for our LINEAR (per-mode OU)
+                         SDE: each step samples the closed-form gaussian posterior
+                         q(x_{c'} | x_c, x0_hat) per eigenmode — an exponential
+                         integrator, EXACT in distribution given the denoiser, with
+                         NO stability floor. ~50-100 steps replace thousands of EM
+                         steps; the only approximation is the shared x0_hat within
+                         a step (same as DDPM).
 """
 from __future__ import annotations
 
@@ -145,3 +152,75 @@ def reverse_sample_em(
             trace.R_hat_0_mean_norm.append(float(R0_hat.norm(dim=(-1, -2)).mean()))
 
     return R_t, trace
+
+
+def reverse_sample_ancestral(
+    prior: KroneckerPrior,
+    schedule: FCPSSchedule,
+    denoiser: Callable[[torch.Tensor, torch.Tensor, torch.Tensor], torch.Tensor],
+    Y_hat: torch.Tensor,
+    n_steps: int = 100,
+    *,
+    c_lo: float = 0.02,
+    R_T: Optional[torch.Tensor] = None,
+    generator: Optional[torch.Generator] = None,
+    step_callback: Optional[Callable[[int, float, torch.Tensor], None]] = None,
+) -> tuple[torch.Tensor, None]:
+    """DDPM-ancestral sampling, exact for the linear per-mode OU forward.
+
+    grid: geometric in the heat c̄ from c_0 down to c_lo (log-spacing covers every
+    mode's transition c̄·θ ~ O(1) evenly across the stiff θ spread). at each node
+    the denoiser predicts R0_hat; the next state is a draw from the closed-form
+    posterior q(x_{c'} | x_c, x0=R0_hat), per eigenmode:
+
+        a_d = e^{-θ(c-c')}          s_d  = σ²(1-e^{-2θ(c-c')})/θ   (transition c'→c)
+        a'  = e^{-θc'}              s'   = σ²(1-e^{-2θc'})/θ        (marginal at c')
+        v   = s_d·s' / (a_d²·s' + s_d)
+        mean= v·(a_d·x_c/s_d + a'·x0_hat/s')
+        x_{c'} = mean + sqrt(v)·z
+
+    the final output is the denoiser's R0_hat at c_lo (the c'→0 posterior collapses
+    onto x0_hat, exactly like DDPM's last step). returns (sample, None) to match
+    reverse_sample_em's signature.
+    """
+    device, dtype, B = Y_hat.device, Y_hat.dtype, Y_hat.shape[0]
+    V_S = torch.as_tensor(prior.V_S, device=device, dtype=dtype)
+    V_T = torch.as_tensor(prior.V_T, device=device, dtype=dtype)
+    theta = torch.as_tensor(prior.theta, device=device, dtype=dtype)        # (N, H)
+    s2 = prior.sigma2_scale
+    sigma2_stat = s2 / theta
+
+    if R_T is None:
+        R_t = _prior_sample_torch(
+            (B,), prior, V_S, V_T, sigma2_stat,
+            generator=generator, device=device, dtype=dtype,
+        )
+    else:
+        R_t = R_T.to(device=device, dtype=dtype)
+
+    c_grid = np.geomspace(schedule.c_0, c_lo, n_steps + 1)                  # (n_steps+1,)
+    t_grid = schedule.t_of_c_bar(c_grid)
+    C = _rotate_to_eig_torch(R_t, V_S, V_T)
+
+    R0_hat = R_t
+    for i in range(n_steps + 1):
+        c_cur = float(c_grid[i])
+        R_t = _rotate_from_eig_torch(C, V_S, V_T)
+        t_batch = torch.full((B,), float(t_grid[i]), device=device, dtype=dtype)
+        R0_hat = denoiser(R_t, t_batch, Y_hat)
+        if step_callback is not None:
+            step_callback(i, c_cur, R0_hat)
+        if i == n_steps:                                                    # last node → return x0_hat
+            break
+        c_nxt = float(c_grid[i + 1])
+        a_d = torch.exp(-theta * (c_cur - c_nxt))
+        s_d = torch.clamp(s2 * (1.0 - torch.exp(-2.0 * theta * (c_cur - c_nxt))) / theta, min=1e-20)
+        a_p = torch.exp(-theta * c_nxt)
+        s_p = torch.clamp(s2 * (1.0 - torch.exp(-2.0 * theta * c_nxt)) / theta, min=1e-20)
+        v = s_d * s_p / (a_d * a_d * s_p + s_d)
+        C0_hat = _rotate_to_eig_torch(R0_hat, V_S, V_T)
+        mean = v * (a_d * C / s_d + a_p * C0_hat / s_p)
+        z = torch.randn(C.shape, generator=generator, device=device, dtype=dtype)
+        C = mean + v.sqrt() * z
+
+    return R0_hat, None

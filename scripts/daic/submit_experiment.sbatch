@@ -25,8 +25,8 @@ source "${PROJECT_DIR}/scripts/daic/_common.sh"
 : "${SEED:?Set SEED via --export}"
 BACKBONE="${BACKBONE:-gwn}"
 EPOCHS="${EPOCHS:-200}"
-LR="${LR:-1e-3}"
-LOSS="${LOSS:-mse}"
+LR="${LR:-1e-4}"
+LOSS="${LOSS:-snr}"
 
 # wandb's local staging cache off the (quota'd) linuxhome — park it on windowshome.
 if [ -n "${OUTPUT_ROOT:-}" ]; then
@@ -37,13 +37,34 @@ fi
 
 # pick this task's row (1-indexed line = task id + 1).
 ROW="$(sed -n "$((SLURM_ARRAY_TASK_ID + 1))p" "${GRID_FILE}")"
-read -r IDX DATASET PRIOR RUN_DIR <<< "${ROW}"
+read -r IDX DATASET ARM PRIOR COND NORM RUN_DIR <<< "${ROW}"
 : "${DATASET:?empty row ${SLURM_ARRAY_TASK_ID} in ${GRID_FILE}}"
 
-# short prior for readable squeue names: kronecker→kron, isotropic→iso.
-PRIOR_SHORT="$([ "${PRIOR}" = "kronecker" ] && echo kron || echo iso)"
+# per-arm flags + nested exp tag (each arm gets its own tree/wandb namespace).
+ARM_FLAGS=(--norm "${NORM}")
+[ "${COND}" = "past" ] && ARM_FLAGS+=(--cond-past)
+ARM_EXP="${EXP}/${ARM}"
 export STAGE="diffusion"
-RUN_NAME="${EXP}_${DATASET}_${PRIOR_SHORT}_s${SEED}"
+
+# squeue-friendly name: the distinguishing part FIRST (short dataset + short arm),
+# the exp tag last so column truncation only ever hides the date.
+case "${DATASET}" in
+  metrla)  DS_SHORT="mt"  ;;
+  pemsbay) DS_SHORT="bay" ;;
+  pems04f) DS_SHORT="04f" ;;
+  pems04s) DS_SHORT="04s" ;;
+  pems08f) DS_SHORT="08f" ;;
+  pems08s) DS_SHORT="08s" ;;
+  *)       DS_SHORT="${DATASET}" ;;
+esac
+case "${ARM}" in
+  kron_pastG)  ARM_SHORT="krP"  ;;
+  kron_pastPN) ARM_SHORT="krPN" ;;
+  kron_base)   ARM_SHORT="kr0"  ;;
+  iso_pastG)   ARM_SHORT="isoP" ;;
+  *)           ARM_SHORT="${ARM}" ;;
+esac
+RUN_NAME="${DS_SHORT}-${ARM_SHORT}-s${SEED}-${EXP}"
 # rename THIS array element (jobid_taskid). renaming by SLURM_JOB_ID is wrong here:
 # one task's raw id equals the array master id, and renaming that renames ALL tasks.
 scontrol update job="${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_TASK_ID}" \
@@ -62,15 +83,17 @@ copy_logs() {
 trap copy_logs EXIT
 
 log_run_header "${DAIC_PYTHON} scripts/train_diffusion.py --dataset ${DATASET} --prior ${PRIOR} \
---backbone ${BACKBONE} --exp ${EXP} --seed ${SEED} --epochs ${EPOCHS} --lr ${LR} --loss ${LOSS} --final-val"
+--backbone ${BACKBONE} --exp ${ARM_EXP} --seed ${SEED} --epochs ${EPOCHS} --lr ${LR} \
+--loss ${LOSS} ${ARM_FLAGS[*]} --final-val"
 
 srun --unbuffered --export=ALL "${DAIC_PYTHON}" -u scripts/train_diffusion.py \
     --dataset "${DATASET}" \
     --prior "${PRIOR}" \
     --backbone "${BACKBONE}" \
-    --exp "${EXP}" \
+    --exp "${ARM_EXP}" \
     --seed "${SEED}" \
     --epochs "${EPOCHS}" \
     --lr "${LR}" \
     --loss "${LOSS}" \
+    "${ARM_FLAGS[@]}" \
     --final-val

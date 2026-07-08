@@ -48,3 +48,22 @@ def setup_logging(log_path: Optional[str | Path] = None, name: str = _NAME) -> l
         fh.setFormatter(_FMT)
         logger.addHandler(fh)
     return logger
+
+
+class Throttle:
+    """rate-limit progress logging: ready() is True at most once per interval.
+    long phases (EM reverses, full-set evals) emit ONE self-contained line every
+    couple of minutes instead of heartbeat spam per chunk/step."""
+
+    def __init__(self, interval_s: float = 120.0) -> None:
+        import time as _time
+        self._time = _time
+        self.interval = float(interval_s)
+        self.last = _time.monotonic()          # phase start counts as "just printed"
+
+    def ready(self) -> bool:
+        now = self._time.monotonic()
+        if now - self.last >= self.interval:
+            self.last = now
+            return True
+        return False

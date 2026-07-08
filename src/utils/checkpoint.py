@@ -14,19 +14,25 @@ def save_checkpoint(
     epoch: int,
     best_val_mae: float,
     rng_states: dict,
+    model_state: dict | None = None,
+    extra: dict | None = None,
 ) -> None:
     """save everything needed to resume: model, optimiser, scheduler (may be
-    None), epoch, best val mae and the rng states."""
+    None), epoch, best val mae and the rng states. model_state overrides the
+    module's own weights (used to checkpoint EMA weights so downstream eval
+    loads them transparently); extra keys are merged into the payload."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     ckpt = {
-        "model_state_dict": model.state_dict(),
+        "model_state_dict": model_state if model_state is not None else model.state_dict(),
         "optimizer_state_dict": optim.state_dict(),
         "scheduler_state_dict": sched.state_dict() if sched is not None else None,
         "epoch": epoch,
         "best_val_mae": best_val_mae,
         "rng_states": rng_states,
     }
+    if extra:
+        ckpt.update(extra)
     # write atomically (temp + rename): if the disk fills mid-save, the partial
     # lands on a .tmp and the real best.pt/last.pt is never a truncated half-file
     # that a later resume/eval would fail to read (PytorchStreamReader error).

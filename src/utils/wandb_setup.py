@@ -109,6 +109,12 @@ def init_wandb(
         tags.append(f"sched:{cfg['schedule_resolved']}")
     if cfg.get("repair_graph") is not None:
         tags.append(f"repair:{'on' if cfg['repair_graph'] else 'off'}")
+    if cfg.get("loss"):
+        tags.append(f"loss:{cfg['loss']}")
+    if cfg.get("cond_past"):
+        tags.append("cond:past")
+    if cfg.get("norm") and cfg["norm"] != "global":
+        tags.append(f"norm:{cfg['norm']}")
 
     run = wandb.init(
         project=os.environ.get("WANDB_PROJECT", "thesis-diffusion"),

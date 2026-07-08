@@ -40,11 +40,13 @@ torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
 
 from src.data.adjacency import load_adjacency
-from src.data.residual_dataset import make_dataset, residual_path, train_residual_sigma
+from src.data.residual_dataset import (
+    make_dataset, residual_path, sigma_to_torch, train_residual_sigma,
+)
 from src.diffusion.denoiser import R0Denoiser, SignalDenoiser
 from src.diffusion.forward_fcps import FCPSSchedule, ULSchedule, prior_to_torch
 from src.diffusion.prior import load_prior
-from src.diffusion.reverse import reverse_sample_em, min_em_steps
+from src.diffusion.reverse import min_em_steps, reverse_sample_ancestral, reverse_sample_em
 from src.eval.distribution import energy_distance, sliced_wasserstein1
 from src.eval.intervals import winkler_score
 from src.utils import paths
@@ -73,19 +75,20 @@ from src.eval.crps import empirical_crps, quantile_crps_num   # noqa: E402  (sha
 # ─── load a trained run ──────────────────────────────────────────────────────
 
 
-def load_run(dataset, prior, seed, exp, device, backbone="gwn"):
+def load_run(dataset, prior, seed, exp, device, backbone="gwn", ckpt_name="best.pt"):
     ckpt_dir = paths.diffusion_dir(dataset, prior, seed, exp=exp, backbone=backbone)
     cfg = json.loads((ckpt_dir / "config.json").read_text())
-    ckpt = torch.load(ckpt_dir / "best.pt", map_location=device, weights_only=False)
+    ckpt = torch.load(ckpt_dir / ckpt_name, map_location=device, weights_only=False)
 
     # rebuild the SAME prior the run trained with (spatial + stiffness cap + graph
-    # repair from config; defaults keep back-compat with configs written before
-    # those flags existed — repair=None follows the global REPAIR_GRAPH default).
+    # repair + residual norm from config; defaults keep back-compat with configs
+    # written before those flags existed).
     prior_obj = load_prior(dataset, prior, seed,
                            spatial=cfg.get("spatial", "structured"),
                            stiffness_cap=(cfg.get("stiffness_cap") or None),
                            backbone=backbone,
-                           repair=cfg.get("repair_graph"))
+                           repair=cfg.get("repair_graph"),
+                           norm=cfg.get("norm", "global"))
     # rebuild the schedule exactly as training used it: uls (isotropic arm, linear
     # rate at the same total heat) or the GAD-literal fcps. old configs have no
     # schedule_resolved field → fcps with the recorded/default S, α, c_min.
@@ -112,6 +115,7 @@ def load_run(dataset, prior, seed, exp, device, backbone="gwn"):
             N=prior_obj.N, H=prior_obj.H, adjacency=load_adjacency(dataset),
             d_h=cfg["d_h"], channel_multipliers=tuple(cfg["channel_multipliers"]),
             n_blocks=cfg["n_blocks"], device=str(device),
+            T_h=(prior_obj.H if cfg.get("cond_past") else 0),
         ).to(device)
     denoiser.load_state_dict(ckpt["model_state_dict"])
     denoiser.eval()
@@ -124,37 +128,46 @@ def load_run(dataset, prior, seed, exp, device, backbone="gwn"):
 @torch.no_grad()
 def evaluate(dataset, prior, seed, *, exp, device, k, n_steps, alpha,
              w1_windows, w1_samples, w1_proj, gen_batch, max_windows, generator,
-             backbone="gwn", mask_zero=True, split="test"):
-    denoiser, prior_obj, schedule, cfg, ckpt_epoch = load_run(dataset, prior, seed, exp, device, backbone)
+             backbone="gwn", mask_zero=True, split="test", sampler="em",
+             ckpt_name="best.pt"):
+    denoiser, prior_obj, schedule, cfg, ckpt_epoch = load_run(
+        dataset, prior, seed, exp, device, backbone, ckpt_name=ckpt_name)
     N, H = prior_obj.N, prior_obj.H
 
-    # EM stability floor: explicit EM NaNs when the step count is too low for this prior's
-    # stiffness (θ_max·S). floor n_steps so stiff priors (esp. raw) run correctly.
-    floor = min_em_steps(prior_obj, schedule)
-    if n_steps < floor:
-        log.info(f"[eval] EM stability floor: n_steps {n_steps} → {floor} (θ_max·S)")
-        n_steps = floor
+    if sampler == "em":
+        # EM stability floor: explicit EM NaNs when the step count is too low for this
+        # prior's stiffness (θ_max·S). the ancestral sampler has no such floor.
+        floor = min_em_steps(prior_obj, schedule)
+        if n_steps < floor:
+            log.info(f"[eval] EM stability floor: n_steps {n_steps} → {floor} (θ_max·S)")
+            n_steps = floor
 
     import time
+    from src.utils.logging_setup import Throttle
 
-    # reverse process: GAD's Euler–Maruyama SDE — the only sampler (stochastic /
-    # ancestral, the DDPM-equivalent; GAD's GASDE has no DDIM/deterministic variant).
-    # each call logs a heartbeat every ~25% of its EM steps so a long chunk (3500
-    # steps on pemsbay takes minutes) never looks frozen in the slurm log.
+    # reverse process: GAD's Euler–Maruyama SDE (headline, GAD parity) or the
+    # closed-form ancestral sampler (exact for the linear SDE, ~20x fewer steps).
+    # progress: ONE self-contained line every ~3 min for the whole eval (the
+    # throttle is shared by the reverse steps and the chunk loop below).
+    thr = Throttle(180.0)
+
     def _reverse(Y_cond, tag=""):
-        t0 = time.time()
-        hb = max(1, n_steps // 4)
         def _cb(i, _c, _R):
-            if (i + 1) % hb == 0 and (i + 1) < n_steps:
-                log.info(f"    [{dataset}/{prior}] {tag} EM {i + 1}/{n_steps} steps "
-                         f"({time.time() - t0:.0f}s)")
-        s, _ = reverse_sample_em(prior_obj, schedule, denoiser, Y_cond,
-                                 n_steps=n_steps, R_T=None, generator=generator,
-                                 step_callback=_cb)
+            if thr.ready():
+                log.info(f"  [eval {dataset}/{prior}] {tag} · {sampler} step "
+                         f"{i + 1}/{n_steps}")
+        fn = reverse_sample_em if sampler == "em" else reverse_sample_ancestral
+        s, _ = fn(prior_obj, schedule, denoiser, Y_cond,
+                  n_steps=n_steps, R_T=None, generator=generator,
+                  step_callback=_cb)
         return s
 
-    sigma_r = train_residual_sigma(dataset, seed, backbone)   # same scalar used in training
-    ds = make_dataset(dataset, split, seed, backbone, sigma_r)
+    # same residual scale + dataset flags the run trained with (from config.json)
+    sigma_r = train_residual_sigma(dataset, seed, backbone, norm=cfg.get("norm", "global"))
+    sig = sigma_to_torch(sigma_r, device)                     # (1,1) or (N,1), broadcasts
+    ds = make_dataset(dataset, split, seed, backbone, sigma_r,
+                      cond_past=bool(cfg.get("cond_past")),
+                      zero_masked=bool(cfg.get("zero_masked_input")))
     R0_all, Y_all, M_all = ds.R0, ds.Y_hat, ds.mask
     Ytrue_all = ds.y_true_raw                                 # raw ground truth (y_pred+residual)
     # match SpecSTG/DiffSTG: drop y==0 points from the metrics. for the speed datasets
@@ -179,14 +192,14 @@ def evaluate(dataset, prior, seed, *, exp, device, k, n_steps, alpha,
     qnum_n = torch.zeros(H); qden_n = torch.zeros(H)
     for ci, start in enumerate(range(0, n_total, chunk)):
         end = min(start + chunk, n_total)
-        R0 = R0_all[start:end].to(device) * sigma_r       # raw residual
+        R0 = R0_all[start:end].to(device) * sig           # raw residual
         Y = Y_all[start:end].to(device)                   # conditioning (z-scored)
         Mk = M_all[start:end].to(device)
         yt = Ytrue_all[start:end].to(device)              # raw ground-truth signal
         yp = yt - R0                                      # raw backbone forecast (0 for 'raw')
         b = R0.shape[0]
         samp = _reverse(Y.repeat(k, 1, 1), tag=f"point {ci + 1}/{nchunks}")
-        samp = samp.view(k, b, N, H) * sigma_r            # raw residual samples
+        samp = samp.view(k, b, N, H) * sig                # raw residual samples
         # reconstruct the forecast and clip to [0,∞) (non-negative flow/speed; matches DiffSTG).
         # all metrics are now in raw FORECAST space (= residual space + y_pred, then clip).
         fc = (yp.unsqueeze(0) + samp).clamp(min=0.0)      # (k, b, N, H) raw forecast samples
@@ -202,13 +215,13 @@ def evaluate(dataset, prior, seed, *, exp, device, k, n_steps, alpha,
         qnum_n += quantile_crps_num(fc, yt, Mk).cpu()                           # normalized-CRPS num
         sn, _ = _masked_sums(yt.abs(), Mk);  qden_n += sn.cpu()                 # normalized-CRPS denom
 
-        if ci % max(1, nchunks // 10) == 0 or ci == nchunks - 1:
+        if thr.ready() or ci == nchunks - 1:
             el = time.time() - t0
             remaining = el / (ci + 1) * (nchunks - ci - 1)   # don't shadow the sde `eta`
-            log.info(f"  [{dataset}/{prior}] point {ci+1}/{nchunks} "
-                     f"({100*(ci+1)/nchunks:.0f}%)  elapsed={el:.0f}s  eta={remaining:.0f}s")
+            log.info(f"  [eval {dataset}/{prior}] point {ci+1}/{nchunks} "
+                     f"({100*(ci+1)/nchunks:.0f}%) · elapsed {el/60:.0f}m · eta {remaining/60:.0f}m")
 
-    log.info(f"  [{dataset}/{prior}] point done in {time.time()-t0:.0f}s; computing W1/energy...")
+    log.info(f"  [eval {dataset}/{prior}] point phase done in {(time.time()-t0)/60:.0f}m; W1/energy...")
     cnt = cnt.clamp(min=1.0)
     mae_h = (mae_n / cnt); mse_h = (mse_n / cnt); mape_h = (mape_n / cnt)
     wink_h = (wink_n / cnt); cov_h = (cov_n / cnt); crps_h = (crps_n / cnt)
@@ -221,23 +234,23 @@ def evaluate(dataset, prior, seed, *, exp, device, k, n_steps, alpha,
     n_w1 = min(w1_windows, vidx.numel())
     sel = vidx[:n_w1]
     w1_frac = float(valid.float().mean())
-    R0v = R0_all[sel].to(device) * sigma_r; Yv = Y_all[sel].to(device)   # de-norm R0 to raw
+    R0v = R0_all[sel].to(device) * sig; Yv = Y_all[sel].to(device)   # de-norm R0 to raw
     # sub-batch windows so w1_samples * sub <= gen_batch (same OOM guard)
     wb = max(1, gen_batch // w1_samples)
     n_w1_chunks = (n_w1 + wb - 1) // wb
-    log.info(f"  [{dataset}/{prior}] W1/energy phase: {n_w1} clean windows × "
-             f"{w1_samples} samples, {n_w1_chunks} chunks")
     t1 = time.time()
     gen_parts = []
     for wi, s in enumerate(range(0, n_w1, wb)):
         e = min(s + wb, n_w1)
         g = _reverse(Yv[s:e].repeat(w1_samples, 1, 1), tag=f"W1 {wi + 1}/{n_w1_chunks}")
         gen_parts.append(g.view(w1_samples, e - s, N, H))
-        el = time.time() - t1
-        remaining = el / (wi + 1) * (n_w1_chunks - wi - 1)
-        log.info(f"  [{dataset}/{prior}] W1 {wi + 1}/{n_w1_chunks} "
-                 f"({100 * (wi + 1) / n_w1_chunks:.0f}%)  elapsed={el:.0f}s  eta={remaining:.0f}s")
-    gen = torch.cat(gen_parts, dim=1) * sigma_r    # (w1_samples, n_w1, N, H), raw units
+        if thr.ready() or wi == n_w1_chunks - 1:
+            el = time.time() - t1
+            remaining = el / (wi + 1) * (n_w1_chunks - wi - 1)
+            log.info(f"  [eval {dataset}/{prior}] W1 {wi + 1}/{n_w1_chunks} "
+                     f"({100 * (wi + 1) / n_w1_chunks:.0f}%) · elapsed {el/60:.0f}m · "
+                     f"eta {remaining/60:.0f}m")
+    gen = torch.cat(gen_parts, dim=1) * sig        # (w1_samples, n_w1, N, H), raw units
     w1_h, ed_h = [], []
     for h in range(H):
         true_c = R0v[:, :, h]
@@ -247,9 +260,9 @@ def evaluate(dataset, prior, seed, *, exp, device, k, n_steps, alpha,
 
     return {
         "dataset": dataset, "backbone": backbone, "prior": prior, "seed": seed,
-        "exp": exp, "ckpt_epoch": ckpt_epoch, "split": split,
+        "exp": exp, "ckpt_epoch": ckpt_epoch, "split": split, "ckpt": ckpt_name,
         "n_test_windows": int(n_total), "k_samples": k, "n_steps": n_steps,
-        "sampler": "em", "alpha": alpha, "mask_zero": bool(mask_zero),
+        "sampler": sampler, "alpha": alpha, "mask_zero": bool(mask_zero),
         "mae": overall(mae_n), "mse": overall(mse_n), "rmse": float((mse_n.sum()/cnt.sum())**0.5),
         "mape": overall(mape_n),
         "winkler": overall(wink_n), "coverage": overall(cov_n),
@@ -268,8 +281,10 @@ def _save(res):
     out = paths.eval_dir(res["dataset"], res["prior"], res["seed"], exp=res.get("exp"),
                          backbone=res.get("backbone", "gwn"))
     out.mkdir(parents=True, exist_ok=True)
-    # per-(split, steps) filename so parallel step-count evals never clobber
-    path = out / f"{res.get('split', 'test')}_metrics_steps{res['n_steps']}.json"
+    # per-(split, ckpt, sampler, steps) filename so parallel evals never clobber
+    ck = "bestcrps" if res.get("ckpt") == "best_crps.pt" else "best"
+    path = (out / f"{res.get('split', 'test')}_metrics_{ck}_"
+                  f"{res.get('sampler', 'em')}{res['n_steps']}.json")
     path.write_text(json.dumps(res, indent=2))
     return path
 
@@ -335,6 +350,11 @@ def main():
     p.add_argument("--max-windows", type=int, default=0, help="cap test windows (0=all)")
     p.add_argument("--no-mask-zero", dest="mask_zero", action="store_false",
                    help="keep y==0 points in the metrics (default: drop them, SpecSTG/DiffSTG convention)")
+    p.add_argument("--sampler", choices=("em", "ancestral"), default="em",
+                   help="em = GAD parity (needs >= theta_max*S steps); ancestral = "
+                        "closed-form OU posterior, exact for the linear SDE, ~100 steps")
+    p.add_argument("--ckpt", choices=("best.pt", "best_crps.pt"), default="best.pt",
+                   help="which checkpoint to evaluate (val-loss or sweep-CRPS selection)")
     args = p.parse_args()
 
     setup_logging(None)        # standalone: timestamped lines to stdout (traineval configures its own)
@@ -352,7 +372,8 @@ def main():
             p.error("give --dataset and --prior, or --all")
         jobs = [(args.dataset, args.prior)]
 
-    print(f"[eval] device={device}  sampler=EM (GAD)  k={args.k}  n_steps={args.n_steps}")
+    print(f"[eval] device={device}  sampler={args.sampler}  ckpt={args.ckpt}  "
+          f"k={args.k}  n_steps={args.n_steps}")
     results = []
     for ds, pr in jobs:
         res = evaluate(ds, pr, args.seed, exp=args.exp, device=device, k=args.k,
@@ -360,7 +381,8 @@ def main():
                        w1_windows=args.w1_windows, w1_samples=args.w1_samples,
                        w1_proj=args.w1_proj, gen_batch=args.gen_batch,
                        max_windows=args.max_windows, generator=g, backbone=args.backbone,
-                       mask_zero=args.mask_zero, split=args.split)
+                       mask_zero=args.mask_zero, split=args.split, sampler=args.sampler,
+                       ckpt_name=args.ckpt)
         _print_one(res)
         print(f"  wrote {_save(res)}")
         results.append(res)

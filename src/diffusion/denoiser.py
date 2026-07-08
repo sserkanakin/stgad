@@ -82,6 +82,7 @@ class R0Denoiser(nn.Module):
         channel_multipliers: tuple[int, ...] = (1, 2),
         n_blocks: int = 2,
         device: str = "cpu",
+        T_h: int = 0,
     ) -> None:
         super().__init__()
         if adjacency.shape != (N, N):
@@ -90,11 +91,18 @@ class R0Denoiser(nn.Module):
             )
         self.N = N
         self.H = H
+        # T_h > 0: past-residual conditioning. the conditioning tensor is then
+        # [R_past | Y_hat_z] along time, (B, N, T_h+H); ugnet is built for
+        # T = T_h + T_p exactly like the DiffSTG signal arm (T_h=12/T_p=12).
+        self.T_h = int(T_h)
         cfg = make_ugnet_config(
             N=N, H=H, A=adjacency, d_h=d_h,
             channel_multipliers=channel_multipliers, n_blocks=n_blocks,
             device=device,
         )
+        if self.T_h:
+            cfg.T_h = self.T_h
+            cfg.T_p = H
         self.ugnet = _UGnet(cfg)
 
     def forward(
@@ -105,29 +113,38 @@ class R0Denoiser(nn.Module):
     ) -> torch.Tensor:
         """predict R0 from R_t at time t, conditioned on Y_hat.
 
-        R_t, Y_hat and the returned R0_hat are all (B, N, H); t is (B,).
+        R_t and the returned R0_hat are (B, N, H); t is (B,). Y_hat is (B, N, H),
+        or (B, N, T_h+H) = [R_past | Y_hat_z] when built with T_h > 0.
         """
         if R_t.shape[-2:] != (self.N, self.H):
             raise ValueError(
                 f"R_t last two dims must be ({self.N}, {self.H}); got {R_t.shape}"
             )
-        if Y_hat.shape != R_t.shape:
+        if Y_hat.shape[-1] != self.T_h + self.H:
             raise ValueError(
-                f"Y_hat shape {Y_hat.shape} != R_t shape {R_t.shape}"
+                f"conditioning last dim must be T_h+H={self.T_h + self.H}; got {Y_hat.shape}"
             )
         if t.shape[0] != R_t.shape[0]:
             raise ValueError(
                 f"t batch dim {t.shape[0]} != R_t batch dim {R_t.shape[0]}"
             )
 
-        x = R_t.unsqueeze(1)          # (B, 1, N, H)
-        x_masked = Y_hat.unsqueeze(1)  # (B, 1, N, H)
+        if self.T_h:
+            # diffstg conditioning: x = [known past | noisy future], x_masked =
+            # [known past | forecast]. past = the previous window's residuals.
+            R_past = Y_hat[..., : self.T_h]
+            x = torch.cat([R_past, R_t], dim=-1).unsqueeze(1)       # (B, 1, N, T_h+H)
+            x_masked = Y_hat.unsqueeze(1)                            # (B, 1, N, T_h+H)
+        else:
+            x = R_t.unsqueeze(1)           # (B, 1, N, H)
+            x_masked = Y_hat.unsqueeze(1)  # (B, 1, N, H)
         # pos_w / pos_d are ignored by ugnet's forward; pass dummy zeros.
         c = (x_masked, torch.zeros(1, device=R_t.device), torch.zeros(1, device=R_t.device))
 
         t_scaled = t * T_EMBED_SCALE
-        out = self.ugnet(x, t_scaled, c)   # (B, 1, N, H)
-        return out.squeeze(1)               # (B, N, H)
+        out = self.ugnet(x, t_scaled, c)   # (B, 1, N, T_h+H)
+        out = out.squeeze(1)
+        return out[..., -self.H:] if self.T_h else out              # (B, N, H)
 
 
 class SignalDenoiser(nn.Module):

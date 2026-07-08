@@ -6,16 +6,15 @@
 #   → FULL val-set eval at that count (val_results.json + val_summary.txt).
 # the test split is NOT touched (separate decision later).
 #
-#   # pilot (2 tasks):
-#   DATASETS=metrla EXP=20260706_gadmse scripts/daic/submit_experiment.sh 42
-#   # fan out the rest:
-#   DATASETS="pems04s pems04f pems08s pems08f pemsbay" EXP=20260706_gadmse \
-#     scripts/daic/submit_experiment.sh 42
+#   # pilot (4 arms on metrla):
+#   DATASETS=metrla EXP=20260708_r2 scripts/daic/submit_experiment.sh 42
+#   # everything (4 arms x 6 datasets = 24 tasks):
+#   EXP=20260708_r2 scripts/daic/submit_experiment.sh 42
 #   # anything after the seed passes straight to sbatch (e.g. --time=30:00:00)
 #
-# outputs land in ONE dated tree: ${OUTPUT_ROOT}/${EXP}/<ds>/gwn/<prior>/seed<seed>/{train,eval}
+# outputs land per arm: ${OUTPUT_ROOT}/${EXP}/<arm>/<ds>/gwn/<prior>/seed<seed>/{train,eval}
 # logs:      ${OUTPUT_ROOT}/logs/${EXP}/<ArrayJobID>_<task>.out (+ copied into the run dir)
-# manifest:  ${OUTPUT_ROOT}/logs/${EXP}/grid_seed<seed>.tsv  (task -> dataset/prior/run_dir)
+# manifest:  ${OUTPUT_ROOT}/logs/${EXP}/grid_seed<seed>.tsv  (task -> ds/arm/prior/cond/norm/run_dir)
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -28,12 +27,18 @@ shift
 
 # priority order from the user; backbone fixed to gwn for this protocol round.
 DATASETS="${DATASETS:-metrla pems04s pems04f pems08s pems08f pemsbay}"
-PRIORS="${PRIORS:-kronecker isotropic}"
 BACKBONE="${BACKBONE:-gwn}"
-THROTTLE="${THROTTLE:-6}"
+THROTTLE="${THROTTLE:-8}"
 EPOCHS="${EPOCHS:-200}"
-LR="${LR:-1e-3}"
-LOSS="${LOSS:-mse}"          # mse (default) or snr (GAD's rate-weighted mse)
+LR="${LR:-1e-4}"
+LOSS="${LOSS:-snr}"          # snr (GAD's rate-weighted mse, default) or mse
+# arms: <name>:<prior>:<cond>:<norm>. each arm gets its own nested exp tree
+# (${EXP}/<name>/...) and wandb runs, so kron arms never collide on a run dir.
+#   kron_pastG   kronecker + past-residual conditioning + global norm
+#   kron_pastPN  kronecker + past-residual conditioning + per-node norm
+#   kron_base    kronecker, forecast-only conditioning (continuity w/ 20260707)
+#   iso_pastG    isotropic + past-residual conditioning (prior ablation)
+ARMS="${ARMS:-kron_pastG:kronecker:past:global kron_pastPN:kronecker:past:pernode kron_base:kronecker:base:global iso_pastG:isotropic:past:global}"
 
 # reads from the data share; ALL writes into one dated tree on windowshome.
 export DATA_ROOT="${DATA_ROOT:-${DAIC_DATA_DIR}}"
@@ -42,21 +47,36 @@ export OUTPUT_ROOT="${OUTPUT_ROOT:-${DAIC_OUT_DIR:-$HOME/windowshome/research-tu
 
 LOG_DIR="${OUTPUT_ROOT}/logs/${EXP}"
 mkdir -p "${LOG_DIR}"
-GRID_FILE="${LOG_DIR}/grid_seed${SEED}.tsv"
+# one manifest PER SUBMISSION (datasets in the name): tasks read the grid at
+# runtime, so a shared filename would be clobbered by the next submission
+# (e.g. one array per dataset) while earlier tasks still sit in the queue.
+short_ds() {  # squeue-friendly dataset codes (same map as the sbatch rename)
+  case "$1" in
+    metrla) echo mt ;; pemsbay) echo bay ;;
+    pems04f) echo 04f ;; pems04s) echo 04s ;;
+    pems08f) echo 08f ;; pems08s) echo 08s ;;
+    *) echo "$1" ;;
+  esac
+}
+DS_TAG="$(for d in ${DATASETS}; do short_ds "$d"; done | paste -sd- -)"
+GRID_FILE="${LOG_DIR}/grid_seed${SEED}_${DS_TAG}.tsv"
 : > "${GRID_FILE}"
 idx=0
 for DS in ${DATASETS}; do
-  for PR in ${PRIORS}; do
-    RUN_DIR="${OUTPUT_ROOT}/${EXP}/${DS}/${BACKBONE}/${PR}/seed${SEED}"
-    printf '%d\t%s\t%s\t%s\n' "${idx}" "${DS}" "${PR}" "${RUN_DIR}" >> "${GRID_FILE}"
+  for ARM in ${ARMS}; do
+    IFS=':' read -r NAME PR COND NORM <<< "${ARM}"
+    RUN_DIR="${OUTPUT_ROOT}/${EXP}/${NAME}/${DS}/${BACKBONE}/${PR}/seed${SEED}"
+    printf '%d\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+      "${idx}" "${DS}" "${NAME}" "${PR}" "${COND}" "${NORM}" "${RUN_DIR}" >> "${GRID_FILE}"
     idx=$((idx + 1))
   done
 done
 N="${idx}"
 
 echo "===== experiment ${EXP}  seed=${SEED}  (${N} tasks, throttle ${THROTTLE}) ====="
-echo "datasets: ${DATASETS}   priors: ${PRIORS}   backbone: ${BACKBONE}   lr=${LR}   loss=${LOSS}"
-echo "tree:     ${OUTPUT_ROOT}/${EXP}/"
+echo "datasets: ${DATASETS}   backbone: ${BACKBONE}   lr=${LR}   loss=${LOSS}"
+echo "arms:     ${ARMS}"
+echo "tree:     ${OUTPUT_ROOT}/${EXP}/<arm>/"
 echo "logs:     ${LOG_DIR}/"
 column -t "${GRID_FILE}" | sed 's/^/  /'
 
@@ -75,7 +95,7 @@ EXPORTS="${EXPORTS},DATA_ROOT=${DATA_ROOT},RESULTS_ROOT=${RESULTS_ROOT},OUTPUT_R
 JOBID="$(sbatch --parsable \
        --array="0-$((N - 1))%${THROTTLE}" \
        --export="${EXPORTS}" \
-       --job-name="${EXP}" \
+       --job-name="${DS_TAG}-${EXP}" \
        --output="${LOG_DIR}/%A_%a.out" \
        --error="${LOG_DIR}/%A_%a.err" \
        "${RES[@]}" "$@" "${HERE}/submit_experiment.sbatch")"
@@ -83,6 +103,6 @@ JOBID="$(sbatch --parsable \
 echo
 echo "submitted ArrayJobID=${JOBID}"
 awk -F'\t' -v jid="${JOBID}" -v ld="${LOG_DIR}" \
-  '{printf "  task %s  %-9s %-10s  log=%s/%s_%s.out\n", $1, $2, $3, ld, jid, $1}' "${GRID_FILE}"
+  '{printf "  task %s  %-9s %-12s  log=%s/%s_%s.out\n", $1, $2, $3, ld, jid, $1}' "${GRID_FILE}"
 echo "watch:  squeue --me   |   bash scripts/daic/watch_jobs.sh --follow"
 echo "tail:   tail -f ${LOG_DIR}/${JOBID}_<task>.out"

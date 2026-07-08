@@ -98,6 +98,10 @@ setup_venv() {
     # install torch from the cu128 index INTO the venv so it overrides any module
     # torch on PYTHONPATH. the wheel pulls its own nvidia-* cuda libs + numpy.
     pip install --prefer-binary --index-url "${DAIC_TORCH_PIP_INDEX}" "${DAIC_TORCH_SPEC}"
+    # triton (~540MB) ships as a torch dep but is only used by torch.compile, which
+    # we don't use — drop it so the venv fits linuxhome's tight 8GB quota (torch
+    # runs fine eager without it). saves the difference that overflows VS Code.
+    pip uninstall -y triton 2>/dev/null || true
     # remaining pure-python deps from PyPI (torch already satisfied above).
     pip install --prefer-binary -e ".${DAIC_PIP_EXTRAS-[dev]}"
   else

@@ -74,9 +74,12 @@ def init_wandb(
 
     _load_dotenv()
 
+    # nested exp tags ("<exp>/<arm>", the per-arm trees) carry a slash, which
+    # wandb forbids in run IDs — sanitize once here for id/name/group/tags.
+    exp_tag = exp.replace("/", "-") if exp else exp
     if exp:
-        name = f"{exp}-" + paths.run_name(stage, dataset, seed, prior, backbone)
-        group = f"{exp}-{dataset}" if stage == "diffusion" else f"{exp}-{dataset}-{stage}"
+        name = f"{exp_tag}-" + paths.run_name(stage, dataset, seed, prior, backbone)
+        group = f"{exp_tag}-{dataset}" if stage == "diffusion" else f"{exp_tag}-{dataset}-{stage}"
     else:
         name = paths.run_name(stage, dataset, seed, prior, backbone)
         group = f"{stage}-{dataset}" + (f"-{prior}" if prior else "")
@@ -103,7 +106,7 @@ def init_wandb(
     if prior:
         tags.append(prior)
     if exp:
-        tags.append(exp)
+        tags.append(exp_tag)
     # make the arms distinguishable at a glance in the dashboard
     if cfg.get("schedule_resolved"):
         tags.append(f"sched:{cfg['schedule_resolved']}")

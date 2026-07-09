@@ -112,7 +112,7 @@ check("h5py", "import h5py")
 check("wandb", "import wandb")
 check("easydict", "import easydict")
 check("src.diffusion", "import src.diffusion.forward_fcps, src.diffusion.prior, src.diffusion.reverse, src.diffusion.denoiser")
-check("src.data + paths", "import src.data.adjacency, src.data.dataset; from src.utils import paths")
+check("src.data + paths", "import src.data.adjacency, src.data.residual_dataset; from src.utils import paths")
 sys.exit(status)
 PY
 
@@ -134,7 +134,7 @@ declare -a CHECK_FILES=(
   "data/raw/pemsbay/pems-bay.h5"
   "data/processed/metrla/train.npz"
   "data/processed/pemsbay/train.npz"
-  "data/processed/metrla/scaler.yaml"
+  "data/processed/metrla/scaler.json"
   "results/backbone"  # directory; per-run subdirs created during training
 )
 for f in "${CHECK_FILES[@]}"; do
@@ -163,7 +163,10 @@ echo "── unit tests (collect only) ─────────────�
 # the login node kills heavy processes, so here we only confirm the suite
 # imports + collects cleanly. run the full suite on a compute node, e.g.:
 #   srun --mem=8G --cpus-per-task=2 --time=00:10:00 pytest -q tests/
-if pytest -q --collect-only tests/ >/dev/null 2>&1; then
+if ! command -v pytest >/dev/null 2>&1; then
+  # exp cluster installs without [dev] extras (linuxhome quota), so no pytest there.
+  warn "pytest not installed (dev extras skipped on this cluster) — skipping collect check"
+elif pytest -q --collect-only tests/ >/dev/null 2>&1; then
   ok "tests collect cleanly (run the full suite on a compute node)"
 else
   fail "test collection failed — run: pytest --collect-only tests/"

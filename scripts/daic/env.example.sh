@@ -24,8 +24,9 @@ export DAIC_NETID="CHANGE_ME"
 #   export DAIC_PROJECT_DIR="/tudelft.net/student-homes-linux/<x>/<netid>/research-tud"
 #   export DAIC_DATA_DIR="/tudelft.net/student-homes/<x>/<netid>/research-tud-data"
 
-# wandb. WANDB_API_KEY can live in .env at the repo root (gitignored) or in
-# ~/.netrc via `wandb login` (setup_env.sh prompts for this).
+# wandb. the API key lives in ~/.netrc via `wandb login <key>` (run it once
+# with the project venv active — scripts/daic/activate.sh). nothing reads a
+# repo-root .env file.
 export WANDB_MODE="${WANDB_MODE:-online}"   # override per-run: WANDB_MODE=offline ...
 export WANDB_ENTITY="tud-thesis"    # your wandb team or username
 

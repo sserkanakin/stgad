@@ -113,6 +113,9 @@ case "$DAIC_CLUSTER" in
 esac
 
 # --- common (cluster-independent) -------------------------------------------
+# the := defaults above set these as shell vars only; export them so child
+# processes (verify_setup.sh, sbatch, rsync helpers) see them too.
+export DAIC_PROJECT_DIR DAIC_DATA_DIR
 export DAIC_PYTHON_VERSION="3.11"
 # wandb local run cache lives OFF the tight data quota: the data share (windowshome,
 # 8G) holds the ~3.6G residuals, and wandb grows ~30M/run, so it used to fill the

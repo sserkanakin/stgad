@@ -162,9 +162,10 @@ Phased (decided 2026-07-13):
    with a **light final-val** (single step value each — no sweep; isotropic prior is less
    stiff, needs no per-cell EM tuning; anc=25 is uniform across all r2 arms):
    `ARMS="iso_base:isotropic:base:global" EXP=20260708_r2 FINAL_STEPS_LIST=1000 FINAL_ANC_STEPS=25 scripts/daic/submit_experiment.sh 42`
-   6 array tasks; leaves 2 slots free on that cluster. (Do NOT pass `--nodelist=gpu[36-53]`
-   — a node list requests ALL 18 nodes → AssocMaxNodePerJobLimit. To prefer Blackwell pin
-   by GRES TYPE: `--gres=gpu:<rtx-token>:1`, token from `sinfo -h -o '%G'|tr ',' '\n'|grep -i rtx`.)
+   6 array tasks; leaves 2 slots free on that cluster. GPU: both launchers auto **soft-prefer
+   Blackwell** via `--prefer` (`scripts/daic/_gpu.sh`) — lands on Blackwell when free, falls
+   back to a40/l40 otherwise, never blocks. Set `GPU_PREFER=any` to disable. NEVER use
+   `--nodelist=gpu[36-53]`: a node list forces ALL 18 nodes → AssocMaxNodePerJobLimit.
 2. **kron_base test evals** start immediately in parallel (checkpoints exist), EM first,
    split across clusters via the `DATASETS` env so nothing double-submits:
    `ARMS="kron_base" DATASETS="metrla pemsbay pems04f pems04s pems08s" scripts/daic/submit_test_evals.sh` (cluster 1, 10 jobs)

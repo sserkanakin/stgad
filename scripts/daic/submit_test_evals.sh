@@ -24,6 +24,16 @@
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# resolve the DAIC data/output roots EXACTLY as submit_experiment.sh did when it trained
+# these runs, and export them so the eval job's paths.py finds the exp-tagged checkpoints
+# under OUTPUT_ROOT (r2 wrote to ~/windowshome/research-tud-out, surfaced as ./out) and the
+# residuals/backbone under RESULTS_ROOT. WITHOUT this the eval falls back to ROOT/results
+# and dies with "No such file .../research-tud/results/<exp>/.../config.json".
+source "${HERE}/env.sh" 2>/dev/null || true
+[ -n "${DAIC_DATA_DIR:-}" ] && export DATA_ROOT="${DATA_ROOT:-${DAIC_DATA_DIR}}" \
+                                     RESULTS_ROOT="${RESULTS_ROOT:-${DAIC_DATA_DIR}}"
+export OUTPUT_ROOT="${OUTPUT_ROOT:-${DAIC_OUT_DIR:-$HOME/windowshome/research-tud-out}}"
+
 EXP_ROOT="${EXP_ROOT:-20260708_r2}"
 SEED="${SEED:-42}"                    # phase 1 = seed 42 (add 43/44 in phase 2)
 CKPT="${CKPT:-best_crps.pt}"          # both samplers on the SAME weights -> clean sampler contrast

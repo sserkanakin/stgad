@@ -1,0 +1,6 @@
+{
+  // latex workshop: build with latexmk (tinytex) into tudelft_thesis/build
+  "latex-workshop.latex.outDir": "%DIR%/build",
+  "latex-workshop.latex.recipe.default": "latexmk",
+  "latex-workshop.latex.autoBuild.run": "onSave"
+}

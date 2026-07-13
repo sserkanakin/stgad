@@ -27,6 +27,17 @@ BACKBONE="${BACKBONE:-gwn}"
 EPOCHS="${EPOCHS:-200}"
 LR="${LR:-1e-4}"
 LOSS="${LOSS:-snr}"
+# final-val step sweep. empty = train_diffusion's full default sweep (EM
+# 1000..3500 x anc 25/50/100/200, per-checkpoint) as used in round 2. set a SINGLE
+# value each for a light final-val (no sweep) — e.g. FINAL_STEPS_LIST=1000
+# FINAL_ANC_STEPS=25 for the iso_base control (isotropic prior is less stiff, so it
+# needs no per-cell EM tuning). the chosen count still lands in val_results.json,
+# which the test-eval launcher reads.
+FINAL_STEPS_LIST="${FINAL_STEPS_LIST:-}"
+FINAL_ANC_STEPS="${FINAL_ANC_STEPS:-}"
+FINAL_FLAGS=()
+[ -n "${FINAL_STEPS_LIST}" ] && FINAL_FLAGS+=(--final-steps-list "${FINAL_STEPS_LIST}")
+[ -n "${FINAL_ANC_STEPS}" ]  && FINAL_FLAGS+=(--final-anc-steps "${FINAL_ANC_STEPS}")
 
 # wandb's local staging cache off the (quota'd) linuxhome — park it on windowshome.
 if [ -n "${OUTPUT_ROOT:-}" ]; then
@@ -96,4 +107,5 @@ srun --unbuffered --export=ALL "${DAIC_PYTHON}" -u scripts/train_diffusion.py \
     --lr "${LR}" \
     --loss "${LOSS}" \
     "${ARM_FLAGS[@]}" \
+    "${FINAL_FLAGS[@]}" \
     --final-val

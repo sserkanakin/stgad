@@ -91,6 +91,9 @@ RES=(--partition="${DAIC_PARTITION}" --gres="${DAIC_GRES_GPU}")
 EXPORTS="ALL,EXP=${EXP},SEED=${SEED},BACKBONE=${BACKBONE},GRID_FILE=${GRID_FILE}"
 EXPORTS="${EXPORTS},EPOCHS=${EPOCHS},LR=${LR},LOSS=${LOSS}"
 EXPORTS="${EXPORTS},DATA_ROOT=${DATA_ROOT},RESULTS_ROOT=${RESULTS_ROOT},OUTPUT_ROOT=${OUTPUT_ROOT}"
+# optional light final-val: single EM/anc step values instead of the full sweep.
+[ -n "${FINAL_STEPS_LIST:-}" ] && EXPORTS="${EXPORTS},FINAL_STEPS_LIST=${FINAL_STEPS_LIST}"
+[ -n "${FINAL_ANC_STEPS:-}" ]  && EXPORTS="${EXPORTS},FINAL_ANC_STEPS=${FINAL_ANC_STEPS}"
 
 JOBID="$(sbatch --parsable \
        --array="0-$((N - 1))%${THROTTLE}" \

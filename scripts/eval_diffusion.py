@@ -129,7 +129,8 @@ def load_run(dataset, prior, seed, exp, device, backbone="gwn", ckpt_name="best.
 def evaluate(dataset, prior, seed, *, exp, device, k, n_steps, alpha,
              w1_windows, w1_samples, w1_proj, gen_batch, max_windows, generator,
              backbone="gwn", mask_zero=True, split="test", sampler="em",
-             ckpt_name="best.pt"):
+             ckpt_name="best.pt", save_diagnostics=False,
+             pit_bins=20, n_examples=6, n_example_sensors=4):
     denoiser, prior_obj, schedule, cfg, ckpt_epoch = load_run(
         dataset, prior, seed, exp, device, backbone, ckpt_name=ckpt_name)
     N, H = prior_obj.N, prior_obj.H
@@ -190,6 +191,14 @@ def evaluate(dataset, prior, seed, *, exp, device, k, n_steps, alpha,
     mae_n = torch.zeros(H); mse_n = torch.zeros(H); cnt = torch.zeros(H)
     mape_n = torch.zeros(H); wink_n = torch.zeros(H); cov_n = torch.zeros(H); crps_n = torch.zeros(H)
     qnum_n = torch.zeros(H); qden_n = torch.zeros(H)
+    # ── calibration diagnostics (figure data; free to accumulate from the samples) ──
+    #   PIT histogram per horizon (flat = calibrated) + reliability curve (empirical
+    #   coverage of central intervals at many nominal levels) + a few example fan charts.
+    diag_levels = torch.tensor([0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95])
+    ex_qprobs = torch.tensor([0.05, 0.1, 0.25, 0.5, 0.75, 0.9, 0.95])
+    pit_hist = torch.zeros(H, pit_bins)
+    reliab_hit = torch.zeros(len(diag_levels), H)
+    examples = None
     for ci, start in enumerate(range(0, n_total, chunk)):
         end = min(start + chunk, n_total)
         R0 = R0_all[start:end].to(device) * sig           # raw residual
@@ -214,6 +223,38 @@ def evaluate(dataset, prior, seed, *, exp, device, k, n_steps, alpha,
         sn, _ = _masked_sums(empirical_crps(fc, yt), Mk);  crps_n += sn.cpu()   # raw-unit energy CRPS
         qnum_n += quantile_crps_num(fc, yt, Mk).cpu()                           # normalized-CRPS num
         sn, _ = _masked_sums(yt.abs(), Mk);  qden_n += sn.cpu()                 # normalized-CRPS denom
+
+        if save_diagnostics:
+            mk = Mk.bool()
+            # PIT = empirical CDF of the samples evaluated at the truth (per masked point)
+            pit = (fc <= yt.unsqueeze(0)).float().mean(0)                       # (b,N,H) in [0,1]
+            for h in range(H):
+                v = pit[:, :, h][mk[:, :, h]]
+                if v.numel():
+                    pit_hist[h] += torch.histc(v.float().cpu(), bins=pit_bins, min=0.0, max=1.0)
+            # reliability: coverage of the central interval at each nominal level
+            L = len(diag_levels)
+            probs = torch.cat([(1 - diag_levels) / 2, 1 - (1 - diag_levels) / 2]).to(device)
+            Q = torch.quantile(fc, probs, dim=0)                               # (2L,b,N,H)
+            lo_L, hi_L = Q[:L], Q[L:]
+            hit = ((yt.unsqueeze(0) >= lo_L) & (yt.unsqueeze(0) <= hi_L)).float()
+            hit = hit * mk.unsqueeze(0).float()
+            reliab_hit += hit.sum(dim=(1, 2)).cpu()                            # (L,H)
+            # example fan charts from the FIRST chunk's first few windows/sensors
+            if examples is None:
+                ne = min(n_examples, b)
+                sidx = torch.linspace(0, N - 1, min(n_example_sensors, N)).long()
+                sub = fc[:, :ne][:, :, sidx]                                   # (k,ne,S,H)
+                exq = torch.quantile(sub, ex_qprobs.to(device), dim=0)        # (nq,ne,S,H)
+                examples = {
+                    "ex_qprobs": ex_qprobs.numpy(),
+                    "ex_quantiles": exq.cpu().numpy(),                        # (nq,ne,S,H)
+                    "ex_ytrue": yt[:ne][:, sidx].cpu().numpy(),               # (ne,S,H)
+                    "ex_yhat": yp[:ne][:, sidx].cpu().numpy(),                # backbone point fc
+                    "ex_samples": fc[:min(30, k), :ne][:, :, sidx].cpu().numpy(),
+                    "ex_mask": Mk[:ne][:, sidx].cpu().numpy().astype("uint8"),
+                    "ex_sensor_idx": sidx.numpy(), "ex_window_idx": np.arange(ne),
+                }
 
         if thr.ready() or ci == nchunks - 1:
             el = time.time() - t0
@@ -275,6 +316,24 @@ def evaluate(dataset, prior, seed, *, exp, device, k, n_steps, alpha,
         "w1_h": w1_h, "energy_h": ed_h,
         "w1_clean_windows": int(n_w1), "w1_frac_of_test": w1_frac,
     }
+    if save_diagnostics:
+        # reliability: empirical central-interval coverage vs nominal (per horizon + overall)
+        reliab_cov = (reliab_hit / cnt).tolist()                         # (L,H)
+        reliab_overall = (reliab_hit.sum(1) / cnt.sum()).tolist()        # (L,)
+        pit_all = pit_hist.sum(0)                                        # (pit_bins,)
+        res["_diag"] = {
+            "pit_hist": pit_hist.numpy(),                # (H, pit_bins)
+            "pit_hist_all": pit_all.numpy(),             # (pit_bins,)
+            "pit_bins": np.array([pit_bins]),
+            "reliab_levels": diag_levels.numpy(),        # (L,)
+            "reliab_cov_h": np.array(reliab_cov),        # (L, H)
+            "reliab_cov": np.array(reliab_overall),      # (L,)
+            "dataset": np.array([dataset]), "prior": np.array([prior]),
+            "exp": np.array([exp]), "sampler": np.array([sampler]),
+            "ckpt": np.array([ckpt_name]), "n_steps": np.array([n_steps]),
+            **(examples or {}),
+        }
+    return res
 
 
 def _save(res):
@@ -283,8 +342,12 @@ def _save(res):
     out.mkdir(parents=True, exist_ok=True)
     # per-(split, ckpt, sampler, steps) filename so parallel evals never clobber
     ck = "bestcrps" if res.get("ckpt") == "best_crps.pt" else "best"
-    path = (out / f"{res.get('split', 'test')}_metrics_{ck}_"
-                  f"{res.get('sampler', 'em')}{res['n_steps']}.json")
+    stem = f"{res.get('split', 'test')}_metrics_{ck}_{res.get('sampler', 'em')}{res['n_steps']}"
+    # calibration/example figure data (large arrays) go in a companion .npz, not the json
+    diag = res.pop("_diag", None)
+    if diag is not None:
+        np.savez_compressed(out / f"{stem.replace('_metrics_', '_diag_')}.npz", **diag)
+    path = out / f"{stem}.json"
     path.write_text(json.dumps(res, indent=2))
     return path
 
@@ -355,6 +418,9 @@ def main():
                         "closed-form OU posterior, exact for the linear SDE, ~100 steps")
     p.add_argument("--ckpt", choices=("best.pt", "best_crps.pt"), default="best.pt",
                    help="which checkpoint to evaluate (val-loss or sweep-CRPS selection)")
+    p.add_argument("--save-diagnostics", action="store_true",
+                   help="also dump calibration + example figure data to a companion "
+                        "<split>_diag_*.npz (PIT histogram, reliability curve, example fan charts)")
     args = p.parse_args()
 
     setup_logging(None)        # standalone: timestamped lines to stdout (traineval configures its own)
@@ -382,7 +448,7 @@ def main():
                        w1_proj=args.w1_proj, gen_batch=args.gen_batch,
                        max_windows=args.max_windows, generator=g, backbone=args.backbone,
                        mask_zero=args.mask_zero, split=args.split, sampler=args.sampler,
-                       ckpt_name=args.ckpt)
+                       ckpt_name=args.ckpt, save_diagnostics=args.save_diagnostics)
         _print_one(res)
         print(f"  wrote {_save(res)}")
         results.append(res)

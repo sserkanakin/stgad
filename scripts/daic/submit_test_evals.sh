@@ -34,7 +34,9 @@ DEFAULT_EM="${DEFAULT_EM:-1500}"      # EM steps fallback if val_results.json is
 EM_GPU="${EM_GPU:---nodelist=gpu[36-53]}"
 ANC_GPU="${ANC_GPU:-}"
 
-EVAL_CFG="--split test --k 100 --w1-samples 4"   # --sampler/--n-steps/--ckpt added per job
+# --sampler/--n-steps/--ckpt added per job. --save-diagnostics dumps the companion
+# <split>_diag_*.npz (PIT + reliability + example fan charts) in the SAME run -> no rerun.
+EVAL_CFG="--split test --k 100 --w1-samples 4 --save-diagnostics"
 
 DRY=""; ONLY_DS=""
 for a in "$@"; do case "$a" in

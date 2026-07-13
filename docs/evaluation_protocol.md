@@ -161,8 +161,10 @@ Phased (decided 2026-07-13):
 1. **Train iso_base** (the missing matched control), all 6 datasets, seed 42, r2 recipe,
    with a **light final-val** (single step value each — no sweep; isotropic prior is less
    stiff, needs no per-cell EM tuning; anc=25 is uniform across all r2 arms):
-   `ARMS="iso_base:isotropic:base:global" EXP=20260708_r2 FINAL_STEPS_LIST=1000 FINAL_ANC_STEPS=25 scripts/daic/submit_experiment.sh 42 --nodelist=gpu[36-53]`
-   6 array tasks; leaves 2 slots free on that cluster.
+   `ARMS="iso_base:isotropic:base:global" EXP=20260708_r2 FINAL_STEPS_LIST=1000 FINAL_ANC_STEPS=25 scripts/daic/submit_experiment.sh 42`
+   6 array tasks; leaves 2 slots free on that cluster. (Do NOT pass `--nodelist=gpu[36-53]`
+   — a node list requests ALL 18 nodes → AssocMaxNodePerJobLimit. To prefer Blackwell pin
+   by GRES TYPE: `--gres=gpu:<rtx-token>:1`, token from `sinfo -h -o '%G'|tr ',' '\n'|grep -i rtx`.)
 2. **kron_base test evals** start immediately in parallel (checkpoints exist), EM first,
    split across clusters via the `DATASETS` env so nothing double-submits:
    `ARMS="kron_base" DATASETS="metrla pemsbay pems04f pems04s pems08s" scripts/daic/submit_test_evals.sh` (cluster 1, 10 jobs)

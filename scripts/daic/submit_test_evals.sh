@@ -30,9 +30,13 @@ CKPT="${CKPT:-best_crps.pt}"          # both samplers on the SAME weights -> cle
 ARMS="${ARMS:-kron_base iso_base}"    # the matched base pair (RQ2). others = ablations.
 SAMPLERS="${SAMPLERS:-em ancestral}"  # EM first (current priority), then ancestral
 DEFAULT_EM="${DEFAULT_EM:-1500}"      # EM steps fallback if val_results.json is unreadable
-# GPU targeting: EM -> Blackwell nodes (gpu36-53); ancestral -> any pool gpu.
-EM_GPU="${EM_GPU:---nodelist=gpu[36-53]}"
-ANC_GPU="${ANC_GPU:-}"
+# GPU targeting. By default SOFT-prefer Blackwell if the cluster exposes it (auto-
+# detected), else any gpu — jobs never block (they fall back to a40/l40). Set
+# GPU_PREFER=any to force any-gpu; override EM_GPU/ANC_GPU to pin something specific.
+source "${HERE}/_gpu.sh"
+PREFER="$(gpu_prefer_flag || true)"
+EM_GPU="${EM_GPU:-${PREFER}}"
+ANC_GPU="${ANC_GPU:-${PREFER}}"
 
 # --sampler/--n-steps/--ckpt added per job. --save-diagnostics dumps the companion
 # <split>_diag_*.npz (PIT + reliability + example fan charts) in the SAME run -> no rerun.

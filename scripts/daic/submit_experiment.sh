@@ -87,6 +87,10 @@ ln -sfn "${OUTPUT_ROOT}" "$(cd "${HERE}/../.." && pwd)/out" 2>/dev/null || true
 RES=(--partition="${DAIC_PARTITION}" --gres="${DAIC_GRES_GPU}")
 [ -n "${DAIC_QOS_MEDIUM:-}" ] && RES+=(--qos="${DAIC_QOS_MEDIUM}")
 [ -n "${DAIC_GPU_EXCLUDE:-}" ] && RES+=(--exclude="${DAIC_GPU_EXCLUDE}")
+# soft-prefer Blackwell if available (auto-detected; safe no-op otherwise).
+source "${HERE}/_gpu.sh"
+PREFER="$(gpu_prefer_flag || true)"
+[ -n "${PREFER}" ] && RES+=("${PREFER}")
 
 EXPORTS="ALL,EXP=${EXP},SEED=${SEED},BACKBONE=${BACKBONE},GRID_FILE=${GRID_FILE}"
 EXPORTS="${EXPORTS},EPOCHS=${EPOCHS},LR=${LR},LOSS=${LOSS}"

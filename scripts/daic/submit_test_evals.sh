@@ -67,7 +67,9 @@ OUT="${OUTPUT_ROOT:-}"
 
 prior_of() { case "$1" in iso_*) echo isotropic;; *) echo kronecker;; esac; }
 _gen_batch() { case "$1" in pemsbay) echo 2048;; metrla) echo 3072;; *) echo 4096;; esac; }
-_eval_time() { case "$1" in pemsbay) echo 06:00:00;; *) echo 04:00:00;; esac; }
+# 4 days for every eval: EM at k=100 over all test windows is heavy (1000-2000 steps),
+# and a walltime kill writes nothing, so be generous. ancestral finishes far sooner.
+_eval_time() { echo 4-00:00:00; }
 
 # val-selected EM steps for this cell, read from its val_results.json (best_crps track).
 # ancestral is uniformly 25, so no lookup needed there.

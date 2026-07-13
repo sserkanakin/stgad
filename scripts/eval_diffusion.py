@@ -442,6 +442,17 @@ def main():
           f"k={args.k}  n_steps={args.n_steps}")
     results = []
     for ds, pr in jobs:
+        # per-run eval.log INSIDE the dataset's eval folder (mirrors train.log), next to
+        # the metrics json — foldered under <exp>/<arm>/<ds>/<backbone>/<prior>/seed<s>/eval/
+        # so each run's progress + final numbers are easy to find, not just in the flat
+        # slurm log. one file per (split, ckpt, sampler, steps) so parallel EM/anc don't clash.
+        ed = paths.eval_dir(ds, pr, args.seed, exp=args.exp, backbone=args.backbone)
+        ed.mkdir(parents=True, exist_ok=True)
+        ck = "bestcrps" if args.ckpt == "best_crps.pt" else "best"
+        logf = ed / f"{args.split}_eval_{ck}_{args.sampler}{args.n_steps}.log"
+        setup_logging(logf)     # stdout (slurm .out) AND this run's eval.log
+        log.info(f"=== eval {ds}/{pr} · exp={args.exp} · {args.split} · sampler={args.sampler} "
+                 f"n_steps={args.n_steps} · ckpt={args.ckpt} · k={args.k} · device={device} ===")
         res = evaluate(ds, pr, args.seed, exp=args.exp, device=device, k=args.k,
                        n_steps=args.n_steps, alpha=args.alpha,
                        w1_windows=args.w1_windows, w1_samples=args.w1_samples,
@@ -450,7 +461,13 @@ def main():
                        mask_zero=args.mask_zero, split=args.split, sampler=args.sampler,
                        ckpt_name=args.ckpt, save_diagnostics=args.save_diagnostics)
         _print_one(res)
-        print(f"  wrote {_save(res)}")
+        # record the headline numbers in eval.log too (_print_one only hits stdout)
+        log.info(f"[done] {ds}/{pr} MAE={res['mae']:.4f} RMSE={res['rmse']:.4f} "
+                 f"CRPS={res['crps']:.4f} Winkler={res['winkler']:.4f} cov={res['coverage']:.3f} "
+                 f"W1={res['w1']:.4f} energy={res['energy']:.4f}")
+        saved = _save(res)
+        log.info(f"[saved] {saved}")
+        print(f"  wrote {saved}")
         results.append(res)
 
     if len(results) > 1:

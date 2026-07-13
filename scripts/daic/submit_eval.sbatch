@@ -31,6 +31,19 @@ EVAL_ARGS="${EVAL_ARGS:---all}"
 # namespace eval by backbone (default gwn); last --backbone wins under argparse.
 EVAL_ARGS="${EVAL_ARGS} --backbone ${BACKBONE:-gwn}"
 
+# copy this job's slurm .out/.err into the run's eval folder at exit (mirrors the
+# training copy_logs), so logs sit next to the metrics + eval.log under the dataset —
+# not only in the flat logs/<exp>/eval/ dir. single-dataset runs only (--all spans dirs).
+copy_logs() {
+  [ -n "${DATASET:-}" ] && [ -n "${PRIOR:-}" ] || return 0
+  local ed="${OUTPUT_ROOT:-${PROJECT_DIR}/results}/${EXP}/${DATASET}/${BACKBONE:-gwn}/${PRIOR}/seed${SEED}/eval"
+  local src="${PROJECT_DIR}/logs/${EXP}/eval/eval_${DATASET}_${PRIOR}_seed${SEED}_${SLURM_JOB_ID}"
+  mkdir -p "${ed}" 2>/dev/null || true
+  cp -f "${src}.out" "${ed}/slurm_${SLURM_JOB_ID}.out" 2>/dev/null || true
+  cp -f "${src}.err" "${ed}/slurm_${SLURM_JOB_ID}.err" 2>/dev/null || true
+}
+trap copy_logs EXIT
+
 log_run_header "${DAIC_PYTHON} scripts/eval_diffusion.py ${EVAL_ARGS}"
 
 # --unbuffered + python -u so the per-chunk progress is written to the log live

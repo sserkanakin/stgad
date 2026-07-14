@@ -56,6 +56,11 @@ ARM_FLAGS=(--norm "${NORM}")
 [ "${COND}" = "past" ] && ARM_FLAGS+=(--cond-past)
 # GAD-style small γ for the raw-signal arm (Σ_S=(L+γI)^-1); unset -> load_prior default 0.8.
 [ -n "${GAMMA:-}" ] && ARM_FLAGS+=(--gamma "${GAMMA}")
+# temporal ridge ρ for the raw arm (tames the stiff empirical Σ_T); unset -> default 0.1.
+[ -n "${SHRINK_T:-}" ] && ARM_FLAGS+=(--shrink-t "${SHRINK_T}")
+# temporal factor: 'laplacian' -> clean product graph (raw arm); unset -> empirical Σ_T.
+[ -n "${TEMPORAL:-}" ] && ARM_FLAGS+=(--temporal "${TEMPORAL}")
+[ -n "${GAMMA_T:-}" ]  && ARM_FLAGS+=(--gamma-t "${GAMMA_T}")
 ARM_EXP="${EXP}/${ARM}"
 export STAGE="diffusion"
 

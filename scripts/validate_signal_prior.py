@@ -43,9 +43,10 @@ def _marginal_var_field(prior):
     return (prior.V_S ** 2) @ s2 @ (prior.V_T ** 2).T   # (N, H) marginal var per (i,h)
 
 
-def check(ds, prior_name, gamma=0.04, verbose=True):
+def check(ds, prior_name, gamma=0.04, gamma_t=0.6, verbose=True):
     load_prior.cache_clear()
-    prior = load_prior(ds, prior_name, seed=42, backbone="raw", gamma=gamma)
+    prior = load_prior(ds, prior_name, seed=42, backbone="raw", gamma=gamma,
+                       temporal="laplacian", gamma_t=gamma_t)
     R0, M = _load_R0(ds)
     B, N, H = R0.shape
     v = R0[M]
@@ -119,11 +120,12 @@ def main():
     ap.add_argument("--datasets", nargs="+", default=["metrla", "pems08f"])
     ap.add_argument("--priors", nargs="+", default=["kronecker", "isotropic"])
     ap.add_argument("--gamma", type=float, default=0.04, help="GAD-style small γ for the raw arm")
+    ap.add_argument("--gamma-t", type=float, default=0.6, help="temporal Laplacian shift γ_t")
     a = ap.parse_args()
     allok = True
     for ds in a.datasets:
         for pr in a.priors:
-            allok &= check(ds, pr, gamma=a.gamma)
+            allok &= check(ds, pr, gamma=a.gamma, gamma_t=a.gamma_t)
     print(f"\n{'='*50}\n{'ALL CHECKS PASS ✓' if allok else 'SOME CHECKS FAILED ✗'}")
 
 

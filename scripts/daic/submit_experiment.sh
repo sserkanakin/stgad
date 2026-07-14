@@ -100,6 +100,11 @@ EXPORTS="${EXPORTS},DATA_ROOT=${DATA_ROOT},RESULTS_ROOT=${RESULTS_ROOT},OUTPUT_R
 [ -n "${FINAL_ANC_STEPS:-}" ]  && EXPORTS="${EXPORTS},FINAL_ANC_STEPS=${FINAL_ANC_STEPS}"
 # GAD-style γ for the raw-signal arm (Σ_S=(L+γI)^-1); unset -> load_prior default (0.8).
 [ -n "${GAMMA:-}" ] && EXPORTS="${EXPORTS},GAMMA=${GAMMA}"
+# temporal ridge ρ for the raw arm (tames stiff empirical Σ_T); unset -> default (0.1).
+[ -n "${SHRINK_T:-}" ] && EXPORTS="${EXPORTS},SHRINK_T=${SHRINK_T}"
+# temporal factor 'laplacian' (product graph) + its γ_t for the raw arm.
+[ -n "${TEMPORAL:-}" ] && EXPORTS="${EXPORTS},TEMPORAL=${TEMPORAL}"
+[ -n "${GAMMA_T:-}" ]  && EXPORTS="${EXPORTS},GAMMA_T=${GAMMA_T}"
 
 JOBID="$(sbatch --parsable \
        --array="0-$((N - 1))%${THROTTLE}" \

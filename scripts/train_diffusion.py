@@ -630,6 +630,16 @@ def main() -> None:
                         "(0.8, tuned for near-white GWN residuals). the raw-signal arm (backbone=raw) "
                         "should pass a small GAD-style γ≈0.04 so the prior's spatial smoothness "
                         "matches the graph-smooth raw signal (its low-λ energy is ~0.7).")
+    p.add_argument("--shrink-t", type=float, default=None,
+                   help="temporal ridge ρ: μ_T ← (1-ρ)μ_T + ρ·μ̄ (shrinks empirical Σ_T toward "
+                        "isotropic). None = SHRINK_T (0.1). only used when --temporal empirical.")
+    p.add_argument("--temporal", choices=("empirical", "laplacian"), default="empirical",
+                   help="temporal factor: 'empirical' Σ_T fit from data (stiff on raw signal), or "
+                        "'laplacian' = path-graph Laplacian (L_T+γ_t I)^-1 → clean spatio-temporal "
+                        "PRODUCT GRAPH (both sides Laplacian, non-stiff). raw arm uses 'laplacian'.")
+    p.add_argument("--gamma-t", type=float, default=0.6,
+                   help="temporal Laplacian shift γ_t (only for --temporal laplacian). mild γ_t≈0.6 "
+                        "keeps the temporal spread bounded (ratio (2+γ_t)/γ_t) so the prior isn't stiff.")
     p.add_argument("--prior", choices=("kronecker", "isotropic"), default="kronecker",
                    help="noise prior: structured kronecker, or the isotropic σ²I baseline")
     p.add_argument("--exp", default="dev",
@@ -770,6 +780,9 @@ def main() -> None:
     cfg["backbone"] = args.backbone
     cfg["prior"] = args.prior
     cfg["gamma"] = args.gamma            # None -> load_prior uses GAMMA_DEFAULT (0.8); raw arm sets ~0.04
+    cfg["shrink_t"] = args.shrink_t      # None -> SHRINK_T (0.1); empirical-temporal only
+    cfg["temporal"] = args.temporal      # 'empirical' or 'laplacian' (product graph)
+    cfg["gamma_t"] = args.gamma_t        # temporal Laplacian shift (temporal=laplacian)
     cfg["schedule_resolved"] = sched_kind          # what the run actually used
     cfg["repair_graph"] = REPAIR_GRAPH             # single-component graph surgery
     cfg["zero_masked_input"] = True                # masked coords zeroed at the net INPUT
@@ -834,7 +847,9 @@ def main() -> None:
     # ── Prior + schedule
     prior = load_prior(args.dataset, args.prior, args.seed,
                        spatial=args.spatial, stiffness_cap=(args.stiffness_cap or None),
-                       gamma=args.gamma, backbone=args.backbone, norm=args.norm)
+                       gamma=args.gamma, shrink_t=args.shrink_t,
+                       temporal=args.temporal, gamma_t=args.gamma_t,
+                       backbone=args.backbone, norm=args.norm)
     prior_t = prior_to_torch(prior, device=device, dtype=torch.float32)
     if sched_kind == "uls":
         # linear rate, slope = 2·c_0 → identical total heat c̄(T) = c_0 as the FCPS arm.

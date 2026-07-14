@@ -133,6 +133,23 @@ def _load_laplacian_eig(dataset: str, repaired: bool) -> tuple[np.ndarray, np.nd
     return d["eigenvalues"].astype(np.float64), d["eigenvectors"].astype(np.float64)
 
 
+def _temporal_laplacian_eig(H: int, gamma_t: float) -> tuple[np.ndarray, np.ndarray]:
+    """temporal factor from a PATH-graph (chain) normalized Laplacian on the H horizons:
+    Σ_T = (L_path + γ_t I)^{-1} — the temporal twin of the spatial (L_S + γI)^{-1}, so the
+    prior is a clean spatio-temporal PRODUCT GRAPH (both sides Laplacian, Kronecker/
+    multiplicative). a mild γ_t keeps the temporal spread bounded (ratio (2+γ_t)/γ_t),
+    unlike the empirical Σ_T whose one giant common mode makes the prior very stiff.
+    returns (mu_T, V_T) with mu_T = 1/(ω+γ_t) the covariance eigenvalues."""
+    from src.data.adjacency import compute_normalized_laplacian
+    A = np.zeros((H, H))
+    idx = np.arange(H - 1)
+    A[idx, idx + 1] = 1.0
+    A[idx + 1, idx] = 1.0
+    omega, V_T = np.linalg.eigh(compute_normalized_laplacian(A))
+    mu_T = 1.0 / (np.clip(omega, 0.0, None) + gamma_t)
+    return mu_T, V_T
+
+
 def _fit_sigma_T(R: np.ndarray, mask: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Return (delta_h, R_H, Sigma_T).
 
@@ -200,6 +217,8 @@ def load_prior(
     stiffness_cap: float | None = None,
     gamma: float | None = None,
     shrink_t: float | None = None,
+    temporal: str = "empirical",
+    gamma_t: float = 0.6,
     backbone: str = "gwn",
     repair: bool | None = None,
     norm: str = "global",
@@ -231,15 +250,26 @@ def load_prior(
 
     R, mask = _load_residuals_train(dataset, seed, backbone, norm)
     _, N, H = R.shape
-    delta_h, R_H, Sigma_T = _fit_sigma_T(R, mask)
 
-    mu_T, V_T = np.linalg.eigh(Sigma_T)
-    mu_T = np.clip(mu_T, a_min=1e-12, a_max=None)
-    # ridge shift toward scaled-identity (temporal twin of γ): μ ← (1-ρ)μ + ρ·μ̄.
-    # additive + trace-preserving, not a hard clamp; ρ=0 leaves Σ_T faithful.
-    rho = SHRINK_T if shrink_t is None else shrink_t
-    if rho:
-        mu_T = (1.0 - rho) * mu_T + rho * mu_T.mean()
+    if temporal == "laplacian":
+        # clean spatio-temporal PRODUCT GRAPH: temporal path-graph Laplacian (γ_t) in place
+        # of the empirical Σ_T. mild γ_t keeps the temporal spread bounded (no stiff common
+        # mode), so no shrink ridge is needed. per-horizon stats kept only for the record.
+        mu_T, V_T = _temporal_laplacian_eig(H, gamma_t)
+        Rf = R.reshape(-1, H); keep = mask.reshape(-1, H).all(1)
+        delta_h = (Rf[keep] ** 2).mean(0)
+        R_H = np.corrcoef(Rf[keep].T)
+    elif temporal == "empirical":
+        delta_h, R_H, Sigma_T = _fit_sigma_T(R, mask)
+        mu_T, V_T = np.linalg.eigh(Sigma_T)
+        mu_T = np.clip(mu_T, a_min=1e-12, a_max=None)
+        # ridge shift toward scaled-identity (temporal twin of γ): μ ← (1-ρ)μ + ρ·μ̄.
+        # additive + trace-preserving, not a hard clamp; ρ=0 leaves Σ_T faithful.
+        rho = SHRINK_T if shrink_t is None else shrink_t
+        if rho:
+            mu_T = (1.0 - rho) * mu_T + rho * mu_T.mean()
+    else:
+        raise ValueError(f"unknown temporal {temporal!r}; use 'empirical' or 'laplacian'")
 
     # spatial factor: structured (L + γI)^{-1}, or flat (Σ_S = I)
     if spatial == "flat":
@@ -267,6 +297,12 @@ def load_prior(
 
     # GAD-scale normalization: θ_min → γ so c_0 ≈ 5/γ ≈ 6 (σ² preserves Σ_stat).
     theta, sigma2_scale = _normalize_scale(theta)
+    if temporal == "laplacian":
+        # the path-graph μ_T carries no data scale (unlike empirical Σ_T's D_H); match the
+        # overall stationary variance to the data (z-scored → ~1) so draws are representative.
+        data_var = float(R[mask].var())
+        cur = float((sigma2_scale / theta).mean())
+        sigma2_scale *= data_var / max(cur, 1e-12)
 
     return KroneckerPrior(
         dataset=dataset,

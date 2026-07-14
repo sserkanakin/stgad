@@ -54,6 +54,8 @@ read -r IDX DATASET ARM PRIOR COND NORM RUN_DIR <<< "${ROW}"
 # per-arm flags + nested exp tag (each arm gets its own tree/wandb namespace).
 ARM_FLAGS=(--norm "${NORM}")
 [ "${COND}" = "past" ] && ARM_FLAGS+=(--cond-past)
+# GAD-style small γ for the raw-signal arm (Σ_S=(L+γI)^-1); unset -> load_prior default 0.8.
+[ -n "${GAMMA:-}" ] && ARM_FLAGS+=(--gamma "${GAMMA}")
 ARM_EXP="${EXP}/${ARM}"
 export STAGE="diffusion"
 

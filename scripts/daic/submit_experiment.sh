@@ -98,6 +98,8 @@ EXPORTS="${EXPORTS},DATA_ROOT=${DATA_ROOT},RESULTS_ROOT=${RESULTS_ROOT},OUTPUT_R
 # optional light final-val: single EM/anc step values instead of the full sweep.
 [ -n "${FINAL_STEPS_LIST:-}" ] && EXPORTS="${EXPORTS},FINAL_STEPS_LIST=${FINAL_STEPS_LIST}"
 [ -n "${FINAL_ANC_STEPS:-}" ]  && EXPORTS="${EXPORTS},FINAL_ANC_STEPS=${FINAL_ANC_STEPS}"
+# GAD-style γ for the raw-signal arm (Σ_S=(L+γI)^-1); unset -> load_prior default (0.8).
+[ -n "${GAMMA:-}" ] && EXPORTS="${EXPORTS},GAMMA=${GAMMA}"
 
 JOBID="$(sbatch --parsable \
        --array="0-$((N - 1))%${THROTTLE}" \

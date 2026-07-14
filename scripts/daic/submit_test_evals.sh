@@ -73,9 +73,13 @@ _eval_time() { echo 4-00:00:00; }
 
 # val-selected EM steps for this cell, read from its val_results.json (best_crps track).
 # ancestral is uniformly 25, so no lookup needed there.
+# backbone namespaces the run tree (gwn residual arm, or 'raw' pure-signal arm). set
+# BACKBONE=raw for the raw-signal GAD arm. DEPEND=afterok:<jobid> chains these evals to
+# run only after the training job(s) succeed (getting all results in one submission).
+BACKBONE="${BACKBONE:-gwn}"
 em_steps() {  # arm ds prior
   local arm="$1" ds="$2" pr="$3"
-  local vr="${OUT}/${EXP_ROOT}/${arm}/${ds}/gwn/${pr}/seed${SEED}/eval/val_results.json"
+  local vr="${OUT}/${EXP_ROOT}/${arm}/${ds}/${BACKBONE}/${pr}/seed${SEED}/eval/val_results.json"
   local n=""
   [ -f "$vr" ] && n="$(python3 -c "import json,sys; print(json.load(open('$vr'))['checkpoints']['best_crps']['chosen_steps'])" 2>/dev/null || true)"
   echo "${n:-$DEFAULT_EM}"
@@ -103,8 +107,9 @@ for arm in $ARMS; do
         continue
       fi
       # shellcheck disable=SC2086
-      EXP="$exp" PRIOR="$pr" EVAL_ARGS="$ea" \
-        bash "${HERE}/submit.sh" eval "$ds" "$SEED" --time="$tl" ${gpu}
+      EXP="$exp" PRIOR="$pr" BACKBONE="$BACKBONE" EVAL_ARGS="$ea" \
+        bash "${HERE}/submit.sh" eval "$ds" "$SEED" --time="$tl" ${gpu} \
+          ${DEPEND:+--dependency="$DEPEND"}
     done
   done
 done

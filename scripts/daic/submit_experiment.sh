@@ -83,14 +83,14 @@ column -t "${GRID_FILE}" | sed 's/^/  /'
 # browsable from the project root as ./out
 ln -sfn "${OUTPUT_ROOT}" "$(cd "${HERE}/../.." && pwd)/out" 2>/dev/null || true
 
-# per-cluster slurm resources (partition / qos / gres / gpu-exclude), as submit.sh.
-RES=(--partition="${DAIC_PARTITION}" --gres="${DAIC_GRES_GPU}")
+# per-cluster slurm resources. hard-pin Blackwell (GPU_PREFER=blackwell, the default) via the
+# rtx_pro_6000 gres TYPE; else the cluster default any-gpu gres. (an explicit --gres after the
+# seed still overrides this, since it comes later on the sbatch line.)
+source "${HERE}/_gpu.sh"
+GRES="$(gpu_blackwell_gres || true)"; GRES="${GRES:-${DAIC_GRES_GPU}}"
+RES=(--partition="${DAIC_PARTITION}" --gres="${GRES}")
 [ -n "${DAIC_QOS_MEDIUM:-}" ] && RES+=(--qos="${DAIC_QOS_MEDIUM}")
 [ -n "${DAIC_GPU_EXCLUDE:-}" ] && RES+=(--exclude="${DAIC_GPU_EXCLUDE}")
-# soft-prefer Blackwell if available (auto-detected; safe no-op otherwise).
-source "${HERE}/_gpu.sh"
-PREFER="$(gpu_prefer_flag || true)"
-[ -n "${PREFER}" ] && RES+=("${PREFER}")
 
 EXPORTS="ALL,EXP=${EXP},SEED=${SEED},BACKBONE=${BACKBONE},GRID_FILE=${GRID_FILE}"
 EXPORTS="${EXPORTS},EPOCHS=${EPOCHS},LR=${LR},LOSS=${LOSS}"

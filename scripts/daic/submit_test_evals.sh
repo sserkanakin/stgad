@@ -44,9 +44,11 @@ DEFAULT_EM="${DEFAULT_EM:-1500}"      # EM steps fallback if val_results.json is
 # detected), else any gpu — jobs never block (they fall back to a40/l40). Set
 # GPU_PREFER=any to force any-gpu; override EM_GPU/ANC_GPU to pin something specific.
 source "${HERE}/_gpu.sh"
-PREFER="$(gpu_prefer_flag || true)"
-EM_GPU="${EM_GPU:-${PREFER}}"
-ANC_GPU="${ANC_GPU:-${PREFER}}"
+# submit.sh now hard-pins Blackwell by default (GPU_PREFER=blackwell) via the gres type,
+# so EM_GPU/ANC_GPU default to empty; set them only to pin a DIFFERENT gpu for a sampler
+# (e.g. ANC_GPU="--gres=gpu:nvidia_a40:1" to fill a40s with the cheap ancestral jobs).
+EM_GPU="${EM_GPU:-}"
+ANC_GPU="${ANC_GPU:-}"
 
 # --sampler/--n-steps/--ckpt added per job. --save-diagnostics dumps the companion
 # <split>_diag_*.npz (PIT + reliability + example fan charts) in the SAME run -> no rerun.

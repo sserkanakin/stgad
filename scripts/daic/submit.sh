@@ -83,9 +83,12 @@ EXPORTS="ALL,DATASET=${DATASET},EXP=${EXP}"
 [ -n "${DIAG_GENBATCH:-}" ] && EXPORTS="${EXPORTS},DIAG_GENBATCH=${DIAG_GENBATCH}"
 [ -n "${LR:-}" ]         && EXPORTS="${EXPORTS},LR=${LR}"
 
-# per-cluster slurm resources. partition always; qos only if the cluster has
-# one; gres = any gpu by default (pass --gres after the args to pin a type).
-RES=(--partition="${DAIC_PARTITION}" --gres="${DAIC_GRES_GPU}")
+# per-cluster slurm resources. partition always; qos only if the cluster has one.
+# gres: hard-pin Blackwell (GPU_PREFER=blackwell, the default) via the rtx_pro_6000 gres
+# TYPE, else the cluster default any-gpu gres. an explicit --gres after the args overrides.
+source "${HERE}/_gpu.sh"
+GRES="$(gpu_blackwell_gres || true)"; GRES="${GRES:-${DAIC_GRES_GPU}}"
+RES=(--partition="${DAIC_PARTITION}" --gres="${GRES}")
 [ -n "${QOS}" ] && RES+=(--qos="${QOS}")
 # DAIC has no OR-constraint for gpu type, so to use "any working gpu" we ask for
 # a generic gpu and exclude the nodes whose card is incompatible (rtx pro 6000 /

@@ -1,23 +1,27 @@
 #!/usr/bin/env bash
-# resolve a SOFT gpu preference flag for Blackwell (rtx pro 6000).
+# pin the Blackwell (RTX Pro 6000, 96 GB, nodes gpu36-53) GPUs when GPU_PREFER=blackwell
+# (the default). the DAIC docs expose the gres TYPE name `nvidia_rtx_pro_6000` and there
+# are NO node feature tags, so a soft `--prefer=<feature>` never matched -> jobs fell back
+# to a40. a gres-type pin is the reliable way (https://doc.daic.tudelft.nl/docs/hardware/gpus/).
 #
-# echoes "--prefer=<feature>" when ALL of these hold, else nothing (= any gpu):
-#   - GPU_PREFER=blackwell (the default; set GPU_PREFER=any to force any-gpu)
-#   - this host has sinfo + an sbatch that supports --prefer (SLURM >= 21.08)
-#   - the cluster has a Blackwell node exposing a distinguishing feature
-#
-# --prefer is SOFT: jobs land on Blackwell when free and fall back to a40/l40 when not,
-# so this can never block. it is NOT --nodelist (a node list forces ALL those nodes to be
-# allocated -> 18-node request -> AssocMaxNodePerJobLimit; that was the earlier bug).
-gpu_prefer_flag() {
+# this is a HARD pin: jobs queue (PD, Resources) if all Blackwell are busy rather than
+# dropping to a40/l40. set GPU_PREFER=any to disable (cluster default any-gpu gres), or
+# GPU_GRES=gpu:<name>:1 to pin a different type. NOT --nodelist (a node list forces ALL
+# listed nodes -> AssocMaxNodePerJobLimit; that was the earlier bug).
+
+# echo the gres string for Blackwell (e.g. "gpu:nvidia_rtx_pro_6000:1"), or nothing if
+# GPU_PREFER!=blackwell or the cluster doesn't expose that gres.
+gpu_blackwell_gres() {
+  [ -n "${GPU_GRES:-}" ] && { printf '%s' "${GPU_GRES}"; return 0; }
   [ "${GPU_PREFER:-blackwell}" = "blackwell" ] || return 0
   command -v sinfo >/dev/null 2>&1 || return 0
-  sbatch --help 2>&1 | grep -q -- '--prefer' || return 0    # older SLURM: skip, use any gpu
-  local bn feat
-  bn=$(sinfo -h -N -o '%N %G' 2>/dev/null | awk 'tolower($0) ~ /rtx_pro_6000/{print $1; exit}')
-  [ -z "${bn}" ] && return 0
-  feat=$(scontrol show node "${bn}" 2>/dev/null | tr ' ' '\n' \
-         | sed -n 's/^A[a-z]*Features=//p' | tr ',' '\n' \
-         | grep -iE 'rtx|blackwell|6000|sm_?120' | head -1)
-  [ -n "${feat}" ] && printf -- '--prefer=%s' "${feat}"
+  sinfo -h -o '%G' 2>/dev/null | grep -qi 'rtx_pro_6000' || return 0
+  printf 'gpu:nvidia_rtx_pro_6000:1'
+}
+
+# back-compat wrapper: callers that appended a flag get a full `--gres=` override (the last
+# --gres on an sbatch line wins, so this overrides the wrapper's default any-gpu gres).
+gpu_prefer_flag() {
+  local g; g="$(gpu_blackwell_gres)" || return 0
+  [ -n "$g" ] && printf -- '--gres=%s' "$g"
 }

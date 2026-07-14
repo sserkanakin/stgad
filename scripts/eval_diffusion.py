@@ -86,6 +86,7 @@ def load_run(dataset, prior, seed, exp, device, backbone="gwn", ckpt_name="best.
     prior_obj = load_prior(dataset, prior, seed,
                            spatial=cfg.get("spatial", "structured"),
                            stiffness_cap=(cfg.get("stiffness_cap") or None),
+                           gamma=cfg.get("gamma"),
                            backbone=backbone,
                            repair=cfg.get("repair_graph"),
                            norm=cfg.get("norm", "global"))

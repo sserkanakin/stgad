@@ -129,13 +129,14 @@ class SignalDataset(Dataset):
         self.sigma_r = float(sigma_r)
         mean = float(d["mean"])
         std = float(d["std"])
-        signal = d["residuals"].astype(np.float32)                       # future signal, raw
+        centered = d["residuals"].astype(np.float32)                     # signal - mean (zero-mean target)
         history = d["history"].astype(np.float32)                        # history, raw
-        self.R0 = torch.from_numpy(signal / np.float32(self.sigma_r))    # (B, N, H) unit space
+        y_pred = d["y_pred"].astype(np.float32)                          # climatology mean (trivial backbone)
+        self.R0 = torch.from_numpy(centered / np.float32(self.sigma_r))  # (B, N, H) z-scored, zero-mean
         self.Y_hat = torch.from_numpy((history - mean) / std)            # (B, N, T_h) z-scored cond
         self.mask = torch.from_numpy(d["mask"].astype(bool))             # (B, N, H)
-        self.y_pred_raw = torch.zeros_like(self.R0)                      # no backbone
-        self.y_true_raw = torch.from_numpy(signal)                       # (B, N, H) raw GT
+        self.y_pred_raw = torch.from_numpy(y_pred)                       # mean field (y_pred + σ·sample recon)
+        self.y_true_raw = torch.from_numpy(centered + y_pred)            # (B, N, H) raw signal GT
 
     def __len__(self) -> int:
         return self.R0.shape[0]

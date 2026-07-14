@@ -625,6 +625,11 @@ def main() -> None:
     p.add_argument("--stiffness-cap", type=float, default=0.0,
                    help="if >0, floor θ so θ_max/θ_min <= this (joint-spectrum twin of κ-cap; "
                         "trainability fallback for stiff structured priors). 0 = off.")
+    p.add_argument("--gamma", type=float, default=None,
+                   help="Laplacian shift γ in Σ_S=(L+γI)^-1 (structured only). None = GAMMA_DEFAULT "
+                        "(0.8, tuned for near-white GWN residuals). the raw-signal arm (backbone=raw) "
+                        "should pass a small GAD-style γ≈0.04 so the prior's spatial smoothness "
+                        "matches the graph-smooth raw signal (its low-λ energy is ~0.7).")
     p.add_argument("--prior", choices=("kronecker", "isotropic"), default="kronecker",
                    help="noise prior: structured kronecker, or the isotropic σ²I baseline")
     p.add_argument("--exp", default="dev",
@@ -764,6 +769,7 @@ def main() -> None:
     cfg = vars(args).copy()
     cfg["backbone"] = args.backbone
     cfg["prior"] = args.prior
+    cfg["gamma"] = args.gamma            # None -> load_prior uses GAMMA_DEFAULT (0.8); raw arm sets ~0.04
     cfg["schedule_resolved"] = sched_kind          # what the run actually used
     cfg["repair_graph"] = REPAIR_GRAPH             # single-component graph surgery
     cfg["zero_masked_input"] = True                # masked coords zeroed at the net INPUT
@@ -828,7 +834,7 @@ def main() -> None:
     # ── Prior + schedule
     prior = load_prior(args.dataset, args.prior, args.seed,
                        spatial=args.spatial, stiffness_cap=(args.stiffness_cap or None),
-                       backbone=args.backbone, norm=args.norm)
+                       gamma=args.gamma, backbone=args.backbone, norm=args.norm)
     prior_t = prior_to_torch(prior, device=device, dtype=torch.float32)
     if sched_kind == "uls":
         # linear rate, slope = 2·c_0 → identical total heat c̄(T) = c_0 as the FCPS arm.

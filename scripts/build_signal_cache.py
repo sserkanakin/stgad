@@ -53,13 +53,20 @@ def build(dataset: str) -> None:
         signal = _bnh(d["y"]).astype(np.float32)            # future, raw (B,N,H)
         history = _bnh(d["x"]).astype(np.float32)           # history, raw (B,N,T_h)
         mask = _bnh(d["y_mask"]).astype(bool)               # future validity
-        y_pred = np.zeros_like(signal)                      # no backbone
+        # CENTER the diffusion target: the zero-mean GAD prior only matches a zero-mean
+        # target. we treat the train-signal MEAN as the trivial "backbone forecast" —
+        # store residuals = signal - mean (zero-mean) and y_pred = mean, so the prior fit,
+        # sigma_r, and the eval reconstruction (y_pred + σ·sample = mean + std·sample) all
+        # stay correct with NO downstream code change. (uncentered, the prior's variance
+        # was inflated up to ~20x by mean^2 and its mean was off by several sigma.)
+        centered = (signal - np.float32(mean))              # (B,N,H) zero-mean target
+        y_pred = np.full_like(signal, np.float32(mean))     # climatology mean = trivial backbone
         path = paths.residual_npz(dataset, split, RAW_SEED, "raw")
-        np.savez_compressed(path, residuals=signal, history=history, y_pred=y_pred,
+        np.savez_compressed(path, residuals=centered, history=history, y_pred=y_pred,
                             mask=mask, mean=np.float32(mean), std=np.float32(std))
-        vr = signal[mask]
+        vr = centered[mask]
         print(f"  {split}: signal {signal.shape} history {history.shape}  "
-              f"masked mean={vr.mean():.2f} std={vr.std():.2f}  missing={1 - mask.mean():.4f}")
+              f"centered mean={vr.mean():+.3f} std={vr.std():.2f}  missing={1 - mask.mean():.4f}")
 
 
 def main() -> None:

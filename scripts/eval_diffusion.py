@@ -109,20 +109,19 @@ def load_run(dataset, prior, seed, exp, device, backbone="gwn", ckpt_name="best.
         log.info(f"[eval] schedule (GAD-literal FCPS): S=c_0={schedule.c_0:.2f} "
                  f"α={schedule.alpha:.1f} c_min={schedule.c_min:.2f} "
                  f"θ_min={float(prior_obj.theta.min()):.4f}")
-    if backbone == "raw":
+    if cfg.get("denoiser") == "gcnn":
+        denoiser = GCNNDenoiser(
+            N=prior_obj.N, H=prior_obj.H, adjacency=load_adjacency(dataset),
+            K=cfg.get("gcnn_hops", 3), n_layers=cfg.get("gcnn_layers", 4),
+            hidden=cfg.get("gcnn_hidden", 32),
+        ).to(device)
+    elif backbone == "raw":
         import numpy as _np
         T_h = int(_np.load(residual_path(dataset, "test", seed, backbone))["history"].shape[-1])
         denoiser = SignalDenoiser(
             N=prior_obj.N, H=prior_obj.H, T_h=T_h, adjacency=load_adjacency(dataset),
             d_h=cfg["d_h"], channel_multipliers=tuple(cfg["channel_multipliers"]),
             n_blocks=cfg["n_blocks"], device=str(device),
-        ).to(device)
-    elif cfg.get("denoiser") == "gcnn":
-        denoiser = GCNNDenoiser(
-            N=prior_obj.N, H=prior_obj.H, adjacency=load_adjacency(dataset),
-            K=cfg.get("gcnn_hops", 3), n_layers=cfg.get("gcnn_layers", 4),
-            hidden=cfg.get("gcnn_hidden", 32),
-            T_h=(prior_obj.H if cfg.get("cond_past") else 0),
         ).to(device)
     else:
         denoiser = R0Denoiser(

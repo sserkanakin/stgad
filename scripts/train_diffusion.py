@@ -670,6 +670,10 @@ def main() -> None:
     p.add_argument("--gcnn-hops", type=int, default=3, help="K-hop order of each gcnn layer")
     p.add_argument("--gcnn-layers", type=int, default=4)
     p.add_argument("--gcnn-hidden", type=int, default=32)
+    p.add_argument("--uncond", action="store_true",
+                   help="UNCONDITIONAL generation: zero the conditioning everywhere (GAD's "
+                        "setting, one axis up). the prior cannot be bypassed by conditioning; "
+                        "use with --denoiser gcnn for the capacity-isolated GAD-ST demonstration.")
     p.add_argument("--channel-multipliers", type=int, nargs="+", default=[1, 2])
     p.add_argument("--n-blocks", type=int, default=2)
     # FCPS schedule = GAD-literal (exp_gasde.py): S=c_0=7, alpha=4, c_min=0.1, sigma=1.
@@ -810,6 +814,7 @@ def main() -> None:
     cfg["gcnn_hops"] = args.gcnn_hops
     cfg["gcnn_layers"] = args.gcnn_layers
     cfg["gcnn_hidden"] = args.gcnn_hidden
+    cfg["uncond"] = args.uncond
     cfg["schedule_resolved"] = sched_kind          # what the run actually used
     cfg["repair_graph"] = REPAIR_GRAPH             # single-component graph surgery
     cfg["zero_masked_input"] = True                # masked coords zeroed at the net INPUT
@@ -855,6 +860,9 @@ def main() -> None:
                             cond_past=args.cond_past, zero_masked=True)
     val_ds = make_dataset(args.dataset, "val", args.seed, args.backbone, sigma_r,
                           cond_past=args.cond_past, zero_masked=True)
+    if args.uncond:
+        train_ds.Y_hat.zero_(); val_ds.Y_hat.zero_()
+        log.info("UNCONDITIONAL mode: conditioning zeroed (train+val) — pure generation")
     _sig_desc = (f"{sigma_r:.4f}" if np.ndim(sigma_r) == 0
                  else f"{args.norm} [{np.min(sigma_r):.2f}..{np.max(sigma_r):.2f}]")
     log.info(f"train={len(train_ds)}  val={len(val_ds)}  sigma_r={_sig_desc} "
@@ -911,18 +919,19 @@ def main() -> None:
     # ── Model. backbone='raw' → history-conditioned SignalDenoiser (T_h from the
     # conditioning width); else the forecast-conditioned R0Denoiser.
     A = load_adjacency(args.dataset)
-    if args.backbone == "raw":
+    if args.denoiser == "gcnn":
+        if train_ds.Y_hat.shape[-1] != prior.H:
+            raise ValueError("gcnn expects (B,N,H) conditioning; got T_h != H")
+        denoiser = GCNNDenoiser(
+            N=prior.N, H=prior.H, adjacency=A, K=args.gcnn_hops,
+            n_layers=args.gcnn_layers, hidden=args.gcnn_hidden,
+        ).to(device)
+    elif args.backbone == "raw":
         T_h = train_ds.Y_hat.shape[-1]
         denoiser = SignalDenoiser(
             N=prior.N, H=prior.H, T_h=T_h, adjacency=A,
             d_h=args.d_h, channel_multipliers=tuple(args.channel_multipliers),
             n_blocks=args.n_blocks, device=str(device),
-        ).to(device)
-    elif args.denoiser == "gcnn":
-        denoiser = GCNNDenoiser(
-            N=prior.N, H=prior.H, adjacency=A, K=args.gcnn_hops,
-            n_layers=args.gcnn_layers, hidden=args.gcnn_hidden,
-            T_h=(prior.H if args.cond_past else 0),
         ).to(device)
     else:
         denoiser = R0Denoiser(

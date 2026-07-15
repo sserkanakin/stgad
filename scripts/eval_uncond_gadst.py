@@ -26,7 +26,7 @@ import torch
 
 from src.data.adjacency import compute_normalized_laplacian, load_adjacency
 from src.data.residual_dataset import train_residual_sigma
-from src.diffusion.reverse import reverse_sample_ancestral
+from src.diffusion.reverse import min_em_steps, reverse_sample_ancestral, reverse_sample_em
 from src.eval.gad_signal_metrics import mmd_distance, spectral_centroid, total_variation, wasserstein_1d
 from src.utils import paths
 
@@ -65,6 +65,9 @@ def main():
     ap.add_argument("--exp", required=True)
     ap.add_argument("--arms", nargs="+", default=["kron_u:kronecker", "iso_u:isotropic"])
     ap.add_argument("--steps", type=int, nargs="+", default=[2, 5, 10, 25, 50])
+    ap.add_argument("--sampler", choices=("ancestral", "em"), default="ancestral",
+                    help="em = GAD's protocol (their Fig.3 step counts; NO stability floor "
+                         "applied — few-step EM error is part of what that figure measures)")
     ap.add_argument("--n-samples", type=int, default=512)
     ap.add_argument("--gen-batch", type=int, default=256)
     ap.add_argument("--ckpt", default="best.pt")
@@ -78,8 +81,8 @@ def main():
                        dtype=torch.float32)
     L_T = torch.tensor(path_laplacian(H), dtype=torch.float32)
     ref = metric_set(Xt, L_S, L_T)
-    print(f"=== {args.dataset}: unconditional GAD-ST vs iso · {args.n_samples} samples vs "
-          f"{Xt.shape[0]} test windows · metrics TV_S/SC_S/TV_T ===")
+    print(f"=== {args.dataset}: unconditional GAD-ST vs iso · sampler={args.sampler} · "
+          f"{args.n_samples} samples vs {Xt.shape[0]} test windows · TV_S/SC_S/TV_T ===")
     print(f"{'arm':8} {'steps':>5} | {'MMD TV_S':>9} {'MMD SC_S':>9} {'MMD TV_T':>9} | {'aMMD':>7} | {'W1 TV_S':>8}")
 
     from scripts.eval_diffusion import load_run                  # reuse the loader
@@ -95,7 +98,11 @@ def main():
             for s0 in range(0, args.n_samples, args.gen_batch):
                 b = min(args.gen_batch, args.n_samples - s0)
                 Y0 = torch.zeros(b, N, H, device=device)         # UNCONDITIONAL
-                samp, _ = reverse_sample_ancestral(prior_obj, schedule, denoiser, Y0, n_steps=st)
+                if args.sampler == "em":
+                    samp, _ = reverse_sample_em(prior_obj, schedule, denoiser, Y0, n_steps=st)
+                    samp = torch.nan_to_num(samp, nan=0.0, posinf=0.0, neginf=0.0)
+                else:
+                    samp, _ = reverse_sample_ancestral(prior_obj, schedule, denoiser, Y0, n_steps=st)
                 outs.append(samp.cpu())
             G = torch.cat(outs)
             gm = metric_set(G, L_S, L_T)

@@ -335,8 +335,12 @@ def load_prior(
         # and the prior is exactly GAD's:  Q = L_ST + γ I,  one FIXED small γ (0.04),
         # Σ_stat = σ²(L_ST+γI)^{-1} with σ² a single scalar matched to the data variance.
         # NO data-fit covariance, no winsor, no per-dataset γ — pure GAD, one more axis.
-        # stiffness = (2+γ)/γ ≈ 51 at γ=0.04, the SAME as GAD's spatial-only setting, so
-        # the forward corrupts modes in a graded cascade instead of collapsing early.
+        # CAUTION on γ: stiffness = (2+γ)/γ. GAD runs γ=0.8 → stiffness 3.5 (a gentle
+        # graded cascade, fast modes 90%-corrupted at c̄≈0.41, slow at c̄≈1.44). γ=0.04
+        # gives stiffness 51 (fast modes gone by c̄≈0.03 — a violent, near-degenerate
+        # collapse and an EM-unfriendly reverse SDE). To reproduce GAD's regime pass the
+        # GAD value γ=0.8; the small-γ default below only matched the data's low-pass
+        # spectrum, which GAD never does (the denoiser carries the spectrum, not the prior).
         gamma = 0.04 if gamma is None else gamma
         if repair is None:
             from src.data.adjacency import REPAIR_GRAPH

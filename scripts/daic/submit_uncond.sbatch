@@ -23,11 +23,13 @@ EXP_ROOT="${EXP_ROOT:-20260716_uncond}"
 SAMPLER="${SAMPLER:-ancestral}"
 STEPS="${STEPS:-2 5 10 25 50}"
 ARMS_EVAL="${ARMS_EVAL:-kron_u:kronecker vpd_u:vp ved_u:ve iso_u:isotropic}"
+EVAL_SEEDS="${EVAL_SEEDS:-1}"          # >1: mean±std aMMD over sampling seeds (error bars)
 for ds in ${DATASETS}; do
   echo "##### evaluating ${ds} #####"
   srun --unbuffered "${DAIC_PYTHON}" -u scripts/eval_uncond_gadst.py \
     --dataset "${ds}" --exp "${EXP_ROOT}" \
     --arms ${ARMS_EVAL} --sampler "${SAMPLER}" --steps ${STEPS} --n-samples 512 \
+    --eval-seeds "${EVAL_SEEDS}" \
     || echo "WARN: eval failed (${ds})"
 done
 echo "##### UNCOND EVAL COMPLETE #####"

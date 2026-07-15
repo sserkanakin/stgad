@@ -110,6 +110,8 @@ EXPORTS="${EXPORTS},DATA_ROOT=${DATA_ROOT},RESULTS_ROOT=${RESULTS_ROOT},OUTPUT_R
 [ -n "${WINSOR:-}" ]        && EXPORTS="${EXPORTS},WINSOR=${WINSOR}"
 [ -n "${DENOISER:-}" ]      && EXPORTS="${EXPORTS},DENOISER=${DENOISER}"
 [ -n "${UNCOND:-}" ]        && EXPORTS="${EXPORTS},UNCOND=${UNCOND}"
+# GAD's graph-TV regularizer on the prediction (their tv_pred, 5e-3·xᵀLx); unset -> 0.
+[ -n "${TV_WEIGHT:-}" ]     && EXPORTS="${EXPORTS},TV_WEIGHT=${TV_WEIGHT}"
 
 JOBID="$(sbatch --parsable \
        --array="0-$((N - 1))%${THROTTLE}" \

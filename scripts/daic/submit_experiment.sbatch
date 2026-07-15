@@ -66,6 +66,8 @@ ARM_FLAGS=(--norm "${NORM}")
 [ -n "${WINSOR:-}" ]        && ARM_FLAGS+=(--winsor "${WINSOR}")
 # low-capacity gcnn denoiser (prior-isolation arm); unset -> ugnet.
 [ -n "${DENOISER:-}" ]      && ARM_FLAGS+=(--denoiser "${DENOISER}")
+# GAD's graph-TV regularizer (their tv_pred, 5e-3·xᵀLx on the prediction); unset -> 0.
+[ -n "${TV_WEIGHT:-}" ]     && ARM_FLAGS+=(--tv-weight "${TV_WEIGHT}")
 # UNCOND=1: unconditional generation (zero conditioning; select by val_loss — sampled
 # CRPS is a forecasting metric and meaningless without conditioning).
 [ -n "${UNCOND:-}" ]        && ARM_FLAGS+=(--uncond --fast-val-every 0 --val-every 1000 --patience 999)

@@ -26,14 +26,16 @@ export OUTPUT_ROOT="${HOME}/windowshome/research-tud-out"
 DATASETS="${DATASETS:-pems08s pems08f metrla}"
 STEPS="${STEPS:-2 5 10 25}"
 EXP_ROOT="${EXP_ROOT:-20260715_gadst_res}"
+BACKBONE="${BACKBONE:-gwn}"
+ARMS="${ARMS:-kron_res:kronecker iso_res:isotropic}"
 
 for ds in ${DATASETS}; do
-  for arm in kron_res:kronecker iso_res:isotropic; do
+  for arm in ${ARMS}; do
     pr=${arm#*:}; a=${arm%:*}
     for st in ${STEPS}; do
       echo "=== fewstep: ${ds} ${a} ancestral@${st} ==="
       srun --unbuffered "${DAIC_PYTHON}" -u scripts/eval_diffusion.py \
-        --dataset "${ds}" --prior "${pr}" --backbone gwn --exp "${EXP_ROOT}/${a}" --seed 42 \
+        --dataset "${ds}" --prior "${pr}" --backbone "${BACKBONE}" --exp "${EXP_ROOT}/${a}" --seed 42 \
         --split val --k 8 --sampler ancestral --n-steps "${st}" --ckpt best_crps.pt \
         --max-windows 256 --gen-batch 256 --w1-samples 4 \
         || echo "WARN: cell failed (${ds} ${a} ${st}) — continuing"

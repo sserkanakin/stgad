@@ -292,8 +292,26 @@ def load_prior(
     """
     if prior == "isotropic":
         return _build_isotropic_prior(dataset, seed, backbone, norm, winsor=winsor)
+    if prior in ("vp", "ve"):
+        # literal standard-diffusion baselines (GAD's paper adversaries), expressed in our
+        # per-mode OU machinery. vp: theta=1, sigma^2=1 (DDPM; unit terminal variance —
+        # our standardized targets have var~1 so this is also scale-appropriate).
+        # ve: theta->0 (no drift), sigma^2=1 -> marginal var = 2*c̄; terminal draws are
+        # N(0, sigma_max^2) supplied EXPLICITLY at sampling time (R_T), never the
+        # theta->0 stationary (which is unbounded by construction).
+        R, mask = _load_residuals_train(dataset, seed, backbone, norm)
+        _, N, H = R.shape
+        theta_val = 1.0 if prior == "vp" else 1e-6
+        Rf = R.reshape(-1, H); keep = mask.reshape(-1, H).all(1)
+        return KroneckerPrior(
+            dataset=dataset, gamma=0.0, V_S=np.eye(N), lam_S=np.zeros(N),
+            V_T=np.eye(H), mu_T=np.full(H, 1.0),
+            theta=np.full((N, H), theta_val),
+            delta_h=(Rf[keep] ** 2).mean(0), R_H=np.corrcoef(Rf[keep].T),
+            sigma2_scale=1.0,
+        )
     if prior != "kronecker":
-        raise ValueError(f"unknown prior {prior!r}; use 'kronecker' or 'isotropic'")
+        raise ValueError(f"unknown prior {prior!r}; use 'kronecker', 'isotropic', 'vp' or 've'")
     if spatial not in ("structured", "flat"):
         raise ValueError(f"unknown spatial {spatial!r}; use 'structured' or 'flat'")
 

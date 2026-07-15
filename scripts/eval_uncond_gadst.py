@@ -99,11 +99,15 @@ def main():
             for s0 in range(0, args.n_samples, args.gen_batch):
                 b = min(args.gen_batch, args.n_samples - s0)
                 Y0 = torch.zeros(b, N, H, device=device)         # UNCONDITIONAL
+                # VE has no stationary law (θ→0): terminal draws are N(0, σ_max²) explicitly.
+                R_T = (schedule.sigma_max * torch.randn(b, N, H, device=device)
+                       if hasattr(schedule, "sigma_max") else None)
                 if args.sampler == "em":
-                    samp, _ = reverse_sample_em(prior_obj, schedule, denoiser, Y0, n_steps=st)
+                    samp, _ = reverse_sample_em(prior_obj, schedule, denoiser, Y0, n_steps=st, R_T=R_T)
                     samp = torch.nan_to_num(samp, nan=0.0, posinf=0.0, neginf=0.0)
                 else:
-                    samp, _ = reverse_sample_ancestral(prior_obj, schedule, denoiser, Y0, n_steps=st)
+                    samp, _ = reverse_sample_ancestral(prior_obj, schedule, denoiser, Y0,
+                                                       n_steps=st, R_T=R_T)
                 outs.append(samp.cpu())
             G = torch.cat(outs)
             gm = metric_set(G, L_S, L_T)

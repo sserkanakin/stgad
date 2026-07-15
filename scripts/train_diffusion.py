@@ -61,11 +61,14 @@ from src.data.residual_dataset import (
 from src.diffusion.denoiser import GCNNDenoiser, R0Denoiser, SignalDenoiser, num_parameters
 from src.diffusion.losses import gad_snr_weighted_mse, graph_tv, masked_mse
 from src.diffusion.forward_fcps import (
+    VESchedule,
+    VPSchedule,
     FCPSSchedule,
     ULSchedule,
     fcps_rate_torch,
     prior_to_torch,
     sample_c_bar_powerlaw_torch,
+    sample_log_c_bar_torch,
     sample_R_t_from_c_bar_torch,
 )
 from src.diffusion.prior import load_prior
@@ -160,6 +163,12 @@ def _rate_torch(t: torch.Tensor, schedule) -> torch.Tensor:
     """rate c(t) for either schedule (torch). only needed for the snr loss."""
     if isinstance(schedule, FCPSSchedule):
         return fcps_rate_torch(t, schedule)
+    if isinstance(schedule, VPSchedule):
+        return (schedule.beta_min + (schedule.beta_max - schedule.beta_min) * t / schedule.T) / 2.0
+    if isinstance(schedule, VESchedule):
+        import math as _m
+        lr = _m.log(schedule.sigma_max / schedule.sigma_min)
+        return 2.0 * lr * (schedule.sigma_min ** 2 / 2.0) * torch.exp(2.0 * lr * t / schedule.T)
     return schedule.slope * t / schedule.T                  # ULSchedule
 
 
@@ -193,7 +202,11 @@ def train_step(
 
     # GAD scheme (exp_gasde.py): draw the noise level c̄ = c_0·u^0.65 (power-law),
     # forward-noise R0 to it, recover the diffusion time t, and condition the net on t.
-    c_bar = sample_c_bar_powerlaw_torch(schedule.c_0, B, device, R0.dtype, generator=generator)
+    if isinstance(schedule, VESchedule):
+        c_bar = sample_log_c_bar_torch(schedule.c_lo, schedule.c_0, B, device, R0.dtype,
+                                       generator=generator)
+    else:
+        c_bar = sample_c_bar_powerlaw_torch(schedule.c_0, B, device, R0.dtype, generator=generator)
     R_t = sample_R_t_from_c_bar_torch(R0, c_bar, prior_t, generator=generator)
     t = schedule.t_of_c_bar(c_bar)
 
@@ -248,7 +261,11 @@ def validate(
         B = R0.shape[0]
         batch_loss = 0.0
         for _ in range(n_t_samples):
-            c_bar = sample_c_bar_powerlaw_torch(schedule.c_0, B, device, R0.dtype, generator=gen)
+            if isinstance(schedule, VESchedule):
+                c_bar = sample_log_c_bar_torch(schedule.c_lo, schedule.c_0, B, device,
+                                               R0.dtype, generator=gen)
+            else:
+                c_bar = sample_c_bar_powerlaw_torch(schedule.c_0, B, device, R0.dtype, generator=gen)
             R_t = sample_R_t_from_c_bar_torch(R0, c_bar, prior_t, generator=gen)
             t = schedule.t_of_c_bar(c_bar)
             R0_hat = denoiser(R_t, t, Y_hat)
@@ -650,7 +667,7 @@ def main() -> None:
                    help="winsorize residuals at this percentile of |r| before fitting the prior "
                         "STRUCTURE (heavy tails mask the graph structure; e.g. 90). scale rescaled "
                         "back to the full-data variance. None = no clipping.")
-    p.add_argument("--prior", choices=("kronecker", "isotropic"), default="kronecker",
+    p.add_argument("--prior", choices=("kronecker", "isotropic", "vp", "ve"), default="kronecker",
                    help="noise prior: structured kronecker, or the isotropic σ²I baseline")
     p.add_argument("--exp", default="dev",
                    help="experiment tag; namespaces checkpoints + wandb group "
@@ -798,7 +815,9 @@ def main() -> None:
     # resolve the schedule per prior (auto): FCPS protects the structured prior's
     # slow modes; the isotropic arm has uniform θ → linear UL rate, same total heat.
     sched_kind = args.schedule if args.schedule != "auto" else (
-        "uls" if args.prior == "isotropic" else "fcps")
+        "uls" if args.prior == "isotropic" else
+        "vp" if args.prior == "vp" else
+        "ve" if args.prior == "ve" else "fcps")
 
     cfg = vars(args).copy()
     cfg["backbone"] = args.backbone
@@ -892,6 +911,16 @@ def main() -> None:
         schedule = ULSchedule(slope=2.0 * args.c_0, T=1.0)
         log.info(f"schedule: ULS linear rate slope={schedule.slope:.1f} "
                  f"(c̄(T)={schedule.c_0:.2f}, heat parity with FCPS S={args.c_0:g})")
+    elif sched_kind == "vp":
+        # standard VP-SDE / DDPM baseline (GAD's VPD adversary): linear β 0.1→20.
+        schedule = VPSchedule()
+        log.info(f"schedule: VP-SDE linear β∈[{schedule.beta_min:g},{schedule.beta_max:g}] "
+                 f"(c̄(T)={schedule.c_0:.2f})")
+    elif sched_kind == "ve":
+        # VE-SDE baseline (GAD's VED adversary): geometric σ 0.01→50, θ→0 limit.
+        schedule = VESchedule()
+        log.info(f"schedule: VE-SDE geometric σ∈[{schedule.sigma_min:g},{schedule.sigma_max:g}] "
+                 f"(c̄(T)={schedule.c_0:.1f}; log-uniform c̄ training draws)")
     else:
         # GAD-literal FCPS: fixed S=c_0, α, c_min (no per-dataset auto-derivation).
         # the θ→GAD-scale reparam already set θ_min=γ=0.8, so a fixed S=7 reproduces

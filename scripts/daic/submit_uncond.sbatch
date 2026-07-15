@@ -22,11 +22,12 @@ DATASETS="${DATASETS:-metrla}"
 EXP_ROOT="${EXP_ROOT:-20260716_uncond}"
 SAMPLER="${SAMPLER:-ancestral}"
 STEPS="${STEPS:-2 5 10 25 50}"
+ARMS_EVAL="${ARMS_EVAL:-kron_u:kronecker vpd_u:vp ved_u:ve iso_u:isotropic}"
 for ds in ${DATASETS}; do
   echo "##### evaluating ${ds} #####"
   srun --unbuffered "${DAIC_PYTHON}" -u scripts/eval_uncond_gadst.py \
     --dataset "${ds}" --exp "${EXP_ROOT}" \
-    --arms kron_u:kronecker iso_u:isotropic --sampler "${SAMPLER}" --steps ${STEPS} --n-samples 512 \
+    --arms ${ARMS_EVAL} --sampler "${SAMPLER}" --steps ${STEPS} --n-samples 512 \
     || echo "WARN: eval failed (${ds})"
 done
 echo "##### UNCOND EVAL COMPLETE #####"

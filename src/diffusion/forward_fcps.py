@@ -146,6 +146,77 @@ class ULSchedule:
         return self.T * np.sqrt(np.clip(np.asarray(c_bar, dtype=float) / self.c_0, 0.0, None))
 
 
+@dataclass(frozen=True)
+class VPSchedule:
+    """standard VP-SDE / DDPM forward: dx = -beta(t)/2 x dt + sqrt(beta(t)) dw with
+    LINEAR beta in [beta_min, beta_max] (Song et al. / DDPM defaults 0.1 -> 20).
+    in our per-mode OU machinery this is exactly theta=1, sigma=1, c(t) = beta(t)/2.
+    duck-types FCPSSchedule (c_0 / c / c_bar / t_of_c_bar)."""
+
+    beta_min: float = 0.1
+    beta_max: float = 20.0
+    T: float = 1.0
+
+    @property
+    def c_0(self) -> float:
+        return (self.beta_min * self.T + (self.beta_max - self.beta_min) * self.T / 2.0) / 2.0
+
+    def c(self, t):  # noqa: A003
+        u = np.asarray(t) / self.T
+        return (self.beta_min + (self.beta_max - self.beta_min) * u) / 2.0
+
+    def c_bar(self, t):
+        u = np.asarray(t) / self.T
+        return (self.beta_min * np.asarray(t) + (self.beta_max - self.beta_min) * self.T * u ** 2 / 2.0) / 2.0
+
+    def t_of_c_bar(self, c_bar):
+        """invert the quadratic c̄(t); closed form. np or torch."""
+        a = (self.beta_max - self.beta_min) / (4.0 * self.T)
+        b = self.beta_min / 2.0
+        if isinstance(c_bar, torch.Tensor):
+            disc = (b * b + 4.0 * a * torch.clamp(c_bar, min=0.0)).sqrt()
+            return torch.clamp((disc - b) / (2.0 * a), 1e-8, self.T)
+        disc = np.sqrt(b * b + 4.0 * a * np.clip(np.asarray(c_bar, dtype=float), 0.0, None))
+        return np.clip((disc - b) / (2.0 * a), 1e-8, self.T)
+
+
+@dataclass(frozen=True)
+class VESchedule:
+    """VE-SDE (Song et al.): no drift, exploding variance sigma^2(t) with geometric
+    sigma(t) = sigma_min (sigma_max/sigma_min)^t. in the theta->0 limit of our OU
+    machinery the marginal variance is 2*c̄(t), so c̄(t) = sigma^2(t)/2. terminal draws
+    must come from N(0, sigma_max^2) explicitly (NOT the theta->0 stationary)."""
+
+    sigma_min: float = 0.01
+    sigma_max: float = 50.0
+    T: float = 1.0
+
+    @property
+    def c_0(self) -> float:
+        return self.sigma_max ** 2 / 2.0
+
+    @property
+    def c_lo(self) -> float:
+        return self.sigma_min ** 2 / 2.0
+
+    def _lr(self) -> float:
+        return math.log(self.sigma_max / self.sigma_min)
+
+    def c(self, t):  # noqa: A003
+        return 2.0 * self._lr() * np.asarray(self.c_bar(t))
+
+    def c_bar(self, t):
+        u = np.asarray(t) / self.T
+        return (self.sigma_min ** 2 / 2.0) * np.exp(2.0 * self._lr() * u)
+
+    def t_of_c_bar(self, c_bar):
+        if isinstance(c_bar, torch.Tensor):
+            return torch.clamp(torch.log(torch.clamp(2.0 * c_bar, min=1e-20) / self.sigma_min ** 2)
+                               / (2.0 * self._lr()) * self.T, 1e-8, self.T)
+        v = np.log(np.clip(2.0 * np.asarray(c_bar, dtype=float), 1e-20, None) / self.sigma_min ** 2)
+        return np.clip(v / (2.0 * self._lr()) * self.T, 1e-8, self.T)
+
+
 # ─── Forward sampler ─────────────────────────────────────────────────────────
 
 

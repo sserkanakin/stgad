@@ -69,6 +69,9 @@ ARM_FLAGS=(--norm "${NORM}")
 # UNCOND=1: unconditional generation (zero conditioning; select by val_loss — sampled
 # CRPS is a forecasting metric and meaningless without conditioning).
 [ -n "${UNCOND:-}" ]        && ARM_FLAGS+=(--uncond --fast-val-every 0 --val-every 1000 --patience 999)
+# uncond: skip final-val (forecast metrics are meaningless without conditioning, and a
+# failed final-val would break afterok dependencies); checkpoints are saved during training.
+FV_FLAG="--final-val"; [ -n "${UNCOND:-}" ] && FV_FLAG=""
 ARM_EXP="${EXP}/${ARM}"
 export STAGE="diffusion"
 
@@ -123,4 +126,4 @@ srun --unbuffered --export=ALL "${DAIC_PYTHON}" -u scripts/train_diffusion.py \
     --loss "${LOSS}" \
     "${ARM_FLAGS[@]}" \
     "${FINAL_FLAGS[@]}" \
-    --final-val
+    ${FV_FLAG}

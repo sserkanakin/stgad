@@ -44,7 +44,7 @@ from src.data.residual_dataset import (
     make_dataset, residual_path, sigma_to_torch, train_residual_sigma,
 )
 from src.diffusion.denoiser import GCNNDenoiser, R0Denoiser, SignalDenoiser
-from src.diffusion.forward_fcps import FCPSSchedule, ULSchedule, prior_to_torch
+from src.diffusion.forward_fcps import FCPSSchedule, ULSchedule, VESchedule, VPSchedule, prior_to_torch
 from src.diffusion.prior import load_prior
 from src.diffusion.reverse import min_em_steps, reverse_sample_ancestral, reverse_sample_em
 from src.eval.distribution import energy_distance, sliced_wasserstein1
@@ -99,7 +99,13 @@ def load_run(dataset, prior, seed, exp, device, backbone="gwn", ckpt_name="best.
     # rebuild the schedule exactly as training used it: uls (isotropic arm, linear
     # rate at the same total heat) or the GAD-literal fcps. old configs have no
     # schedule_resolved field → fcps with the recorded/default S, α, c_min.
-    if cfg.get("schedule_resolved") == "uls":
+    if cfg.get("schedule_resolved") == "vp":
+        schedule = VPSchedule()
+        log.info("[eval] schedule: VP-SDE linear β (DDPM baseline)")
+    elif cfg.get("schedule_resolved") == "ve":
+        schedule = VESchedule()
+        log.info("[eval] schedule: VE-SDE geometric σ (baseline)")
+    elif cfg.get("schedule_resolved") == "uls":
         schedule = ULSchedule(slope=2.0 * cfg.get("c_0", 7.0), T=1.0)
         log.info(f"[eval] schedule: ULS slope={schedule.slope:.1f} "
                  f"(c̄(T)={schedule.c_0:.2f})  θ_min={float(prior_obj.theta.min()):.4f}")

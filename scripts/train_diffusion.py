@@ -640,6 +640,15 @@ def main() -> None:
     p.add_argument("--gamma-t", type=float, default=0.6,
                    help="temporal Laplacian shift γ_t (only for --temporal laplacian). mild γ_t≈0.6 "
                         "keeps the temporal spread bounded (ratio (2+γ_t)/γ_t) so the prior isn't stiff.")
+    p.add_argument("--spatial-graph", choices=("road", "correlation", "hybrid"), default="road",
+                   help="graph for the spatial factor: 'road' = given adjacency (right for SPEED, "
+                        "congestion propagates along roads); 'correlation' = kNN on the residual "
+                        "(right for FLOW, volume correlates by function not distance); 'hybrid' = both.")
+    p.add_argument("--knn-k", type=int, default=15, help="k for the correlation/hybrid graph")
+    p.add_argument("--winsor", type=float, default=None,
+                   help="winsorize residuals at this percentile of |r| before fitting the prior "
+                        "STRUCTURE (heavy tails mask the graph structure; e.g. 90). scale rescaled "
+                        "back to the full-data variance. None = no clipping.")
     p.add_argument("--prior", choices=("kronecker", "isotropic"), default="kronecker",
                    help="noise prior: structured kronecker, or the isotropic σ²I baseline")
     p.add_argument("--exp", default="dev",
@@ -783,6 +792,9 @@ def main() -> None:
     cfg["shrink_t"] = args.shrink_t      # None -> SHRINK_T (0.1); empirical-temporal only
     cfg["temporal"] = args.temporal      # 'empirical' or 'laplacian' (product graph)
     cfg["gamma_t"] = args.gamma_t        # temporal Laplacian shift (temporal=laplacian)
+    cfg["spatial_graph"] = args.spatial_graph   # road / correlation / hybrid
+    cfg["knn_k"] = args.knn_k
+    cfg["winsor"] = args.winsor          # residual winsor percentile for the prior fit
     cfg["schedule_resolved"] = sched_kind          # what the run actually used
     cfg["repair_graph"] = REPAIR_GRAPH             # single-component graph surgery
     cfg["zero_masked_input"] = True                # masked coords zeroed at the net INPUT
@@ -849,6 +861,7 @@ def main() -> None:
                        spatial=args.spatial, stiffness_cap=(args.stiffness_cap or None),
                        gamma=args.gamma, shrink_t=args.shrink_t,
                        temporal=args.temporal, gamma_t=args.gamma_t,
+                       spatial_graph=args.spatial_graph, knn_k=args.knn_k, winsor=args.winsor,
                        backbone=args.backbone, norm=args.norm)
     prior_t = prior_to_torch(prior, device=device, dtype=torch.float32)
     if sched_kind == "uls":

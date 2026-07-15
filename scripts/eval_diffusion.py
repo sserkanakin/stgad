@@ -90,6 +90,9 @@ def load_run(dataset, prior, seed, exp, device, backbone="gwn", ckpt_name="best.
                            shrink_t=cfg.get("shrink_t"),
                            temporal=cfg.get("temporal", "empirical"),
                            gamma_t=cfg.get("gamma_t", 0.6),
+                           spatial_graph=cfg.get("spatial_graph", "road"),
+                           knn_k=cfg.get("knn_k", 15),
+                           winsor=cfg.get("winsor"),
                            backbone=backbone,
                            repair=cfg.get("repair_graph"),
                            norm=cfg.get("norm", "global"))

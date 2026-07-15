@@ -133,6 +133,47 @@ def _load_laplacian_eig(dataset: str, repaired: bool) -> tuple[np.ndarray, np.nd
     return d["eigenvalues"].astype(np.float64), d["eigenvectors"].astype(np.float64)
 
 
+def _knn_correlation_graph(R: np.ndarray, k: int = 15) -> np.ndarray:
+    """kNN graph from residual spatial correlation (functional similarity). the road
+    network is the wrong graph for FLOW (volume correlates by function, not road distance) —
+    on the flow residual the road-graph prior has NEGATIVE spatial contribution, while a
+    correlation graph gives +11–21%. speed keeps the road graph (congestion propagates along
+    roads). R is (B, N, H); returns a symmetric weighted adjacency (N, N)."""
+    Rf = R.transpose(1, 0, 2).reshape(R.shape[1], -1)     # (N, B*H)
+    corr = np.corrcoef(Rf)
+    np.fill_diagonal(corr, -np.inf)
+    N = corr.shape[0]
+    idx = np.argsort(-corr, axis=1)[:, :k]
+    A = np.zeros((N, N))
+    rows = np.repeat(np.arange(N), k)
+    cols = idx.ravel()
+    w = np.clip(corr[rows, cols], 0.0, None)
+    A[rows, cols] = w
+    A = np.maximum(A, A.T)                                # symmetrize (mutual OR)
+    return A
+
+
+def _spatial_graph_eig(dataset: str, R: np.ndarray, spatial_graph: str, knn_k: int,
+                       repair: bool) -> tuple[np.ndarray, np.ndarray]:
+    """(lam_S, V_S) for the spatial factor. 'road' = the given adjacency (right for speed);
+    'correlation' = kNN on residual correlation (right for flow); 'hybrid' = road ∪ 0.25·corr."""
+    if spatial_graph == "road":
+        return _load_laplacian_eig(dataset, repaired=repair)
+    from src.data.adjacency import compute_normalized_laplacian, load_adjacency
+    A_corr = _knn_correlation_graph(R, knn_k)
+    if spatial_graph == "correlation":
+        A = A_corr
+    elif spatial_graph == "hybrid":
+        A_road = np.asarray(load_adjacency(dataset, repair=repair)).astype(np.float64)
+        np.fill_diagonal(A_road, 0.0)
+        A = A_road + 0.25 * A_corr
+    else:
+        raise ValueError(f"unknown spatial_graph {spatial_graph!r}; use road/correlation/hybrid")
+    lam, V = np.linalg.eigh(compute_normalized_laplacian(A))
+    o = np.argsort(lam)
+    return lam[o], V[:, o]
+
+
 def _temporal_laplacian_eig(H: int, gamma_t: float) -> tuple[np.ndarray, np.ndarray]:
     """temporal factor from a PATH-graph (chain) normalized Laplacian on the H horizons:
     Σ_T = (L_path + γ_t I)^{-1} — the temporal twin of the spatial (L_S + γI)^{-1}, so the
@@ -183,14 +224,17 @@ def _normalize_scale(theta: np.ndarray) -> tuple[np.ndarray, float]:
 
 
 def _build_isotropic_prior(dataset: str, seed: int = 0, backbone: str = "gwn",
-                           norm: str = "global") -> KroneckerPrior:
+                           norm: str = "global", winsor: float | None = None) -> KroneckerPrior:
     """Scale-matched white-noise baseline: Σ = σ²·I, σ² = masked variance of the
     training residuals. identity eigenbasis (no spatial/temporal structure) with
     a constant per-mode precision θ = 1/σ², so the stationary variance is σ²
     everywhere. strips all structure but keeps the overall noise energy, so the
     comparison against the kronecker prior isolates the effect of structure.
+    winsor matches the kronecker arm's clipping so the σ² scale is comparable.
     """
     R, mask = _load_residuals_train(dataset, seed, backbone, norm)
+    # iso has no structure, so winsor would only shrink the scale — keep the FULL variance
+    # (the kronecker arm winsorizes for structure but rescales back to this same full var).
     sigma2 = float(R[mask].var())
     _, N, H = R.shape
     theta, sigma2_scale = _normalize_scale(np.full((N, H), 1.0 / sigma2))
@@ -219,6 +263,9 @@ def load_prior(
     shrink_t: float | None = None,
     temporal: str = "empirical",
     gamma_t: float = 0.6,
+    spatial_graph: str = "road",
+    knn_k: int = 15,
+    winsor: float | None = None,
     backbone: str = "gwn",
     repair: bool | None = None,
     norm: str = "global",
@@ -242,13 +289,21 @@ def load_prior(
       "pernode" (per-sensor std; must match the dataset's normalization).
     """
     if prior == "isotropic":
-        return _build_isotropic_prior(dataset, seed, backbone, norm)
+        return _build_isotropic_prior(dataset, seed, backbone, norm, winsor=winsor)
     if prior != "kronecker":
         raise ValueError(f"unknown prior {prior!r}; use 'kronecker' or 'isotropic'")
     if spatial not in ("structured", "flat"):
         raise ValueError(f"unknown spatial {spatial!r}; use 'structured' or 'flat'")
 
     R, mask = _load_residuals_train(dataset, seed, backbone, norm)
+    var_full = float(R[mask].var())          # full-data variance (pre-winsor) — the target scale
+    # winsorize before fitting: heavy tails (kurtosis 24-38) mask the graph structure in the
+    # covariance; clipping at the `winsor` percentile of |r| reveals it (metrla spatial share
+    # 10%->31%). used for STRUCTURE (Σ_T shape + correlation graph); the overall variance is
+    # rescaled back to var_full at the end so the prior isn't under-dispersed. None = no clip.
+    if winsor is not None:
+        thr = float(np.percentile(np.abs(R[mask]), winsor))
+        R = np.clip(R, -thr, thr)
     _, N, H = R.shape
 
     if temporal == "laplacian":
@@ -282,7 +337,9 @@ def load_prior(
         if repair is None:
             from src.data.adjacency import REPAIR_GRAPH
             repair = REPAIR_GRAPH
-        lam_S, V_S = _load_laplacian_eig(dataset, repaired=repair)
+        # spatial graph: road (given adjacency, right for speed), correlation (kNN on the
+        # residual, right for flow), or hybrid. built from the (winsorized) residual R.
+        lam_S, V_S = _spatial_graph_eig(dataset, R, spatial_graph, knn_k, repair)
         q_S = lam_S + gamma                       # spatial precision = L + γI
 
     # τ²: trace-calibrate so Σ_S's average eigenvalue doesn't shift the variance
@@ -297,12 +354,12 @@ def load_prior(
 
     # GAD-scale normalization: θ_min → γ so c_0 ≈ 5/γ ≈ 6 (σ² preserves Σ_stat).
     theta, sigma2_scale = _normalize_scale(theta)
-    if temporal == "laplacian":
-        # the path-graph μ_T carries no data scale (unlike empirical Σ_T's D_H); match the
-        # overall stationary variance to the data (z-scored → ~1) so draws are representative.
-        data_var = float(R[mask].var())
+    if temporal == "laplacian" or winsor is not None:
+        # the path-graph μ_T carries no data scale, and winsorizing shrinks it — either way,
+        # match the overall stationary variance to the FULL data variance so draws are
+        # representative and the forward reaches the data distribution (not under-dispersed).
         cur = float((sigma2_scale / theta).mean())
-        sigma2_scale *= data_var / max(cur, 1e-12)
+        sigma2_scale *= var_full / max(cur, 1e-12)
 
     return KroneckerPrior(
         dataset=dataset,

@@ -105,6 +105,9 @@ EXPORTS="${EXPORTS},DATA_ROOT=${DATA_ROOT},RESULTS_ROOT=${RESULTS_ROOT},OUTPUT_R
 # temporal factor 'laplacian' (product graph) + its γ_t for the raw arm.
 [ -n "${TEMPORAL:-}" ] && EXPORTS="${EXPORTS},TEMPORAL=${TEMPORAL}"
 [ -n "${GAMMA_T:-}" ]  && EXPORTS="${EXPORTS},GAMMA_T=${GAMMA_T}"
+# spatial graph (road/correlation/hybrid) + winsor for the predict-refine robust-prior arm.
+[ -n "${SPATIAL_GRAPH:-}" ] && EXPORTS="${EXPORTS},SPATIAL_GRAPH=${SPATIAL_GRAPH}"
+[ -n "${WINSOR:-}" ]        && EXPORTS="${EXPORTS},WINSOR=${WINSOR}"
 
 JOBID="$(sbatch --parsable \
        --array="0-$((N - 1))%${THROTTLE}" \

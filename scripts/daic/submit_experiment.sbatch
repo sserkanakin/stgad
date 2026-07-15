@@ -61,6 +61,9 @@ ARM_FLAGS=(--norm "${NORM}")
 # temporal factor: 'laplacian' -> clean product graph (raw arm); unset -> empirical Σ_T.
 [ -n "${TEMPORAL:-}" ] && ARM_FLAGS+=(--temporal "${TEMPORAL}")
 [ -n "${GAMMA_T:-}" ]  && ARM_FLAGS+=(--gamma-t "${GAMMA_T}")
+# spatial graph (road/correlation/hybrid) + winsor for the predict-refine robust-prior arm.
+[ -n "${SPATIAL_GRAPH:-}" ] && ARM_FLAGS+=(--spatial-graph "${SPATIAL_GRAPH}")
+[ -n "${WINSOR:-}" ]        && ARM_FLAGS+=(--winsor "${WINSOR}")
 ARM_EXP="${EXP}/${ARM}"
 export STAGE="diffusion"
 

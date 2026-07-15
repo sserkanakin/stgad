@@ -112,8 +112,8 @@ def load_run(dataset, prior, seed, exp, device, backbone="gwn", ckpt_name="best.
     if cfg.get("denoiser") == "gcnn":
         denoiser = GCNNDenoiser(
             N=prior_obj.N, H=prior_obj.H, adjacency=load_adjacency(dataset),
-            K=cfg.get("gcnn_hops", 3), n_layers=cfg.get("gcnn_layers", 4),
-            hidden=cfg.get("gcnn_hidden", 32),
+            K=cfg.get("gcnn_hops", 5), n_layers=cfg.get("gcnn_layers", 3),
+            hidden=cfg.get("gcnn_hidden", 24),
         ).to(device)
     elif backbone == "raw":
         import numpy as _np

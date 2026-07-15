@@ -217,7 +217,7 @@ class GCNNDenoiser(nn.Module):
     with S = D^{-1/2}(A+I)D^{-1/2} (ugnet's gcn_self operator), W_k 1x1 channel mixes.
     """
 
-    def __init__(self, N, H, adjacency, K=3, n_layers=4, hidden=32,
+    def __init__(self, N, H, adjacency, K=5, n_layers=3, hidden=24,
                  device="cpu", T_h=0):
         super().__init__()
         if T_h:
@@ -261,5 +261,6 @@ class GCNNDenoiser(nn.Module):
             acc = acc + tc(acc)
             sc, sh = fl(emb).chunk(2, dim=1)
             acc = acc * (1 + sc.unsqueeze(-1).unsqueeze(-1)) + sh.unsqueeze(-1).unsqueeze(-1)
-            x = torch.relu(acc)
-        return self.head(x).squeeze(1)                                  # (B, N, H)
+            x = torch.nn.functional.silu(acc)                           # GAD: SiLU
+        # GAD's residual output: x0_hat = x_t + correction (models.py DenoiserGNN)
+        return R_t + self.head(x).squeeze(1)                            # (B, N, H)

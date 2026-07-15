@@ -667,9 +667,9 @@ def main() -> None:
                         "filter cascade (~60k params). with gcnn the network cannot absorb the "
                         "prior's structure, isolating the corruption-prior effect (PriorGrad: "
                         "adaptive priors matter most at small capacity).")
-    p.add_argument("--gcnn-hops", type=int, default=3, help="K-hop order of each gcnn layer")
-    p.add_argument("--gcnn-layers", type=int, default=4)
-    p.add_argument("--gcnn-hidden", type=int, default=32)
+    p.add_argument("--gcnn-hops", type=int, default=5, help="K-hop order (GAD models.py: Ks=[5,5,5])")
+    p.add_argument("--gcnn-layers", type=int, default=3)
+    p.add_argument("--gcnn-hidden", type=int, default=24)
     p.add_argument("--uncond", action="store_true",
                    help="UNCONDITIONAL generation: zero the conditioning everywhere (GAD's "
                         "setting, one axis up). the prior cannot be bypassed by conditioning; "

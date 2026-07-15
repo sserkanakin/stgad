@@ -28,23 +28,25 @@ from src.diffusion.prior import load_prior
 from src.utils import paths
 
 
-def load_raw(ds, split, cap=2500):
-    d = np.load(paths.residual_npz(ds, split, 42, "raw"))
-    sr = float(np.asarray(train_residual_sigma(ds, 42, "raw", norm="global")))
-    R = d["residuals"].astype(np.float64) / sr
+def load_target(ds, split, backbone="raw", norm="global", cap=2500):
+    d = np.load(paths.residual_npz(ds, split, 42, backbone))
+    sr = np.asarray(train_residual_sigma(ds, 42, backbone, norm=norm))
+    R = d["residuals"].astype(np.float64) / (sr if sr.ndim == 2 else sr.reshape(-1, 1) if sr.ndim == 1 else float(sr))
     M = d["mask"].astype(bool)
     keep = M.reshape(M.shape[0], -1).all(1)
     Rv = R[keep]
+    if Rv.shape[0] < 50:
+        Rv = np.nan_to_num(R)
     if Rv.shape[0] > cap:
         Rv = Rv[np.linspace(0, Rv.shape[0] - 1, cap).astype(int)]
     return Rv
 
 
-def fig_for(ds, out: Path):
+def fig_for(ds, out: Path, backbone="raw", norm="global"):
     load_prior.cache_clear()
-    pk = load_prior(ds, "kronecker", seed=42, backbone="raw", temporal="cartesian")
-    pi = load_prior(ds, "isotropic", seed=42, backbone="raw")
-    Rv = load_raw(ds, "val")
+    pk = load_prior(ds, "kronecker", seed=42, backbone=backbone, temporal="cartesian", norm=norm)
+    pi = load_prior(ds, "isotropic", seed=42, backbone=backbone, norm=norm)
+    Rv = load_target(ds, "val", backbone, norm)
     rng = np.random.default_rng(0)
     Sk = sample_prior((2000,), pk, rng)
     Si = sample_prior((2000,), pi, rng)
@@ -52,7 +54,7 @@ def fig_for(ds, out: Path):
     sched = FCPSSchedule()
 
     fig = plt.figure(figsize=(15, 12.5))
-    fig.suptitle(f"{ds} — GAD-ST prior checks (Cartesian product graph, λ_ST∈[0,2], γ=0.04 fixed)",
+    fig.suptitle(f"{ds} ({backbone}) — GAD-ST prior checks (Cartesian product graph, λ_ST∈[0,2], γ=0.04 fixed)",
                  fontweight="bold", fontsize=13)
     gs = fig.add_gridspec(3, 6, hspace=0.52, wspace=0.55)
 
@@ -153,7 +155,7 @@ def fig_for(ds, out: Path):
     ax.legend(fontsize=8); ax.grid(alpha=0.3)
 
     out.mkdir(parents=True, exist_ok=True)
-    pth = out / f"gadst_checks_{ds}.png"
+    pth = out / f"gadst_checks_{ds}_{backbone}.png"
     fig.savefig(pth, dpi=115, bbox_inches="tight"); plt.close(fig)
     print(f"[fig] {pth}", flush=True)
 
@@ -162,9 +164,11 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--datasets", nargs="+", default=["metrla", "pems08f"])
     ap.add_argument("--out", default="figs")
+    ap.add_argument("--backbone", default="raw")
+    ap.add_argument("--norm", default="global")
     a = ap.parse_args()
     for ds in a.datasets:
-        fig_for(ds, Path(a.out))
+        fig_for(ds, Path(a.out), backbone=a.backbone, norm=a.norm)
 
 
 if __name__ == "__main__":

@@ -1,5 +1,17 @@
 # GAD-ST: methodology record (figures, numbers, and where everything lives)
 
+> **⚠️ SUPERSEDED FACTS — read `docs/methodology_experiments.md` for the current chapter.**
+> This file is the *figure/number ledger* and is kept for provenance, but three headline
+> choices below were corrected after auditing GAD's reference code (github.com/vimalkb7/gad):
+> **(1)** γ is now **0.8** (GAD's value), not 0.04 — 0.04 gave stiffness 51 and an
+> EM-unfriendly reverse; GAD's 0.8 gives stiffness 3.5. **(2)** the denoiser is GAD's
+> **GCNN** (~17k params), not UGnet — matched across all arms. **(3)** the comparison is a
+> **four-arm** design (GAD-ST, VPD, VED, isotropic control) in **two regimes** (unconditional
+> generation + conditional forecasting), tags **`20260716_gadst`** and
+> **`20260716_gadst_cond`**. The "iso wins" numbers in §3.1 predate the fix and used a
+> data-fitted empirical prior, not GAD-ST. Everything in the sections below should be read
+> through that lens.
+
 Single source of truth for the methodology chapter (ch. 4) and its figures/tables.
 Experiment tags: **`20260715_gadst_res`** (headline: residual diffusion) and
 `20260715_rawgad` (raw-signal arm, ablation/secondary). Branch `raw-signal-gad`.

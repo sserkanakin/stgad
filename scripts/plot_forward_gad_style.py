@@ -36,7 +36,11 @@ def main():
     phys = p.gamma / float(p.theta.min())
     lam = np.sort((p.theta * phys).ravel())
     K = lam.size
-    picks = [(0, r"$\lambda_1$"), (1, r"$\lambda_2$"),
+    # four WELL-SEPARATED modes (GAD Fig.1 style): the smallest, the one nearest 0.32
+    # (their lambda_2), and the two largest. on a dense product-graph spectrum the two
+    # literal smallest overlap visually, unlike GAD's tiny SBM graph with a big gap.
+    k2 = int(np.argmin(np.abs(lam - 0.32)))
+    picks = [(0, r"$\lambda_1$"), (k2, r"$\lambda_j$"),
              (K - 2, r"$\lambda_{K-1}$"), (K - 1, r"$\lambda_K$")]
     sigma2 = p.sigma2_scale * phys        # σ² in physical units (Σ_stat = σ²/λ unchanged)
 

@@ -25,11 +25,13 @@ from src.diffusion.prior import load_prior
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dataset", default="metrla")
+    ap.add_argument("--backbone", default="raw")
+    ap.add_argument("--norm", default="global")
     ap.add_argument("--out", default="figs")
     a = ap.parse_args()
 
     load_prior.cache_clear()
-    p = load_prior(a.dataset, "kronecker", seed=42, backbone="raw", temporal="cartesian")
+    p = load_prior(a.dataset, "kronecker", seed=42, backbone=a.backbone, temporal="cartesian", norm=a.norm)
     # physical shifted eigenvalues λ_k = λ_ST + γ (the paper's convention: λ1 = γ, λmax ≤ 2+γ)
     phys = p.gamma / float(p.theta.min())
     lam = np.sort((p.theta * phys).ravel())
@@ -61,10 +63,10 @@ def main():
     for ax in (axL, axR):
         ax.grid(alpha=0.25)
     axL.legend(fontsize=6.5, ncol=2, loc="upper right")
-    fig.suptitle(f"{a.dataset} — GAD-ST forward: ULS (solid) vs FCPS (dashed), "
+    fig.suptitle(f"{a.dataset} ({a.backbone}) — GAD-ST forward: ULS (solid) vs FCPS (dashed), "
                  f"space-time product graph, γ={p.gamma:g}", fontsize=10)
     out = Path(a.out); out.mkdir(parents=True, exist_ok=True)
-    pth = out / f"forward_gadstyle_{a.dataset}.png"
+    pth = out / f"forward_gadstyle_{a.dataset}_{a.backbone}.png"
     fig.tight_layout(); fig.savefig(pth, dpi=140); plt.close(fig)
     print(f"[fig] {pth}")
 

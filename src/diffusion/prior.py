@@ -113,6 +113,8 @@ def _load_residuals_train(dataset: str, seed: int = 0, backbone: str = "gwn",
     R = d["residuals"].astype(np.float64)
     mask = d["mask"].astype(bool)
     sigma_r = np.asarray(train_residual_sigma(dataset, seed, backbone, norm=norm))
+    if sigma_r.ndim == 2:                                       # (1, H) per-horizon
+        return R / sigma_r, mask
     return R / sigma_r.reshape(-1, 1), mask
 
 

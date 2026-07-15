@@ -34,7 +34,12 @@ def train_residual_sigma(dataset: str, seed: int = 0, backbone: str = "gwn",
         scale (heteroscedastic), so per-node unit variance removes the static part
         of that spread before the prior/denoiser see the data (HySRD-Net's node-wise
         normalization ablation: global costs 5-7% CRPS). floored at 10% of the
-        global std so a nearly-always-masked sensor cannot blow up the division."""
+        global std so a nearly-always-masked sensor cannot blow up the division.
+    norm="perhorizon": per-horizon std, shape (1, H) — forecast-error residuals grow
+        1.7-2.9x across the horizon; a STATIONARY graph prior (GAD-ST) is flat by
+        construction, so we standardize the growth away before diffusion and multiply
+        it back at the output (12 scalars; the horizon-growing uncertainty re-enters
+        every sample at de-normalization)."""
     d = np.load(paths.residual_npz(dataset, "train", seed, backbone))
     R = d["residuals"].astype(np.float64)
     M = d["mask"].astype(bool)
@@ -42,15 +47,21 @@ def train_residual_sigma(dataset: str, seed: int = 0, backbone: str = "gwn",
     if norm == "global":
         return g
     Rm = np.where(M, R, 0.0)
+    if norm == "perhorizon":
+        cnt = M.sum(axis=(0, 1)).clip(min=1)                   # valid entries per horizon
+        var = (Rm ** 2).sum(axis=(0, 1)) / cnt                  # per-horizon second moment
+        return np.sqrt(var).clip(min=0.1 * g).reshape(1, -1)    # (1, H)
     cnt = M.sum(axis=(0, 2)).clip(min=1)                       # valid entries per node
     var = (Rm ** 2).sum(axis=(0, 2)) / cnt                      # per-node second moment
     return np.sqrt(var).clip(min=0.1 * g)                       # (N,)
 
 
 def sigma_to_torch(sigma_r, device=None) -> torch.Tensor:
-    """broadcastable residual scale: scalar -> (1,1), per-node (N,) -> (N,1).
-    multiplies/divides tensors shaped (..., N, H) either way."""
+    """broadcastable residual scale: scalar -> (1,1), per-node (N,) -> (N,1),
+    per-horizon (1,H) -> unchanged. multiplies/divides tensors shaped (..., N, H)."""
     t = torch.as_tensor(np.asarray(sigma_r), dtype=torch.float32, device=device)
+    if t.ndim == 2:
+        return t                                                # (1, H) per-horizon
     return t.reshape(1, 1) if t.ndim == 0 else t.reshape(-1, 1)
 
 

@@ -677,9 +677,11 @@ def main() -> None:
     p.add_argument("--cond-past", action="store_true",
                    help="prepend the previous window's residuals to the conditioning "
                         "(recent backbone-error volatility; HySRD-Net conditions on this)")
-    p.add_argument("--norm", choices=("global", "pernode"), default="global",
-                   help="residual scaler: one global std, or per-sensor std (absorbs "
-                        "static spatial heteroscedasticity; prior refit to match)")
+    p.add_argument("--norm", choices=("global", "pernode", "perhorizon"), default="global",
+                   help="residual scaler: one global std; per-sensor std (absorbs static "
+                        "spatial heteroscedasticity); or per-horizon std (absorbs the 1.7-2.9x "
+                        "error growth so the stationary GAD-ST prior matches — growth re-enters "
+                        "samples at de-normalization). prior refit to match either way.")
     p.add_argument("--schedule", choices=("auto", "fcps", "uls"), default="auto",
                    help="auto = fcps for kronecker, uls for isotropic (same c̄(T)=c_0)")
     p.add_argument("--loss", choices=("mse", "snr"), default="snr",
@@ -842,7 +844,7 @@ def main() -> None:
     val_ds = make_dataset(args.dataset, "val", args.seed, args.backbone, sigma_r,
                           cond_past=args.cond_past, zero_masked=True)
     _sig_desc = (f"{sigma_r:.4f}" if np.ndim(sigma_r) == 0
-                 else f"pernode [{np.min(sigma_r):.2f}..{np.max(sigma_r):.2f}]")
+                 else f"{args.norm} [{np.min(sigma_r):.2f}..{np.max(sigma_r):.2f}]")
     log.info(f"train={len(train_ds)}  val={len(val_ds)}  sigma_r={_sig_desc} "
              f"(unit space, norm={args.norm})  cond_past={args.cond_past}  "
              f"zero_masked_input=True")

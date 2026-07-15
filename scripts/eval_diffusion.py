@@ -43,7 +43,7 @@ from src.data.adjacency import load_adjacency
 from src.data.residual_dataset import (
     make_dataset, residual_path, sigma_to_torch, train_residual_sigma,
 )
-from src.diffusion.denoiser import R0Denoiser, SignalDenoiser
+from src.diffusion.denoiser import GCNNDenoiser, R0Denoiser, SignalDenoiser
 from src.diffusion.forward_fcps import FCPSSchedule, ULSchedule, prior_to_torch
 from src.diffusion.prior import load_prior
 from src.diffusion.reverse import min_em_steps, reverse_sample_ancestral, reverse_sample_em
@@ -116,6 +116,13 @@ def load_run(dataset, prior, seed, exp, device, backbone="gwn", ckpt_name="best.
             N=prior_obj.N, H=prior_obj.H, T_h=T_h, adjacency=load_adjacency(dataset),
             d_h=cfg["d_h"], channel_multipliers=tuple(cfg["channel_multipliers"]),
             n_blocks=cfg["n_blocks"], device=str(device),
+        ).to(device)
+    elif cfg.get("denoiser") == "gcnn":
+        denoiser = GCNNDenoiser(
+            N=prior_obj.N, H=prior_obj.H, adjacency=load_adjacency(dataset),
+            K=cfg.get("gcnn_hops", 3), n_layers=cfg.get("gcnn_layers", 4),
+            hidden=cfg.get("gcnn_hidden", 32),
+            T_h=(prior_obj.H if cfg.get("cond_past") else 0),
         ).to(device)
     else:
         denoiser = R0Denoiser(

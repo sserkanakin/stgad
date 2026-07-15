@@ -202,3 +202,64 @@ class SignalDenoiser(nn.Module):
 def num_parameters(module: nn.Module) -> int:
     """Convenience helper for logging param count."""
     return sum(p.numel() for p in module.parameters() if p.requires_grad)
+
+
+class GCNNDenoiser(nn.Module):
+    """GAD's low-capacity denoiser (paper Eq. 16): a cascade of K-hop graph filters
+    with ReLUs, adapted to (B, N, H) fields with forecast conditioning.
+
+    DELIBERATELY small (~50-80k params vs UGnet's ~1M): with a weak denoiser the
+    corruption prior must carry the structure it cannot learn — the capacity x prior
+    interaction PriorGrad documents ("robustness to smaller network capacity") and
+    the mechanism our residual study identified (an expressive conditional denoiser
+    bypasses the prior). per layer:
+        x <- ReLU( FiLM_tau( sum_{k=0..K} (S^k x) W_k  +  depthwise conv1d_H(x) ) )
+    with S = D^{-1/2}(A+I)D^{-1/2} (ugnet's gcn_self operator), W_k 1x1 channel mixes.
+    """
+
+    def __init__(self, N, H, adjacency, K=3, n_layers=4, hidden=32,
+                 device="cpu", T_h=0):
+        super().__init__()
+        if T_h:
+            raise ValueError("GCNNDenoiser supports base conditioning only (T_h=0)")
+        self.N, self.H, self.K = N, H, K
+        A = np.asarray(adjacency, dtype=np.float64).copy()
+        np.fill_diagonal(A, 0.0)
+        A = A + np.eye(N)                                     # self loops (gcn_self)
+        d = A.sum(1)
+        S = A / np.sqrt(np.outer(d, d))
+        Sp = [np.eye(N)]
+        for _ in range(K):
+            Sp.append(Sp[-1] @ S)
+        self.register_buffer("S_pow", torch.tensor(np.stack(Sp), dtype=torch.float32))
+        cs = [2] + [hidden] * n_layers                        # in: [R_t | Y_hat]
+        self.gmix = nn.ModuleList([
+            nn.ModuleList([nn.Conv2d(cs[l], cs[l + 1], 1) for _ in range(K + 1)])
+            for l in range(n_layers)])
+        self.tconv = nn.ModuleList([
+            nn.Conv2d(cs[l + 1], cs[l + 1], (1, 3), padding=(0, 1), groups=cs[l + 1])
+            for l in range(n_layers)])
+        self.film = nn.ModuleList([nn.Linear(64, 2 * cs[l + 1]) for l in range(n_layers)])
+        self.head = nn.Conv2d(hidden, 1, 1)
+
+    def _tau_embed(self, t):
+        half = 32
+        freqs = torch.exp(torch.linspace(0, 6, half, device=t.device))
+        ang = t.view(-1, 1) * freqs.view(1, -1)
+        return torch.cat([torch.sin(ang), torch.cos(ang)], dim=1)      # (B, 64)
+
+    def forward(self, R_t, t, Y_hat):
+        if R_t.shape[-2:] != (self.N, self.H):
+            raise ValueError(f"R_t must be (B,{self.N},{self.H}); got {tuple(R_t.shape)}")
+        x = torch.stack([R_t, Y_hat], dim=1)                            # (B, 2, N, H)
+        emb = self._tau_embed(t * 10.0)                                 # t in [0,1]
+        for gm, tc, fl in zip(self.gmix, self.tconv, self.film):
+            acc = 0
+            for k in range(self.K + 1):
+                xk = torch.einsum("ij,bcjh->bcih", self.S_pow[k], x)
+                acc = acc + gm[k](xk)
+            acc = acc + tc(acc)
+            sc, sh = fl(emb).chunk(2, dim=1)
+            acc = acc * (1 + sc.unsqueeze(-1).unsqueeze(-1)) + sh.unsqueeze(-1).unsqueeze(-1)
+            x = torch.relu(acc)
+        return self.head(x).squeeze(1)                                  # (B, N, H)

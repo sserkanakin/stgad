@@ -64,6 +64,8 @@ ARM_FLAGS=(--norm "${NORM}")
 # spatial graph (road/correlation/hybrid) + winsor for the predict-refine robust-prior arm.
 [ -n "${SPATIAL_GRAPH:-}" ] && ARM_FLAGS+=(--spatial-graph "${SPATIAL_GRAPH}")
 [ -n "${WINSOR:-}" ]        && ARM_FLAGS+=(--winsor "${WINSOR}")
+# low-capacity gcnn denoiser (prior-isolation arm); unset -> ugnet.
+[ -n "${DENOISER:-}" ]      && ARM_FLAGS+=(--denoiser "${DENOISER}")
 ARM_EXP="${EXP}/${ARM}"
 export STAGE="diffusion"
 

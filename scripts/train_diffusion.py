@@ -58,7 +58,7 @@ from src.data.adjacency import REPAIR_GRAPH, load_adjacency
 from src.data.residual_dataset import (
     make_dataset, residual_path, sigma_to_torch, train_residual_sigma,
 )
-from src.diffusion.denoiser import R0Denoiser, SignalDenoiser, num_parameters
+from src.diffusion.denoiser import GCNNDenoiser, R0Denoiser, SignalDenoiser, num_parameters
 from src.diffusion.losses import gad_snr_weighted_mse, graph_tv, masked_mse
 from src.diffusion.forward_fcps import (
     FCPSSchedule,
@@ -662,6 +662,14 @@ def main() -> None:
     p.add_argument("--weight-decay", type=float, default=1e-4)
     p.add_argument("--patience", type=int, default=15)
     p.add_argument("--d-h", type=int, default=32)
+    p.add_argument("--denoiser", choices=("ugnet", "gcnn"), default="ugnet",
+                   help="ugnet (expressive, ~1M params) or gcnn = GAD's low-capacity graph-"
+                        "filter cascade (~60k params). with gcnn the network cannot absorb the "
+                        "prior's structure, isolating the corruption-prior effect (PriorGrad: "
+                        "adaptive priors matter most at small capacity).")
+    p.add_argument("--gcnn-hops", type=int, default=3, help="K-hop order of each gcnn layer")
+    p.add_argument("--gcnn-layers", type=int, default=4)
+    p.add_argument("--gcnn-hidden", type=int, default=32)
     p.add_argument("--channel-multipliers", type=int, nargs="+", default=[1, 2])
     p.add_argument("--n-blocks", type=int, default=2)
     # FCPS schedule = GAD-literal (exp_gasde.py): S=c_0=7, alpha=4, c_min=0.1, sigma=1.
@@ -798,6 +806,10 @@ def main() -> None:
     cfg["spatial_graph"] = args.spatial_graph   # road / correlation / hybrid
     cfg["knn_k"] = args.knn_k
     cfg["winsor"] = args.winsor          # residual winsor percentile for the prior fit
+    cfg["denoiser"] = args.denoiser      # ugnet or gcnn (low-capacity, prior-isolating)
+    cfg["gcnn_hops"] = args.gcnn_hops
+    cfg["gcnn_layers"] = args.gcnn_layers
+    cfg["gcnn_hidden"] = args.gcnn_hidden
     cfg["schedule_resolved"] = sched_kind          # what the run actually used
     cfg["repair_graph"] = REPAIR_GRAPH             # single-component graph surgery
     cfg["zero_masked_input"] = True                # masked coords zeroed at the net INPUT
@@ -905,6 +917,12 @@ def main() -> None:
             N=prior.N, H=prior.H, T_h=T_h, adjacency=A,
             d_h=args.d_h, channel_multipliers=tuple(args.channel_multipliers),
             n_blocks=args.n_blocks, device=str(device),
+        ).to(device)
+    elif args.denoiser == "gcnn":
+        denoiser = GCNNDenoiser(
+            N=prior.N, H=prior.H, adjacency=A, K=args.gcnn_hops,
+            n_layers=args.gcnn_layers, hidden=args.gcnn_hidden,
+            T_h=(prior.H if args.cond_past else 0),
         ).to(device)
     else:
         denoiser = R0Denoiser(

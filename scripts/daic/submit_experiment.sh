@@ -108,6 +108,7 @@ EXPORTS="${EXPORTS},DATA_ROOT=${DATA_ROOT},RESULTS_ROOT=${RESULTS_ROOT},OUTPUT_R
 # spatial graph (road/correlation/hybrid) + winsor for the predict-refine robust-prior arm.
 [ -n "${SPATIAL_GRAPH:-}" ] && EXPORTS="${EXPORTS},SPATIAL_GRAPH=${SPATIAL_GRAPH}"
 [ -n "${WINSOR:-}" ]        && EXPORTS="${EXPORTS},WINSOR=${WINSOR}"
+[ -n "${DENOISER:-}" ]      && EXPORTS="${EXPORTS},DENOISER=${DENOISER}"
 
 JOBID="$(sbatch --parsable \
        --array="0-$((N - 1))%${THROTTLE}" \

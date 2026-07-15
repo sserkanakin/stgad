@@ -90,14 +90,19 @@ def fig_for(ds, out: Path):
     ax.set_xlabel("graph frequency λ"); ax.set_ylabel("cumulative energy")
     ax.legend(fontsize=8); ax.grid(alpha=0.3)
 
-    # D: example fields
-    sub = np.random.default_rng(1).choice(N, size=min(N, 60), replace=False)
+    # D: example fields. rows sorted along the FIEDLER coordinate (2nd Laplacian eigvec),
+    # so graph-NEIGHBOR sensors are adjacent rows — otherwise graph-smoothness is invisible
+    # by construction (a random row order scrambles it).
+    fiedler = Vs_s[:, 1]
+    order = np.argsort(fiedler)
     vlim = np.percentile(np.abs(Rv[0]), 99)
     subgs = gs[1, 4:6].subgridspec(1, 3, wspace=0.12)
     for j, (title, X) in enumerate([("data", Rv[0]), ("GAD-ST", Sk[0]), ("iso", Si[0])]):
         ax = fig.add_subplot(subgs[0, j])
-        ax.imshow(X[sub], aspect="auto", cmap="RdBu_r", vmin=-vlim, vmax=vlim)
+        ax.imshow(X[order], aspect="auto", cmap="RdBu_r", vmin=-vlim, vmax=vlim)
         ax.set_title(f"D · {title}", fontsize=9); ax.set_xticks([]); ax.set_yticks([])
+        if j == 0:
+            ax.set_ylabel("sensors (graph-sorted)", fontsize=8)
 
     # E/F: forward curves — θ quantiles now FILL the range (no bimodal gap)
     t = np.linspace(0, 1, 300)
@@ -107,8 +112,13 @@ def fig_for(ds, out: Path):
     axE = fig.add_subplot(gs[2, 0:2]); axF = fig.add_subplot(gs[2, 2:4])
     th_q = np.percentile(pk.theta, qs)
     th_i = float(pi.theta.mean())
+    # legend in PHYSICAL units: θ_phys = λ_ST + γ ∈ [γ, 2+γ]. the internal θ is the same
+    # spectrum in schedule units (×γ_GAD/γ so GAD's fixed S=7 applies verbatim; σ² co-scaled
+    # — an exact reparameterization). graph eigenvalues never exceed 2.
+    phys = pk.gamma / float(pk.theta.min())          # θ_phys = θ_internal · phys
     for th, c, q in zip(th_q, cols, qs):
-        axE.plot(t, np.exp(-cbar_t * th), color=c, lw=2, label=f"θ q{q} ({th:.1f})")
+        axE.plot(t, np.exp(-cbar_t * th), color=c, lw=2,
+                 label=f"q{q}: λ+γ={th * phys:.2f}")
         axF.plot(t, 1 - np.exp(-2 * cbar_t * th), color=c, lw=2)
     axE.plot(t, np.exp(-cbar_t * th_i), "k--", lw=1.6, label="iso (single θ)")
     axF.plot(t, 1 - np.exp(-2 * cbar_t * th_i), "k--", lw=1.6)

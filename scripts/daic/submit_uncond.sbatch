@@ -20,11 +20,13 @@ export DATA_ROOT="${DAIC_DATA_DIR}" RESULTS_ROOT="${DAIC_DATA_DIR}"
 export OUTPUT_ROOT="${HOME}/windowshome/research-tud-out"
 DATASETS="${DATASETS:-metrla}"
 EXP_ROOT="${EXP_ROOT:-20260716_uncond}"
+SAMPLER="${SAMPLER:-ancestral}"
+STEPS="${STEPS:-2 5 10 25 50}"
 for ds in ${DATASETS}; do
   echo "##### evaluating ${ds} #####"
   srun --unbuffered "${DAIC_PYTHON}" -u scripts/eval_uncond_gadst.py \
     --dataset "${ds}" --exp "${EXP_ROOT}" \
-    --arms kron_u:kronecker iso_u:isotropic --steps 2 5 10 25 50 --n-samples 512 \
+    --arms kron_u:kronecker iso_u:isotropic --sampler "${SAMPLER}" --steps ${STEPS} --n-samples 512 \
     || echo "WARN: eval failed (${ds})"
 done
 echo "##### UNCOND EVAL COMPLETE #####"

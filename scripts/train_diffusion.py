@@ -633,10 +633,11 @@ def main() -> None:
     p.add_argument("--shrink-t", type=float, default=None,
                    help="temporal ridge ρ: μ_T ← (1-ρ)μ_T + ρ·μ̄ (shrinks empirical Σ_T toward "
                         "isotropic). None = SHRINK_T (0.1). only used when --temporal empirical.")
-    p.add_argument("--temporal", choices=("empirical", "laplacian"), default="empirical",
-                   help="temporal factor: 'empirical' Σ_T fit from data (stiff on raw signal), or "
-                        "'laplacian' = path-graph Laplacian (L_T+γ_t I)^-1 → clean spatio-temporal "
-                        "PRODUCT GRAPH (both sides Laplacian, non-stiff). raw arm uses 'laplacian'.")
+    p.add_argument("--temporal", choices=("empirical", "laplacian", "cartesian"), default="empirical",
+                   help="temporal factor: 'empirical' Σ_T fit from data; 'laplacian' = path-graph "
+                        "Laplacian, multiplicative product (ablation); 'cartesian' = GAD-literal "
+                        "spatio-temporal extension — normalized Cartesian product graph, "
+                        "λ_ST=(λ_S+λ_T)/2 ∈ [0,2], θ=λ_ST+γ, one fixed γ. raw arm uses 'cartesian'.")
     p.add_argument("--gamma-t", type=float, default=0.6,
                    help="temporal Laplacian shift γ_t (only for --temporal laplacian). mild γ_t≈0.6 "
                         "keeps the temporal spread bounded (ratio (2+γ_t)/γ_t) so the prior isn't stiff.")

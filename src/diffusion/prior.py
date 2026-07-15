@@ -308,10 +308,44 @@ def load_prior(
         R = np.clip(R, -thr, thr)
     _, N, H = R.shape
 
+    if temporal == "cartesian":
+        # GAD-LITERAL SPATIO-TEMPORAL EXTENSION: the graph is the normalized CARTESIAN
+        # product of the sensor graph and the horizon path-graph. its Laplacian spectrum is
+        #     λ_ST[k,h] = (λ_S[k] + λ_T[h]) / 2  ∈ [0, 2]   (eigvecs V_S ⊗ V_T),
+        # and the prior is exactly GAD's:  Q = L_ST + γ I,  one FIXED small γ (0.04),
+        # Σ_stat = σ²(L_ST+γI)^{-1} with σ² a single scalar matched to the data variance.
+        # NO data-fit covariance, no winsor, no per-dataset γ — pure GAD, one more axis.
+        # stiffness = (2+γ)/γ ≈ 51 at γ=0.04, the SAME as GAD's spatial-only setting, so
+        # the forward corrupts modes in a graded cascade instead of collapsing early.
+        gamma = 0.04 if gamma is None else gamma
+        if repair is None:
+            from src.data.adjacency import REPAIR_GRAPH
+            repair = REPAIR_GRAPH
+        lam_S, V_S = _spatial_graph_eig(dataset, R, spatial_graph, knn_k, repair)
+        from src.data.adjacency import compute_normalized_laplacian
+        A_T = np.zeros((H, H)); idx = np.arange(H - 1)
+        A_T[idx, idx + 1] = 1.0; A_T[idx + 1, idx] = 1.0
+        omega, V_T = np.linalg.eigh(compute_normalized_laplacian(A_T))
+        omega = np.clip(omega, 0.0, None)
+        lam_ST = 0.5 * (lam_S[:, None] + omega[None, :])          # (N, H) ∈ [0, 2]
+        theta = lam_ST + gamma                                     # GAD precision λ + γ
+        if stiffness_cap is not None:
+            theta = np.maximum(theta, theta.max() / stiffness_cap)
+        theta, sigma2_scale = _normalize_scale(theta)
+        # single-scalar variance match (GAD's σ): Σ_stat mean = data variance.
+        cur = float((sigma2_scale / theta).mean())
+        sigma2_scale *= var_full / max(cur, 1e-12)
+        Rf = R_full.reshape(-1, H); keep = mask.reshape(-1, H).all(1)
+        return KroneckerPrior(
+            dataset=dataset, gamma=gamma, V_S=V_S, lam_S=lam_S,
+            V_T=V_T, mu_T=1.0 / (0.5 * omega + gamma),
+            theta=theta, delta_h=(Rf[keep] ** 2).mean(0),
+            R_H=np.corrcoef(Rf[keep].T), sigma2_scale=sigma2_scale,
+        )
     if temporal == "laplacian":
-        # clean spatio-temporal PRODUCT GRAPH: temporal path-graph Laplacian (γ_t) in place
-        # of the empirical Σ_T. mild γ_t keeps the temporal spread bounded (no stiff common
-        # mode), so no shrink ridge is needed. per-horizon stats kept only for the record.
+        # temporal path-graph Laplacian (γ_t) in place of the empirical Σ_T, MULTIPLICATIVE
+        # composition (Σ_T ⊗ Σ_S). superseded by "cartesian" for the raw arm (multiplicative
+        # squares the spread → stiff); kept for ablation.
         mu_T, V_T = _temporal_laplacian_eig(H, gamma_t)
         Rf = R.reshape(-1, H); keep = mask.reshape(-1, H).all(1)
         delta_h = (Rf[keep] ** 2).mean(0)

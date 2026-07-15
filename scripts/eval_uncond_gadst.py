@@ -70,6 +70,8 @@ def main():
                     help="em = GAD's protocol (their Fig.3 step counts; NO stability floor "
                          "applied — few-step EM error is part of what that figure measures)")
     ap.add_argument("--n-samples", type=int, default=512)
+    ap.add_argument("--eval-seeds", type=int, default=1,
+                    help=">1: repeat sampling with seeds 0..k-1 and report mean±std aMMD")
     ap.add_argument("--gen-batch", type=int, default=256)
     ap.add_argument("--ckpt", default="best.pt")
     args = ap.parse_args()
@@ -93,31 +95,37 @@ def main():
         denoiser, prior_obj, schedule, cfg, ep = load_run(
             args.dataset, pr, 42, f"{args.exp}/{arm}", device, backbone="raw",
             ckpt_name=args.ckpt)
-        torch.manual_seed(0)
         for st in args.steps:
-            outs = []
-            for s0 in range(0, args.n_samples, args.gen_batch):
-                b = min(args.gen_batch, args.n_samples - s0)
-                Y0 = torch.zeros(b, N, H, device=device)         # UNCONDITIONAL
-                # VE has no stationary law (θ→0): terminal draws are N(0, σ_max²) explicitly.
-                R_T = (schedule.sigma_max * torch.randn(b, N, H, device=device)
-                       if hasattr(schedule, "sigma_max") else None)
-                if args.sampler == "em":
-                    samp, _ = reverse_sample_em(prior_obj, schedule, denoiser, Y0, n_steps=st, R_T=R_T)
-                    samp = torch.nan_to_num(samp, nan=0.0, posinf=0.0, neginf=0.0)
-                else:
-                    samp, _ = reverse_sample_ancestral(prior_obj, schedule, denoiser, Y0,
-                                                       n_steps=st, R_T=R_T)
-                outs.append(samp.cpu())
-            G = torch.cat(outs)
-            gm = metric_set(G, L_S, L_T)
-            mmds = {k: float(mmd_distance(gm[k].view(-1, 1), ref[k].view(-1, 1)))
-                    for k in ref}
-            ammd = float(np.mean(list(mmds.values())))
-            w1 = float(wasserstein_1d(gm["TV_S"], ref["TV_S"]))
-            results[(arm, st)] = ammd
+            reps = []
+            for sd in range(args.eval_seeds):
+                torch.manual_seed(sd)
+                outs = []
+                for s0 in range(0, args.n_samples, args.gen_batch):
+                    b = min(args.gen_batch, args.n_samples - s0)
+                    Y0 = torch.zeros(b, N, H, device=device)     # UNCONDITIONAL
+                    # VE has no stationary law (θ→0): terminal draws N(0, σ_max²) explicit.
+                    R_T = (schedule.sigma_max * torch.randn(b, N, H, device=device)
+                           if hasattr(schedule, "sigma_max") else None)
+                    if args.sampler == "em":
+                        samp, _ = reverse_sample_em(prior_obj, schedule, denoiser, Y0,
+                                                    n_steps=st, R_T=R_T)
+                        samp = torch.nan_to_num(samp, nan=0.0, posinf=0.0, neginf=0.0)
+                    else:
+                        samp, _ = reverse_sample_ancestral(prior_obj, schedule, denoiser, Y0,
+                                                           n_steps=st, R_T=R_T)
+                    outs.append(samp.cpu())
+                G = torch.cat(outs)
+                gm = metric_set(G, L_S, L_T)
+                mmds = {k: float(mmd_distance(gm[k].view(-1, 1), ref[k].view(-1, 1)))
+                        for k in ref}
+                reps.append((mmds, float(np.mean(list(mmds.values()))),
+                             float(wasserstein_1d(gm["TV_S"], ref["TV_S"]))))
+            am = np.array([r[1] for r in reps])
+            mmds = {k: float(np.mean([r[0][k] for r in reps])) for k in ref}
+            results[(arm, st)] = float(am.mean())
+            sd_str = f" ±{am.std():.3f}" if args.eval_seeds > 1 else ""
             print(f"{arm:8} {st:5d} | {mmds['TV_S']:9.4f} {mmds['SC_S']:9.4f} {mmds['TV_T']:9.4f} "
-                  f"| {ammd:7.4f} | {w1:8.3f}")
+                  f"| {am.mean():7.4f}{sd_str} | {np.mean([r[2] for r in reps]):8.3f}")
     print("\n=== aMMD summary (lower=better, GAD Fig.3 style) ===")
     arms = [a.split(":")[0] for a in args.arms]
     print(f"{'steps':>5} | " + " | ".join(f"{a:>8}" for a in arms) + " | winner")

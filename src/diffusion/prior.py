@@ -299,8 +299,10 @@ def load_prior(
     var_full = float(R[mask].var())          # full-data variance (pre-winsor) — the target scale
     # winsorize before fitting: heavy tails (kurtosis 24-38) mask the graph structure in the
     # covariance; clipping at the `winsor` percentile of |r| reveals it (metrla spatial share
-    # 10%->31%). used for STRUCTURE (Σ_T shape + correlation graph); the overall variance is
-    # rescaled back to var_full at the end so the prior isn't under-dispersed. None = no clip.
+    # 10%->31%). used ONLY for the CORRELATION structure (R_H + the correlation graph); the
+    # VARIANCE profile D_H is refit from the full data below (clipping flattens the horizon
+    # growth), and the overall variance is rescaled to var_full at the end. None = no clip.
+    R_full = R
     if winsor is not None:
         thr = float(np.percentile(np.abs(R[mask]), winsor))
         R = np.clip(R, -thr, thr)
@@ -316,6 +318,12 @@ def load_prior(
         R_H = np.corrcoef(Rf[keep].T)
     elif temporal == "empirical":
         delta_h, R_H, Sigma_T = _fit_sigma_T(R, mask)
+        if winsor is not None:
+            # keep the winsorized (robust) horizon CORRELATION R_H, but restore the horizon
+            # VARIANCE profile from the FULL data: Σ_T = D_full^{1/2} R_H(winsor) D_full^{1/2}.
+            delta_h = _fit_sigma_T(R_full, mask)[0]
+            D_sqrt = np.sqrt(delta_h)
+            Sigma_T = (D_sqrt[:, None] * R_H) * D_sqrt[None, :]
         mu_T, V_T = np.linalg.eigh(Sigma_T)
         mu_T = np.clip(mu_T, a_min=1e-12, a_max=None)
         # ridge shift toward scaled-identity (temporal twin of γ): μ ← (1-ρ)μ + ρ·μ̄.

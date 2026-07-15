@@ -59,6 +59,7 @@ def metric_set(X, L_S, L_T):
     }
 
 
+@torch.no_grad()
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dataset", default="metrla")

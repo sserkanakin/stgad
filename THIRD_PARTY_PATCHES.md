@@ -1,80 +1,70 @@
 # Third-party source patches
 
-`third_party/` is **gitignored**, so any edits we make to vendored repos are NOT
-version-controlled and would be lost on a fresh clone. This file is the durable
-record: every change we make to vendored source is logged here with enough
-detail to reapply it. Keep it updated whenever you touch anything under
-`third_party/`.
+`third_party/` is **gitignored**, so edits to vendored repos are NOT version-controlled
+and are lost on a fresh clone. This file is the durable record: every change we make to
+vendored source is logged here with enough detail to reapply it from a clean clone.
 
-Convention: log additive helper scripts too (note them as "added file", not a
-patch), but the critical entries are edits to existing upstream files.
+**Policy (clean-rebuild, 2026-07-16):** vendored repos are used as *libraries only* — we
+import their model classes and run them under our own training/eval code. We do not use
+their training loops, losses, masking, or checkpointing. That keeps the patch surface to
+the minimum required to make the code run at all.
+
+Re-clone from scratch:
+
+```sh
+rm -rf third_party && mkdir -p third_party && cd third_party
+git clone https://github.com/wenhaomin/DiffSTG.git DiffSTG
+git -C DiffSTG checkout ed2c523022a2490ddb9b78aab641eac53b0274d3
+git clone https://github.com/nnzhan/Graph-WaveNet.git Graph-WaveNet
+git -C Graph-WaveNet checkout 6b162e80c59a1d494809252eca055cff93dc66b1
+# then reapply PATCH 1 below (Graph-WaveNet only)
+```
 
 ---
 
-## third_party/Graph-WaveNet  (commit 6b162e80c59a1d494809252eca055cff93dc66b1)
+## third_party/DiffSTG (commit ed2c523)
 
-### PATCH 1 — model.py: Conv1d → Conv2d for torch >= 2.x  (2026-06-22)
-**File:** `third_party/Graph-WaveNet/model.py`, in `gwnet.__init__` (~lines 105-117).
-**Why:** upstream declares `gate_convs`, `residual_convs`, `skip_convs` as
-`nn.Conv1d` but passes a 2-D `(1, k)` kernel. That ran on torch <= 1.x but
-torch >= 2.x rejects 4-D input to `Conv1d.forward` (`RuntimeError: Expected 2D
-or 3D input to conv1d, but got [B, C, N, T]`). `nn.Conv2d` with the same
-`(1, k)` kernel is mathematically identical on the 4-D tensor.
-**Change:** replace `nn.Conv1d(` with `nn.Conv2d(` on those three layer
-definitions (the `filter_convs` line above them is already `Conv2d`). No weight
-shapes, dilation, or kernel sizes change — purely the layer class.
-**Reapply after re-clone:** edit the three `nn.Conv1d(` occurrences in
-`gwnet.__init__` to `nn.Conv2d(`. (The previously-existing in-repo workaround,
-`src/backbones/__init__.py::_patch_gwn_conv1d`, does the same swap at runtime;
-this source patch makes the repo's own `train.py` run directly without it.)
+**No patches. Pristine.** We import `algorithm.diffstg.ugnet.UGnet` as the denoiser and
+nothing else. Verify with `git -C third_party/DiffSTG status --porcelain` (expect empty).
 
-### PATCH 2 — gcn_order knob (GCN backbone at order 1)  (2026-06-22)
-**Files:** `model.py`, `engine.py`, `train.py`.
-**Why:** the residual-backbone grid includes a plain GCN (diffusion order 1)
-alongside GWN (order 2). Upstream hardcodes the `gcn(...)` default order (2).
-**Change:**
-- `model.py` `gwnet.__init__`: add trailing param `gcn_order=2`; in the
-  `self.gconv.append(gcn(... support_len=self.supports_len))` call add
-  `,order=gcn_order`.
-- `engine.py` `trainer.__init__`: add params `gcn_order=2, null_val=0.0`; pass
-  `gcn_order=gcn_order` into the `gwnet(...)` call; store `self.null_val`.
-- `train.py`: add `--gcn_order` (int, default 2); pass `gcn_order=args.gcn_order`
-  into the `trainer(...)` call.
-**Reapply:** thread `gcn_order` model->engine->train as above. Defaults to 2, so
-GWN/MLP commands are unaffected.
+---
 
-### PATCH 3 — configurable null_val (PEMS flow zeros not masked)  (2026-06-22)
-**Files:** `engine.py`, `util.py`, `train.py`.
-**Why:** upstream hardcodes `0.0` as the masked-loss missing flag everywhere, so
-PEMS flow zeros (real low-traffic readings) get masked out. Speed datasets need
-0.0; PEMS flow needs `np.nan` (mask nothing).
-**Change:**
-- `engine.py`: store `self.null_val` (from the new ctor param); replace the six
-  hardcoded `0.0` in `train`/`eval` masked-loss calls with `self.null_val`.
-- `util.py` `metric(pred, real)`: add `null_val=0.0` param and pass it to the
-  three `masked_*` calls (was hardcoded 0.0).
-- `train.py`: add `--null_val` (str, default `'0.0'`); convert
-  `NULL_VAL = np.nan if val.lower()=='nan' else float(val)`; pass `null_val=NULL_VAL`
-  into `trainer(...)` and `NULL_VAL` into the test-loop `util.metric(pred,real,...)`.
-**Reapply:** as above. Defaults keep behaviour identical for speed datasets.
+## third_party/Graph-WaveNet (commit 6b162e8)
 
-### PATCH 4 — train.py: save only the best checkpoint, not every epoch  (2026-06-22)
-**File:** `train.py` (epoch loop + test-load).
-**Why:** upstream saves `{save}_epoch_{i}_{loss}.pth` EVERY epoch (100 files/run,
-just to reload the best one for the test eval) — wasteful disk/IO, bad with the
-parallel local grid.
-**Change:**
-- In the epoch loop, replace the unconditional per-epoch
-  `torch.save(... args.save+"_epoch_"+...)` with a best-so-far guard:
-  `if mvalid_loss <= min(his_loss): torch.save(model.state_dict(), args.save+"_best.pth")`.
-- In the test section, load `args.save+"_best.pth"` instead of the per-epoch file.
-The final `args.save+"_exp"+expid+"_best_"+loss+".pth"` save is unchanged, so the
-sbatch/runner's `ls ..._exp<seed>_best_*.pth` best-finding still works.
-**Reapply:** as above. Now each run writes 2 checkpoints (`_best.pth` + the final
-`_exp_best_`) instead of ~100.
+Used as a **model class only** (`model.py::gwnet`), as the strong backbone on the
+conditioning-strength ladder. `model.py` imports nothing but torch, so their
+`engine.py` / `train.py` / `util.py` are unused and unpatched.
 
-Backbone flag cheatsheet (per the grid):
-- GWN: `--gcn_bool --adjtype doubletransition --addaptadj` (gcn_order 2 default)
-- GCN: `--gcn_bool --adjtype symnadj --gcn_order 1` (no --addaptadj)
-- MLP: (no --gcn_bool)
-- null_val: `--null_val 0.0` for METR-LA/PEMS-BAY, `--null_val nan` for PEMS04/08.
+### PATCH 1 — model.py: Conv1d → Conv2d (upstream typo; required for torch >= 2.x)
+
+**File:** `model.py`, in `gwnet.__init__` (lines ~105, ~110, ~115).
+**Change:** `nn.Conv1d(` → `nn.Conv2d(` on `gate_convs`, `residual_convs`, `skip_convs`.
+
+**Why.** Upstream declares these three as `nn.Conv1d` but passes a 2-D `(1, k)` kernel and
+feeds them a 4-D `(B, C, N, T)` tensor. torch >= 2.x rejects this outright:
+
+```
+RuntimeError: Expected 2D (unbatched) or 3D (batched) input to conv1d,
+              but got input of size: [2, 32, 207, 13]
+```
+
+This is an upstream **typo**, not a design choice — `filter_convs` (line 101) is already
+`nn.Conv2d` with a character-for-character identical argument list, and `filter_convs` /
+`gate_convs` are the two halves of one gated activation unit (`tanh(filter) * sigmoid(gate)`),
+so they must produce the same shape or the multiply is invalid. Weight shapes are identical
+between the two classes (verified); the swap changes no math, no dilation, no kernel size.
+
+**Verify after reapplying:** `grep -c "nn.Conv1d" third_party/Graph-WaveNet/model.py` → `0`.
+
+---
+
+## Dropped patches (previously applied, deliberately not carried over)
+
+Kept here so the reasoning survives; recover the old text from git history
+(`git show raw-signal-gad:THIRD_PARTY_PATCHES.md`).
+
+| Old patch | Why dropped |
+|---|---|
+| PATCH 2 — `gcn_order` knob | Only existed to coerce GWN into a 1-hop "GCN" arm. We now build our own GCN backbone, so we never need to reshape theirs. |
+| PATCH 3 — configurable `null_val` | Lived in `engine.py`/`util.py`/`train.py`. Our training loop owns masking, so the PEMS-flow convention (`null_val=nan`; flow zeros are real low-traffic readings, not missing) is enforced in our code for every backbone at once. |
+| PATCH 4 — best-only checkpointing | Lived in `train.py`. Our loop owns checkpointing. |

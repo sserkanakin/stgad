@@ -47,11 +47,11 @@ get() {  # url dest
 echo "=== 1/4  Sensor graphs (DCRNN; verbatim copies everywhere) ==="
 # python-2 pickles -> load with encoding='latin1'. (sensor_ids, sensor_id_to_ind, adj_mx)
 get "https://raw.githubusercontent.com/liyaguang/DCRNN/master/data/sensor_graph/adj_mx.pkl" \
-    "$RAW/metrla/adj_mx_metrla.pkl"
-verify "$RAW/metrla/adj_mx_metrla.pkl" 680459 blob a15a5904a83e7f13fe94d32fcd45c00f163ffd97
+    "$RAW/metrla/adj_mx.pkl"
+verify "$RAW/metrla/adj_mx.pkl" 680459 blob a15a5904a83e7f13fe94d32fcd45c00f163ffd97
 get "https://raw.githubusercontent.com/liyaguang/DCRNN/master/data/sensor_graph/adj_mx_bay.pkl" \
-    "$RAW/pemsbay/adj_mx_pemsbay.pkl"
-verify "$RAW/pemsbay/adj_mx_pemsbay.pkl" 1681480 blob 6651951a08ab101c818b1f27ba9a908d3ad56539
+    "$RAW/pemsbay/adj_mx_bay.pkl"
+verify "$RAW/pemsbay/adj_mx_bay.pkl" 1681480 blob 6651951a08ab101c818b1f27ba9a908d3ad56539
 
 echo "=== 2/4  Speed series -- METR-LA (Drive only) / PEMS-BAY (Zenodo, checksummed) ==="
 # METR-LA: no Zenodo mirror exists. DCRNN Drive folder 10FOTa6HXPqX8Pf5WRoRwcFnW9BrNZEIX.

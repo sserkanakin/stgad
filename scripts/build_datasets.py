@@ -264,13 +264,13 @@ def write_variant(variant: str):
     null_val = "0.0" if spec["family"] == "speed" else "nan"
 
     # --- write split npz with masks ---
-    # also emit the GWN-native view (same windows) so the vendored
-    # third_party/Graph-WaveNet/train.py trains unmodified: x,y both
-    # (B,12,N,2) = [value_raw, tod]. The repo's util.load_dataset builds its
-    # OWN train-only scaler from x_train[...,0] and normalises in place, so we
-    # store RAW values here exactly like GWN's generate_training_data.py.
-    nat_dir = out_dir / "gwn_native"
-    nat_dir.mkdir(parents=True, exist_ok=True)
+    # single uniform view. we used to ALSO emit a "gwn_native" copy so the vendored
+    # third_party/Graph-WaveNet/train.py could run unmodified -- dropped 2026-07-16:
+    # GWN is now used as a model class under our own training loop, so their train.py
+    # is never invoked. that copy doubled the tree (267M of 437M) and, worse, carried
+    # its own scaler (their util.load_dataset z-scores in place from x_train[...,0]),
+    # so the backbone and the diffusion stage were normalized by two independent
+    # scalers. one loop -> one scaler -> one convention for every backbone.
     counts = {}
     for s, (xv, yv, xt, yt) in splits.items():
         if null_val == "nan":

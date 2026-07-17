@@ -283,11 +283,6 @@ def write_variant(variant: str):
             out_dir / f"{s}.npz",
             x=xv, y=yv, x_tod=xt, y_tod=yt, x_mask=x_mask, y_mask=y_mask,
         )
-        np.savez_compressed(
-            nat_dir / f"{s}.npz",
-            x=np.concatenate([xv, xt], axis=-1).astype(np.float32),   # (B,12,N,2)
-            y=np.concatenate([yv, yt], axis=-1).astype(np.float32),   # (B,12,N,2)
-        )
         counts[s] = int(xv.shape[0])
         print(f"  {s}: x{xv.shape} y{yv.shape}  ({counts[s]} windows)")
 
@@ -301,13 +296,6 @@ def write_variant(variant: str):
                         A_sym=A_sym, L=L)
     eig_min = float(np.linalg.eigvalsh(L).min())
     print(f"  adj: A{A.shape} nnz={int((A != 0).sum())}  L min-eig={eig_min:.2e}")
-
-    # DCRNN-format pickle for the GWN repo's util.load_adj (doubletransition):
-    # a 3-element [sensor_ids, id->index, adj_mx] tuple, loaded with latin1.
-    ids = [str(i) for i in range(n)]
-    with open(nat_dir / "adj_mx.pkl", "wb") as f:
-        pickle.dump([ids, {sid: i for i, sid in enumerate(ids)},
-                     A.astype(np.float32)], f, protocol=2)
 
     # --- scaler.json ---
     (out_dir / "scaler.json").write_text(json.dumps({

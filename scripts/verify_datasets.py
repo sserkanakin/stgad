@@ -71,13 +71,8 @@ def verify_variant(v):
         check(float(x.min()) >= 0.0, f"{v}/{s} x has negatives (min {x.min()})")
         if meta["modality"] == "speed":
             check(float(np.nanmax(x)) <= 100.0, f"{v}/{s} speed max {x.max()} > 100")
-        # native view (B,12,N,2)
-        nat = np.load(d / "gwn_native" / f"{s}.npz")
-        check(nat["x"].shape == (B, 12, n, 2) and nat["y"].shape == (B, 12, n, 2),
-              f"{v}/{s} native shape {nat['x'].shape}")
-        # native ch0 == uniform value (raw), ch1 == tod
-        check(np.allclose(nat["x"][..., 0:1], x) and np.allclose(nat["x"][..., 1:2], xt),
-              f"{v}/{s} native channels mismatch uniform")
+        # (the gwn_native cross-check lived here; that duplicate view was dropped
+        #  2026-07-16 when GWN became a model class under our own training loop.)
 
     # split sums + chronological formula
     check(total == meta["n_total_windows"], f"{v} split sum {total} != meta")

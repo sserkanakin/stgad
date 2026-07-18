@@ -19,21 +19,25 @@ source "${PROJECT_DIR}/scripts/daic/_common.sh"
 
 : "${GRID_FILE:?Set GRID_FILE via --export}"
 : "${SEED:?Set SEED via --export}"
+: "${EXP:?Set EXP via --export}"
 EPOCHS="${EPOCHS:-100}"
+# DATA_ROOT/RESULTS_ROOT/OUTPUT_ROOT come through --export=ALL and are read by src/utils/paths.py.
 
 row="$(awk -F'\t' -v i="${SLURM_ARRAY_TASK_ID}" '$1==i {print; exit}' "${GRID_FILE}")"
 VARIANT="$(printf '%s' "${row}" | cut -f2)"
 BACKBONE="$(printf '%s' "${row}" | cut -f3)"
 : "${VARIANT:?empty variant for task ${SLURM_ARRAY_TASK_ID}}"
 
-echo "===== ${VARIANT} / ${BACKBONE} / seed${SEED}  (task ${SLURM_ARRAY_TASK_ID}) ====="
+echo "===== ${VARIANT} / ${BACKBONE} / seed${SEED}  EXP=${EXP}  (task ${SLURM_ARRAY_TASK_ID}) ====="
+echo "residuals -> ${RESULTS_ROOT:-<repo>}/residuals/${VARIANT}/${BACKBONE}/seed${SEED}/"
+nvidia-smi --query-gpu=name,memory.total --format=csv,noheader 2>/dev/null || true
 
 # 1) train the backbone (best.pt by val MAE)
 "${DAIC_PYTHON}" scripts/train_backbone.py \
     --variant "${VARIANT}" --backbone "${BACKBONE}" --seed "${SEED}" \
     --epochs "${EPOCHS}" --device cuda
 
-# 2) extract residuals -> results/residuals/<variant>/<backbone>/seed<seed>/
+# 2) extract residuals -> RESULTS_ROOT/residuals/<variant>/<backbone>/seed<seed>/
 "${DAIC_PYTHON}" scripts/extract_residuals.py \
     --variant "${VARIANT}" --backbone "${BACKBONE}" --seed "${SEED}" --device cuda
 

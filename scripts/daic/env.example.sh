@@ -31,4 +31,6 @@ export WANDB_MODE="${WANDB_MODE:-online}"   # override per-run: WANDB_MODE=offli
 export WANDB_ENTITY="tud-thesis"    # your wandb team or username
 
 # pull in all the per-cluster paths, modules, partition/qos/gres.
-source "$(dirname "${BASH_SOURCE[0]}")/clusters.sh"
+# BASH_SOURCE is empty when sourced from zsh, so fall back to $0 (which zsh sets
+# to this file's path) — otherwise dirname "" = . and clusters.sh isn't found.
+source "$(dirname "${BASH_SOURCE[0]:-$0}")/clusters.sh"

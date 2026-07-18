@@ -53,7 +53,13 @@ elif [ -n "${1:-}" ]; then
 fi
 
 REMOTE="${DAIC_NETID}@${DAIC_LOGIN_HOST}"
-RSYNC_BASE=(rsync --progress -avz --no-perms \
+# the data share (windowshome) is a windows/NTFS-style netapp mount: it rejects
+# rsync's temp-file+rename (mkstemp fails EPERM) and can't set posix perms/owner/
+# times. so write in place and skip all metadata preservation, same as
+# link_artifacts.sh. --checksum keeps the push content-verified despite the
+# dropped mtimes (rsync compares hashes, not size+mtime, so identical files skip).
+RSYNC_BASE=(rsync --progress -rlvz --checksum \
+            --inplace --no-perms --no-owner --no-group --no-times --omit-dir-times \
             -e 'ssh -o ServerAliveInterval=30 -o ServerAliveCountMax=10')
 
 echo "→ code: NOT pushed (use git push / git pull instead)."

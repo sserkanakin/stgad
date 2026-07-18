@@ -28,8 +28,13 @@ VARIANT="$(printf '%s' "${row}" | cut -f2)"
 BACKBONE="$(printf '%s' "${row}" | cut -f3)"
 : "${VARIANT:?empty variant for task ${SLURM_ARRAY_TASK_ID}}"
 
+CELL="${RESULTS_ROOT:-<repo>}/residuals/${VARIANT}/${BACKBONE}/seed${SEED}"
 echo "===== ${VARIANT} / ${BACKBONE} / seed${SEED}  EXP=${EXP}  (task ${SLURM_ARRAY_TASK_ID}) ====="
-echo "residuals -> ${RESULTS_ROOT:-<repo>}/residuals/${VARIANT}/${BACKBONE}/seed${SEED}/"
+echo "  DATA_ROOT   = ${DATA_ROOT:-<repo>/data}"
+echo "  RESULTS_ROOT= ${RESULTS_ROOT:-<repo>/results}   (residuals + model here)"
+echo "  OUTPUT_ROOT = ${OUTPUT_ROOT:-<repo>/results}    (logs here)"
+echo "  cell        = ${CELL}/"
+echo "                  {train,val,test}.npz + model/{best.pt,config.json,history.json}"
 nvidia-smi --query-gpu=name,memory.total --format=csv,noheader 2>/dev/null || true
 
 # 1) train the backbone (best.pt by val MAE)

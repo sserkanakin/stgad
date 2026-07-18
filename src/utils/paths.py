@@ -84,12 +84,17 @@ def laplacian_eigs(dataset, repaired=False):
 # backbone namespaces the residual/diffusion/eval tree so the gwn/gcn/mlp grid
 # never overwrites: results/<stage>/<dataset>/<backbone>/.../seed<seed>.
 
-def backbone_dir(dataset, seed, backbone="gwn"):
-    return RESULTS / "backbone" / dataset / backbone / f"seed{seed}"
-
-
 def residual_dir(dataset, seed, backbone="gwn"):
+    # the canonical per-cell folder the diffusion stage reads: one short, stable,
+    # EXP-independent path per (dataset, backbone, seed) holding {train,val,test}.npz.
     return RESULTS / "residuals" / dataset / backbone / f"seed{seed}"
+
+
+def backbone_dir(dataset, seed, backbone="gwn"):
+    # the model that produced the residuals lives WITH them, so each cell is
+    # self-contained:  residuals/<ds>/<bb>/seed<s>/{train,val,test}.npz
+    #                                              + model/{best.pt,config,history}
+    return residual_dir(dataset, seed, backbone) / "model"
 
 
 def residual_npz(dataset, split, seed, backbone="gwn"):

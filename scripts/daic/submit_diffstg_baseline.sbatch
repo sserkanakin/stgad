@@ -26,7 +26,6 @@
 # (defaults = DiffSTG's released CLI defaults -- "the same way they run it").
 
 set -euo pipefail
-mkdir -p logs/diffstg
 export PROJECT_DIR="${SLURM_SUBMIT_DIR:-$PWD}"
 source "${PROJECT_DIR}/scripts/daic/_common.sh"
 
@@ -47,21 +46,31 @@ export STAGE=diffstg
 RUN_NAME="diffstg_${DATASET}_seed${SEED}"
 scontrol update job="${SLURM_JOB_ID}" JobName="${RUN_NAME}" 2>/dev/null || true
 
-# Keep DiffSTG's data files AND its output/ (checkpoints, forecasts, metrics) OFF the
-# tight linuxhome/code quota (~8G, mostly the torch venv): symlink both onto the roomy
-# data share (windowshome), same idea as _common.sh's _relink. The build writes here and
-# train.py reads/writes here, so nothing large ever lands on linuxhome. First run also
-# clears any real dir left there (e.g. a partial/aborted rsync of the data files).
-_relink_to_share() {  # $1 = repo path under third_party/DiffSTG, $2 = share subdir
-  local repo_path="${PROJECT_DIR}/third_party/DiffSTG/$1" share="${DAIC_DATA_DIR}/diffstg/$2"
-  mkdir -p "${share}" "$(dirname "${repo_path}")"
-  if [ ! -L "${repo_path}" ]; then
+# Dedicated windowshome root for ALL DiffSTG-baseline artifacts, kept OUT of the shared
+# research-tud-data folder: the built data, DiffSTG's output/ (checkpoints/forecasts/
+# metrics), the harvested results, and the slurm logs all live under here. Default is a
+# sibling of DAIC_DATA_DIR; override with DIFFSTG_HOME (the submit wrapper passes it through).
+DIFFSTG_HOME="${DIFFSTG_HOME:-$(dirname "${DAIC_DATA_DIR}")/research-tud-diffstg}"
+LOGDIR_ABS="${DIFFSTG_HOME}/logs/${EXP}/diffstg"
+mkdir -p "${DIFFSTG_HOME}" "${LOGDIR_ABS}"
+
+# Keep DiffSTG's large files (built data + its output/) OFF the tight linuxhome/code quota
+# (~8G, mostly the torch venv): symlink them onto DIFFSTG_HOME (windowshome). The build
+# writes here and train.py reads/writes here, so nothing large ever lands on linuxhome.
+# First run also clears any real dir left on linuxhome (e.g. a partial/aborted rsync).
+_relink_home() {  # $1 = repo path under third_party/DiffSTG, $2 = subdir under DIFFSTG_HOME
+  local repo_path="${PROJECT_DIR}/third_party/DiffSTG/$1" dest="${DIFFSTG_HOME}/$2"
+  mkdir -p "${dest}" "$(dirname "${repo_path}")"
+  # relink when it's a real dir (rsynced/shipped files on linuxhome) OR a symlink that
+  # points somewhere else (e.g. an older DIFFSTG_HOME). rm -rf on a symlink drops only
+  # the link, not the target; on a real dir it clears it off the linuxhome quota.
+  if [ ! -L "${repo_path}" ] || [ "$(readlink "${repo_path}")" != "${dest}" ]; then
     rm -rf "${repo_path}"
-    ln -sfn "${share}" "${repo_path}"
+    ln -sfn "${dest}" "${repo_path}"
   fi
 }
-_relink_to_share data/dataset data/dataset
-_relink_to_share output       output
+_relink_home data/dataset data/dataset
+_relink_home output       output
 
 # deps: easydict is required by DiffSTG (tiny, pure-python); nni is stubbed in train.py.
 python -c "import easydict" 2>/dev/null || pip install --quiet easydict
@@ -77,7 +86,7 @@ echo "─── diffstg baseline ${DATASET} seed ${SEED} "\
 "(N=${N} steps=${SAMPLE_STEPS} hidden=${HIDDEN} n_samples=${NSAMPLES} bs=${BATCH_SIZE} lr=${LR}) ───"
 
 # resource profiling: sample GPU every 10s so we can right-size future runs.
-prof_csv="logs/diffstg/profile_${RUN_NAME}_${SLURM_JOB_ID}.csv"
+prof_csv="${LOGDIR_ABS}/profile_${RUN_NAME}_${SLURM_JOB_ID}.csv"
 nvidia-smi --query-gpu=timestamp,memory.used,memory.total,utilization.gpu \
     --format=csv,noheader -l 10 > "${prof_csv}" 2>/dev/null &
 PROF_PID=$!
@@ -101,10 +110,10 @@ RC=$?
 set -e
 cd "${PROJECT_DIR}"
 
-# harvest into the data share (DiffSTG's own output/ lives on the tight repo quota).
+# harvest into DIFFSTG_HOME/results (DiffSTG's raw output/ is also under DIFFSTG_HOME).
 # DiffSTG.csv accumulates one row per run; the forecast pkl holds samples+targets
 # for the first 50 test windows (for CRPS/calibration reuse if we want it later).
-OUT="${DAIC_DATA_DIR}/diffstg/${EXP}"
+OUT="${DIFFSTG_HOME}/results/${EXP}"
 mkdir -p "${OUT}"
 SRC_CSV="third_party/DiffSTG/output/metrics/DiffSTG.csv"
 if [ -f "${SRC_CSV}" ]; then

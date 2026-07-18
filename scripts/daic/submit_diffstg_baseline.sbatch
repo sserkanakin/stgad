@@ -32,15 +32,21 @@ source "${PROJECT_DIR}/scripts/daic/_common.sh"
 : "${DATASET:?Set DATASET=metrla|pemsbay|pems04f|pems04s|pems08f|pems08s via --export}"
 SEED="${SEED:-43}"
 EXP="${EXP:-dev}"
-# DiffSTG released-code (argparse) defaults -- keep faithful; override only to
-# trade fidelity for walltime (e.g. BATCH_SIZE=32 speeds training, not val eval).
+# Paper's settings (§5.1): hidden 32, bs 8, lr 0.002, S=8 samples, T_h=T_p=12.
+# N and beta_end are the two the paper SEARCHES per dataset (N∈{50,100,200},
+# beta_N∈{0,.1,.2,.3,.4}, best-on-val). We fix the safe-best single point:
+#   N=200      -- top of their range; paper shows larger N is consistently better.
+#   BETA_END=0.2 -- the smallest beta_N whose forward process actually reaches the
+#     Gaussian prior at N=200 (alpha_bar_N≈5e-7). beta_N=0.1 leaks ~3% signal into x_N
+#     (alpha_bar_N=8e-4) -> mismatched test sampling, the paper's "deteriorates at
+#     beta_N=0.1" case; 0.3/0.4 also reach Gaussian but over-noise. Override to sweep.
 N="${N:-200}"
 SAMPLE_STEPS="${SAMPLE_STEPS:-200}"
 HIDDEN="${HIDDEN:-32}"
 NSAMPLES="${NSAMPLES:-8}"
 BATCH_SIZE="${BATCH_SIZE:-8}"
 LR="${LR:-0.002}"
-BETA_END="${BETA_END:-0.1}"
+BETA_END="${BETA_END:-0.2}"
 
 export STAGE=diffstg
 RUN_NAME="diffstg_${DATASET}_seed${SEED}"

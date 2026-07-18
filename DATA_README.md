@@ -1,7 +1,8 @@
 # Dataset pipeline
 
 From-scratch, reproducible build of six windowed spatio-temporal traffic
-datasets for the diffusion / Graph-WaveNet-backbone thesis. Built 2026-06-22.
+datasets for the diffusion / Graph-WaveNet-backbone thesis. Built 2026-06-22,
+rebuilt from verified sources 2026-07-17 (clean-rebuild branch).
 
 - **Mac data root:** `/Users/serkan/Projects/research-tud/data` (real dirs, no symlinks)
 - **DAIC data root:** `/tudelft.net/student-homes/a/sakin/research-tud-data`
@@ -12,8 +13,10 @@ datasets for the diffusion / Graph-WaveNet-backbone thesis. Built 2026-06-22.
 - **Commands:**
   ```
   PY=/Users/serkan/miniconda/envs/tud-data/bin/python
-  $PY scripts/build_datasets.py --all      # raw -> processed (uniform + GWN-native)
+  bash scripts/download_data.sh            # fetch + identity-verify all 10 raw files
+  $PY scripts/build_datasets.py --all      # raw -> processed (uniform view)
   $PY scripts/verify_datasets.py           # all spec gate checks + summary table
+  $PY scripts/check_connectivity.py        # graph gate: components/isolated/fiedler
   ```
 
 ## Variants
@@ -27,36 +30,63 @@ datasets for the diffusion / Graph-WaveNet-backbone thesis. Built 2026-06-22.
 | pems08f | 170 | flow | veh/5min | 10691 / 3548 / 3548 | 60/20/20 on time axis | ASTGNN |
 | pems08s | 170 | speed | mph | 10691 / 3548 / 3548 | 60/20/20 on time axis | ASTGNN |
 
-All variants: 12-in / 12-out windows. Missing-value convention: raw value `== 0`
-marks missing (masked loss downstream); METR-LA ~8.7%, PEMS-BAY ~0.01%, PEMS
-flow 0.3–1.5%, PEMS speed ~0%.
+All variants: 12-in / 12-out windows. Missing-value convention is **per family**:
+- **Speed pair (metrla, pemsbay)** — DCRNN convention: raw `== 0` marks a missing
+  sensor (masked out of loss & metrics). Measured missing: metrla 8.73%, pemsbay 0.01%.
+- **PEMS (pems04/08, flow AND speed)** — `null_val=nan`, nothing masked. Flow zeros
+  are real low-traffic readings, not missing (where flow==0, speed reads ~68 mph =
+  free-flow); the speed channel has no zeros at all (min 3.0). So 0.00% masked, and
+  the "mask y_true==0 for PEMS metrics" rule (SpecSTG/DiffSTG) applies to flow metrics
+  only. This matches BasicTS (`null_val: 0.0`, but zeros are genuine so it barely bites).
 
 ## Sources & provenance (single-source per family)
 
-Each dataset family is sourced from ONE data repo; baseline repos (GWN, SpecSTG)
-contribute only *conventions*, not bytes (GWN's `adj_mx.pkl` is byte-identical to
-DCRNN's; it re-hosts via LFS).
+Each dataset family is sourced from ONE data repo; baseline repos contribute only
+*conventions*, not bytes. Every raw file is fetched by `scripts/download_data.sh`
+from its canonical location and identity-checked before the build runs (see that
+script for the pinned git blob SHA-1 / published md5 of each file). No project
+publishes a checksum for `metr-la.h5`, `PEMS04.npz`, or `PEMS08.npz`, so those are
+anchored by git blob SHA-1, verified identical across DCRNN/MTGNN/GTS/DL-Traff and
+across ASTGCN↔ASTGNN.
+
+Provenance notes corrected 2026-07-17:
+- **Graph-WaveNet ships no data at all** — its README points at DCRNN's Drive
+  folder. (The repo that re-hosts these files is MTGNN, same author.) The old
+  claim that "GWN re-hosts `adj_mx.pkl` via LFS" was wrong.
+- **PEMS04/PEMS08 were introduced by Guo et al., ASTGCN, AAAI 2019** (PeMSD4:
+  Bay Area, 307 detectors after 3.5-mile pruning, Jan–Feb 2018; PeMSD8: San
+  Bernardino, 170, Jul–Aug 2016). ASTGNN merely re-hosts the identical bytes —
+  cite the ASTGCN paper, use the ASTGNN repo for the files.
+- The old `download_data.sh` fetched the `.h5` from **Zenodo record 5724362**;
+  that record is a third-party CSV conversion (S. Kwak, EPFL) and serves NO `.h5`
+  (both URLs 404). METR-LA has no `.h5` mirror on Zenodo — Drive is the only
+  source; `pems-bay.h5` is on Zenodo 4263971 (the one file with a published md5).
 
 ### Speed — METR-LA (207), PEMS-BAY (325): DCRNN lineage
-- Raw `.h5` + adjacency + distance CSVs from **DCRNN**
-  <https://github.com/liyaguang/DCRNN> @ `602afd9d767d3aa1c9b3eac51710d6aeee12c227`.
-  - `metr-la.h5`  Drive id `1pAGRfzMx6K9WWsfDcD1NMbIif0T0saFC`  sha256 `64784b76d6fb8ec9…`
-  - `pems-bay.h5` Drive id `1wD-mHlqAb2mtHOe_68fZvDh1LpDegMMq`  sha256 `65d69fb0a2323dba…`
-  - `adj_mx.pkl` `a35687c6…`, `adj_mx_bay.pkl` `116275f5…`
-  - Drive folder (DCRNN README): `10FOTa6HXPqX8Pf5WRoRwcFnW9BrNZEIX`
+Li et al., DCRNN, ICLR 2018. <https://github.com/liyaguang/DCRNN> @
+`602afd9d767d3aa1c9b3eac51710d6aeee12c227`. Adjacency from the repo; `.h5` series
+from the DCRNN Drive folder `10FOTa6HXPqX8Pf5WRoRwcFnW9BrNZEIX` (METR-LA) and
+Zenodo 4263971 (PEMS-BAY, checksummed).
+  - `metr-la.h5`  Drive id `1pAGRfzMx6K9WWsfDcD1NMbIif0T0saFC`  sha256 `64784b76…`  blob `7df00030…`
+  - `pems-bay.h5` Zenodo 4263971  sha256 `65d69fb0…`  **md5 `bfa47e6e…`** (the only published checksum)
+  - `adj_mx.pkl` sha256 `a35687c6…` blob `a15a5904…`, `adj_mx_bay.pkl` sha256 `116275f5…` blob `6651951a…`
 - **Windowing (authoritative = Graph-WaveNet / DCRNN `generate_training_data.py`):**
   x_offsets `[-11..0]`, y_offsets `[1..12]`; window the FULL series then split the
   window array 70/10/20 (`round(.7)` train, `round(.2)` test, rest val). This is
   why counts equal the canonical GWN numbers.
-- **Normalization:** train-only z-score (per-channel) in `scaler.json`; values
+- **Normalization:** train-only global scalar z-score in `scaler.json`; values
   stored RAW. Time-of-day from the DatetimeIndex (00:00→0.0), kept in a separate key.
 - **Adjacency:** DCRNN weighted Gaussian-kernel road graph (`adj_mx.pkl`).
 
-### Flow/speed — PEMS04 (307), PEMS08 (170): ASTGNN + SpecSTG lineage
-- Raw `pems0X.npz` (T,N,3) `[flow, occupancy, speed]` + `PEMS0X.csv` distance edges
-  from **ASTGNN** <https://github.com/guoshnBJTU/ASTGNN> `data/PEMS04|PEMS08` (main).
-  - `PEMS04.npz` `95a3c9b7…`, `PEMS08.npz` `e1d03ce7…` (PEMS08.npz matches prior copy).
-  - Channel order verified from the array AND SpecSTG's loader: flow=0, speed=2.
+### Flow/speed — PEMS04 (307), PEMS08 (170): ASTGCN data, SpecSTG protocol
+Data introduced by **Guo et al., ASTGCN, AAAI 2019**; files re-hosted (byte-identical)
+by ASTGNN <https://github.com/guoshnBJTU/ASTGNN> `data/PEMS04|PEMS08` (main).
+  - `PEMS04.npz` sha256 `95a3c9b7…` blob `a1a39eac…`, `PEMS08.npz` sha256 `e1d03ce7…` blob `f5f3e84a…`.
+  - **Channel order `[flow, occupancy, speed]` asserted by value range, not by citation:**
+    occupancy is the only channel bounded in [0,1]; speed is min 3.0 (never 0); flow is
+    unbounded counts. The ASTGCN *paper's prose* says "flow, speed, occupancy" — that
+    ordering is WRONG and is the likely origin of the widespread mis-citation. So
+    flow=ch0, speed=ch2. (`verify_datasets.py` re-checks this by range on every build.)
 - **Split/windowing (authoritative = SpecSTG `data/dataloader_stg.py` +
   `SpecSTG_exe.py`):** <https://github.com/lequanlin/SpecSTG> @
   `c434bcd27507851ad9f40aa92e7147d3e91e5b20`. `test_pct=0.2`, `val_pct=0.2` →
@@ -64,13 +94,9 @@ DCRNN's; it re-hosts via LFS).
   then window each segment stride-1 (L−23). 12-in/12-out.
 - **Adjacency (SpecSTG rule):** binary connectivity from `PEMS0X.csv` edges,
   symmetrised (`A = A + Aᵀ; A[A≠0]=1`) — NOT distance-weighted.
-- **Normalization divergence (noted):** SpecSTG normalises on the FULL series with
-  a single global scalar; we instead store RAW + a **train-only per-channel**
-  `scaler.json` (the project's hard verify gate). SpecSTG's global mean/std is
-  recorded in each `meta.json` (`normalization.specstg_global_*`) for reference.
-  Everything else (split, channel, adjacency, windows, masking) matches SpecSTG.
-  Time-of-day synthesised from the sample index (288 slots/day, 2018-01-01 start),
-  separate key.
+- **Normalization:** see the dedicated Normalization section below. Everything else
+  (split, channel, adjacency, windows, masking) matches SpecSTG. Time-of-day
+  synthesised from the sample index (288 slots/day, 2018-01-01 start), separate key.
 
 ## Output layout (per `data/processed/<variant>/`)
 
@@ -80,36 +106,40 @@ DCRNN's; it re-hosts via LFS).
   - `x_mask`/`y_mask` (B,12,N,1) uint8, 1=observed (raw value ≠ 0)
 - `adj.npz` — `A` (N,N weighted/binary), `A_sym` (N,N symmetric, self-loops removed),
   `L` (N,N symmetric normalised Laplacian `I − D^-½ A_sym D^-½`, PSD, eigs ∈ [0,2]).
-- `scaler.json` — train-only per-channel z-score (`mean`,`std`); tod unnormalised.
+- `scaler.json` — train-only **global scalar** z-score (`mean`,`std`) over the value
+  channel; tod unnormalised. (One value channel, so "per-channel" = one scalar. This
+  is the GWN/DCRNN/DiffSTG community convention; see Normalization below.)
 - `meta.json` — provenance, shapes, split, missing fraction, raw source URLs+SHA256,
   preprocessing repo+commit.
-- `gwn_native/` — **GWN-repo-ready view** of the SAME windows (see below).
 - `data/manifest.json` — aggregate of all processed files (sha256) + build date + commands.
 
-## Training the Graph-WaveNet backbone directly from the repo
+## Normalization (matches the community convention)
 
-The vendored `third_party/Graph-WaveNet` repo trains directly on the
-`gwn_native/` view — no reimplemented wrapper:
+The data-level scaler is a **single global scalar z-score fit on TRAIN only**
+(`{mean, std}` over all valid train entries of the value channel) — the same
+convention as Graph-WaveNet, DCRNN, and DiffSTG. Values are stored RAW; the scaler
+is applied at load. Time-of-day is kept raw in [0,1) in a separate key (never
+z-scored), exactly as GWN appends it as a second input channel.
 
-- `gwn_native/{train,val,test}.npz`: `x`,`y` both (B,12,N,2) = `[value_raw, tod]`.
-  The repo's `util.load_dataset` builds its own train-only scaler from
-  `x_train[...,0]` and normalises in place (exactly GWN's `generate_training_data.py`).
-- `gwn_native/adj_mx.pkl`: DCRNN-format `[sensor_ids, id→idx, A]` for
-  `util.load_adj(..., 'doubletransition')`.
+Divergence from SpecSTG (noted, deliberate): SpecSTG fits its scalar on the FULL
+series *including test* (a leak). We fit on train only. To reproduce SpecSTG's
+published numbers one must replicate the leak; SpecSTG's global mean/std is recorded
+in each `meta.json` (`normalization.specstg_global_*`) for that purpose.
 
-Example (per variant):
-```
-python third_party/Graph-WaveNet/train.py \
-    --data data/processed/<variant>/gwn_native \
-    --adjdata data/processed/<variant>/gwn_native/adj_mx.pkl \
-    --num_nodes <N> --in_dim 2 --seq_length 12 --gcn_bool --addaptadj --adjtype doubletransition
-```
-Residual extraction (`r = y − ŷ` in raw units, shape (B,N,H)) loads the trained
-checkpoint with the repo's `gwnet` + `util.load_adj`, runs inference no-shuffle
-over each split, and `scaler.inverse_transform`s. Verified end-to-end on pems08s.
+Downstream (diffusion-stage) normalization — the residual scale `σ_r` and the raw-
+signal centering — is NOT a data-layer concern and is documented with the diffusion
+methodology, not here. Those are our own modelling choices, not a paper convention.
 
-**Patch required:** torch ≥ 2.x needs the GWN `model.py` Conv1d→Conv2d fix —
-see `THIRD_PARTY_PATCHES.md`.
+## Backbones
+
+Backbones (MLP / GCN / GWN) are trained under our OWN training loop, using each
+model as a plain module. The vendored `third_party/Graph-WaveNet` supplies only the
+`gwnet` model class (torch ≥ 2.x needs its `model.py` Conv1d→Conv2d fix — see
+`THIRD_PARTY_PATCHES.md`); its `train.py`/`util.py`/`engine.py` are unused. One loop
+owns masking (`null_val` per family), the scaler, checkpointing, and seeds for every
+backbone, so the backbone and the diffusion stage share a single normalization.
+Residual extraction runs the trained checkpoint no-shuffle over each split and writes
+`r = y − ŷ` in raw units, shape (B, N, H).
 
 ## Mac ↔ DAIC sync
 

@@ -40,7 +40,11 @@ for k in N SAMPLE_STEPS HIDDEN NSAMPLES BATCH_SIZE LR BETA_END; do
 done
 
 LOGDIR="logs/${EXP}/diffstg"
-mkdir -p "${LOGDIR}"
+# `logs` is usually a symlink to the data share; if its target dir doesn't exist yet,
+# `mkdir -p logs/...` fails with "cannot create directory 'logs': File exists" (mkdir -p
+# can't traverse a dangling symlink). Create the resolved target directly in that case
+# (readlink -m resolves the path without requiring it to exist).
+if [ -L logs ]; then mkdir -p "$(readlink -m logs)/${EXP}/diffstg"; else mkdir -p "${LOGDIR}"; fi
 
 for DS in "${DATASETS[@]}"; do
   RUN_NAME="diffstg_${DS}_seed${SEED}"

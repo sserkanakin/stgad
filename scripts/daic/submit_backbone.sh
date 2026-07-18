@@ -12,7 +12,8 @@
 # anything after the env vars passes straight to sbatch (e.g. --time=18:00:00).
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "${HERE}/clusters.sh"
+# env.sh (per-user, gitignored) sets DAIC_NETID etc. and then sources clusters.sh.
+source "${HERE}/env.sh"
 
 : "${EXP:?set EXP=<dated tag>, e.g. EXP=20260718_backbones (names the log tree)}"
 SEED="${SEED:-42}"

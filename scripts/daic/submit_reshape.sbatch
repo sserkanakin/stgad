@@ -35,12 +35,13 @@ ROW="$(sed -n "$((SLURM_ARRAY_TASK_ID + 1))p" "${GRID_FILE}")"
 read -r IDX DATASET BACKBONE NAME PRIOR TEMPORAL CAP LOSS SCHED RUN_DIR <<< "${ROW}"
 : "${DATASET:?empty row ${SLURM_ARRAY_TASK_ID} in ${GRID_FILE}}"
 
-# small GCNN denoiser, per-node norm, residual-history conditioning (validated locally).
-# sampler: loguniform for our FCPS arms; powerlaw for the vanilla DDPM baseline (its VP
-# schedule has no log-uniform floor, and a textbook DDPM uses standard sampling). schedule
-# + loss are per-arm; ancestral eval; NO final-val (EM sweep skipped for the stiff priors).
+# small GCNN denoiser, per-node norm, FORECAST-ONLY conditioning (the pipeline validated
+# locally — the whitening flip was forecast-only). NB: the GCNN denoiser only accepts (B,N,H)
+# conditioning, so --cond-past (which makes it 2H) is NOT compatible; it needs the UGnet
+# denoiser. sampler: loguniform for FCPS arms; powerlaw for the vanilla DDPM baseline (its VP
+# schedule has no log-uniform floor). schedule + loss per-arm; ancestral eval; NO final-val.
 SAMPLER=loguniform; [ "${PRIOR}" = "vp" ] && SAMPLER=powerlaw
-FLAGS=(--denoiser gcnn --norm pernode --noise-sampler "${SAMPLER}" --cond-past
+FLAGS=(--denoiser gcnn --norm pernode --noise-sampler "${SAMPLER}"
        --loss "${LOSS}" --schedule "${SCHED}"
        --val-every 0 --val-windows "${VAL_WINDOWS}" --fast-val-steps 50 --val-anc-steps 50)
 [ "${TEMPORAL}" != "-" ] && FLAGS+=(--temporal "${TEMPORAL}")
@@ -53,7 +54,7 @@ case "${DATASET}" in
   pems08f) DSS=08f;; pems08s) DSS=08s;; *) DSS="${DATASET}";; esac
 RUN_NAME="${DSS}-${BACKBONE}-${NAME}-s${SEED}-${EXP}"
 scontrol update job="${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_TASK_ID}" JobName="${RUN_NAME}" 2>/dev/null || true
-echo "===== task ${SLURM_ARRAY_TASK_ID}: ${DATASET}/${BACKBONE} / ${NAME} (prior=${PRIOR} temporal=${TEMPORAL} sampler=${SAMPLER} loss=${LOSS} cond=past) ====="
+echo "===== task ${SLURM_ARRAY_TASK_ID}: ${DATASET}/${BACKBONE} / ${NAME} (prior=${PRIOR} temporal=${TEMPORAL} sampler=${SAMPLER} loss=${LOSS} cond=forecast) ====="
 
 LOG_SRC="${OUTPUT_ROOT}/logs/${EXP}/${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_TASK_ID}"
 copy_logs() {

@@ -366,6 +366,36 @@ def load_prior(
             theta=theta, delta_h=(Rf[keep] ** 2).mean(0),
             R_H=np.corrcoef(Rf[keep].T), sigma2_scale=sigma2_scale,
         )
+    if temporal == "reshaped":
+        # RESHAPED prior (the contribution): keep the graph Laplacian spatial eigvecs V_S
+        # and the empirical temporal eigvecs V_T as the BASIS, but set each mode's variance
+        # to the residual's MEASURED per-mode variance v_emp — not the heat-kernel 1/(λ+γ).
+        # this is GAD's Remark-1 ("adapt c̄ per eigenvalue") made data-driven: the prior is
+        # the DIAGONAL of the empirical covariance in the graph×temporal basis. σ² absorbs the
+        # scale so Σ_stat = σ²/θ = v_emp exactly.
+        gamma = GAMMA_DEFAULT if gamma is None else gamma
+        if repair is None:
+            from src.data.adjacency import REPAIR_GRAPH
+            repair = REPAIR_GRAPH
+        lam_S, V_S = _spatial_graph_eig(dataset, R, spatial_graph, knn_k, repair)
+        delta_h, R_H, Sigma_T = _fit_sigma_T(R_full, mask)
+        mu_T, V_T = np.linalg.eigh(Sigma_T)
+        mu_T = np.clip(mu_T, a_min=1e-12, a_max=None)
+        # measured per-mode variance in the (V_S ⊗ V_T) basis, from masked full data
+        Rz = np.where(mask, R_full, 0.0)
+        C = np.matmul(V_S.T, Rz); C = np.matmul(C, V_T)          # (B,N,H) graph×temporal coeffs
+        v_emp = np.clip((C ** 2).mean(0), 1e-8, None)            # (N,H)
+        theta = 1.0 / v_emp
+        if stiffness_cap is not None:
+            theta = np.maximum(theta, theta.max() / stiffness_cap)
+        theta, sigma2_scale = _normalize_scale(theta)
+        cur = float((sigma2_scale / theta).mean())
+        sigma2_scale *= var_full / max(cur, 1e-12)               # match overall variance
+        return KroneckerPrior(
+            dataset=dataset, gamma=gamma, V_S=V_S, lam_S=lam_S,
+            V_T=V_T, mu_T=mu_T, theta=theta, delta_h=delta_h,
+            R_H=R_H, sigma2_scale=sigma2_scale,
+        )
     if temporal == "laplacian":
         # temporal path-graph Laplacian (γ_t) in place of the empirical Σ_T, MULTIPLICATIVE
         # composition (Σ_T ⊗ Σ_S). superseded by "cartesian" for the raw arm (multiplicative

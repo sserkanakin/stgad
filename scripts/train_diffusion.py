@@ -59,7 +59,7 @@ from src.data.residual_dataset import (
     make_dataset, residual_path, sigma_to_torch, train_residual_sigma,
 )
 from src.diffusion.denoiser import GCNNDenoiser, R0Denoiser, SignalDenoiser, num_parameters
-from src.diffusion.losses import gad_snr_weighted_mse, graph_tv, masked_mse
+from src.diffusion.losses import gad_snr_weighted_mse, graph_tv, masked_mse, whitened_mse
 from src.diffusion.forward_fcps import (
     VESchedule,
     VPSchedule,
@@ -74,6 +74,10 @@ from src.diffusion.forward_fcps import (
 from src.diffusion.prior import load_prior
 from src.diffusion.reverse import min_em_steps, reverse_sample_ancestral, reverse_sample_em
 from src.eval.crps import empirical_crps, quantile_crps_num
+
+# training noise-level sampler: "powerlaw" = GAD's c̄=c_0·u^0.65 (high-noise biased),
+# "loguniform" = even coverage across noise decades (safer for stiff priors). set in main().
+_NOISE_SAMPLER = "powerlaw"
 from src.eval.distribution import energy_distance, sliced_wasserstein1
 from src.utils import paths
 from src.utils.checkpoint import (
@@ -172,11 +176,14 @@ def _rate_torch(t: torch.Tensor, schedule) -> torch.Tensor:
     return schedule.slope * t / schedule.T                  # ULSchedule
 
 
-def _loss(name, R0_hat, R0, mask, t, schedule, *, tv_weight, A_t):
-    """training loss: plain masked mse (default) or GAD's rate-weighted mse."""
+def _loss(name, R0_hat, R0, mask, t, schedule, *, prior_t, tv_weight, A_t):
+    """training loss: masked mse, GAD's rate-weighted mse, or PriorGrad whitened mse
+    (per-mode precision-weighted — the loss a structured/reshaped prior needs)."""
     if name == "mse":
         loss = masked_mse(R0_hat, R0, mask)
-    else:                                                   # 'snr' (GAD, ablation)
+    elif name == "whitened":
+        loss = whitened_mse(R0_hat, R0, mask, prior_t, _rate_torch(t, schedule))
+    else:                                                   # 'snr' (GAD default)
         loss = gad_snr_weighted_mse(R0_hat, R0, mask, _rate_torch(t, schedule))
     if tv_weight and A_t is not None:
         loss = loss + tv_weight * graph_tv(R0_hat, A_t)
@@ -200,9 +207,10 @@ def train_step(
     mask = batch["mask"].to(device, non_blocking=True)
     B = R0.shape[0]
 
-    # GAD scheme (exp_gasde.py): draw the noise level c̄ = c_0·u^0.65 (power-law),
-    # forward-noise R0 to it, recover the diffusion time t, and condition the net on t.
-    if isinstance(schedule, VESchedule):
+    # draw the training noise level c̄. GAD (exp_gasde.py): c̄ = c_0·u^0.65 (power-law,
+    # high-noise biased). "loguniform" spreads evenly across noise decades — safer for our
+    # stiff reshaped/empirical priors (trains the rough modes too). VE always log-uniform.
+    if _NOISE_SAMPLER == "loguniform" or isinstance(schedule, VESchedule):
         c_bar = sample_log_c_bar_torch(schedule.c_lo, schedule.c_0, B, device, R0.dtype,
                                        generator=generator)
     else:
@@ -211,7 +219,7 @@ def train_step(
     t = schedule.t_of_c_bar(c_bar)
 
     R0_hat = denoiser(R_t, t, Y_hat)
-    return _loss(loss_name, R0_hat, R0, mask, t, schedule, tv_weight=tv_weight, A_t=A_t)
+    return _loss(loss_name, R0_hat, R0, mask, t, schedule, prior_t=prior_t, tv_weight=tv_weight, A_t=A_t)
 
 
 # fixed seed for the val-loss noise draws: every epoch scores the SAME (c̄, Z)
@@ -261,7 +269,7 @@ def validate(
         B = R0.shape[0]
         batch_loss = 0.0
         for _ in range(n_t_samples):
-            if isinstance(schedule, VESchedule):
+            if _NOISE_SAMPLER == "loguniform" or isinstance(schedule, VESchedule):
                 c_bar = sample_log_c_bar_torch(schedule.c_lo, schedule.c_0, B, device,
                                                R0.dtype, generator=gen)
             else:
@@ -270,7 +278,7 @@ def validate(
             t = schedule.t_of_c_bar(c_bar)
             R0_hat = denoiser(R_t, t, Y_hat)
             batch_loss += float(_loss(loss_name, R0_hat, R0, mask, t, schedule,
-                                      tv_weight=tv_weight, A_t=A_t))
+                                      prior_t=prior_t, tv_weight=tv_weight, A_t=A_t))
         total += batch_loss / n_t_samples
         n += 1
     denoiser.train()
@@ -650,7 +658,7 @@ def main() -> None:
     p.add_argument("--shrink-t", type=float, default=None,
                    help="temporal ridge ρ: μ_T ← (1-ρ)μ_T + ρ·μ̄ (shrinks empirical Σ_T toward "
                         "isotropic). None = SHRINK_T (0.1). only used when --temporal empirical.")
-    p.add_argument("--temporal", choices=("empirical", "laplacian", "cartesian"), default="empirical",
+    p.add_argument("--temporal", choices=("empirical", "laplacian", "cartesian", "reshaped"), default="empirical",
                    help="temporal factor: 'empirical' Σ_T fit from data; 'laplacian' = path-graph "
                         "Laplacian, multiplicative product (ablation); 'cartesian' = GAD-literal "
                         "spatio-temporal extension — normalized Cartesian product graph, "
@@ -679,6 +687,9 @@ def main() -> None:
     p.add_argument("--weight-decay", type=float, default=1e-4)
     p.add_argument("--patience", type=int, default=15)
     p.add_argument("--d-h", type=int, default=32)
+    p.add_argument("--noise-sampler", choices=("powerlaw", "loguniform"), default="powerlaw",
+                   help="training noise-level draw: powerlaw = GAD c̄=c_0·u^0.65 (high-noise "
+                        "biased); loguniform = even across noise decades (better for stiff priors).")
     p.add_argument("--denoiser", choices=("ugnet", "gcnn"), default="ugnet",
                    help="ugnet (expressive, ~1M params) or gcnn = GAD's low-capacity graph-"
                         "filter cascade (~60k params). with gcnn the network cannot absorb the "
@@ -713,7 +724,7 @@ def main() -> None:
                         "samples at de-normalization). prior refit to match either way.")
     p.add_argument("--schedule", choices=("auto", "fcps", "uls"), default="auto",
                    help="auto = fcps for kronecker, uls for isotropic (same c̄(T)=c_0)")
-    p.add_argument("--loss", choices=("mse", "snr"), default="snr",
+    p.add_argument("--loss", choices=("mse", "snr", "whitened"), default="snr",
                    help="training loss: plain masked mse (default) or GAD's "
                         "rate-weighted mse (ablation)")
     p.add_argument("--tv-weight", type=float, default=0.0,
@@ -789,6 +800,8 @@ def main() -> None:
     p.add_argument("--max-train-batches", type=int, default=0,
                    help="if > 0, cap training batches per epoch (for smoke runs)")
     args = p.parse_args()
+    global _NOISE_SAMPLER
+    _NOISE_SAMPLER = args.noise_sampler
 
     if args.smoke:
         args.epochs = 2

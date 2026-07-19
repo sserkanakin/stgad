@@ -38,8 +38,12 @@ def resid_lowfrac(ds, split, seed, bb):
     p = paths.residual_npz(ds, split, seed, bb)
     if not p.exists():
         return None, None
-    d = np.load(p)
-    R = d["residuals"].astype(np.float64)          # (B, N, H)
+    try:
+        d = np.load(p)
+        R = d["residuals"].astype(np.float64)      # (B, N, H)
+    except Exception as e:                          # truncated / corrupt transfer
+        print(f"  !! {ds}/{bb}/{split}.npz unreadable ({str(e)[:40]}) -- skipped")
+        return None, None
     M = d["mask"].astype(bool)
     std = float(R[M].std()) if M.any() else float("nan")
     if ds not in _EIG:
@@ -110,8 +114,7 @@ def main():
     print("hypothesis: WEAKER backbone -> HIGHER resid_low% (more graph structure left).")
     print("read down each dataset: does mlp >= gcn >= gwn?")
 
-    out = paths.RESULTS / "analysis"
-    out.mkdir(parents=True, exist_ok=True)
+    out = paths.analysis_dir("metrics")
     with open(out / "backbone_overview.csv", "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
         w.writeheader(); w.writerows(rows)

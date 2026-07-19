@@ -16,6 +16,15 @@ DATA = Path(os.environ["DATA_ROOT"]) if os.environ.get("DATA_ROOT") else ROOT / 
 RESULTS = Path(os.environ["RESULTS_ROOT"]) if os.environ.get("RESULTS_ROOT") else ROOT / "results"
 OUTPUTS = Path(os.environ["OUTPUT_ROOT"]) if os.environ.get("OUTPUT_ROOT") else RESULTS
 
+
+def analysis_dir(theme: str = "") -> Path:
+    """themed offline-analysis output folder (figures + tables together), created on demand.
+    themes: 'distribution' (values/tails), 'structure' (spectra/prior-match), 'prior_schedule'
+    (forward/heat/schedule), 'metrics' (forecast tables). keeps results/analysis/ navigable."""
+    d = RESULTS / "analysis" / theme if theme else RESULTS / "analysis"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
 # six variants; raw is grouped by SOURCE (the F/S variants share one raw set).
 _VARIANT_SOURCE = {
     "metrla": "metrla", "pemsbay": "pemsbay",

@@ -80,6 +80,31 @@ def gad_snr_weighted_mse(
     return ((R0_hat - R0).pow(2) * m * w).sum() / ((m * w).sum() + 1e-8)
 
 
+def whitened_mse(
+    R0_hat: torch.Tensor, R0: torch.Tensor, mask: torch.Tensor,
+    prior_t: TorchPriorTensors, c_t: torch.Tensor, sigma: float = 1.0,
+) -> torch.Tensor:
+    """PriorGrad-style whitened loss: rotate the x0-error into the prior eigenbasis and
+    weight each MODE by the prior precision θ (= 1/stationary-variance), times the GAD
+    per-sample rate weight w = 1/(1+2σ²c(t)).
+
+    plain mse lets the loud (high-variance) modes dominate, so a structured/reshaped prior
+    — which puts the noise on exactly those loud modes — is strictly harder. weighting by θ
+    down-weights the loud modes and up-weights the quiet ones so EVERY mode counts equally
+    (standardised-error units). this is the loss that turns 'noise where the signal is' from
+    a penalty into the mechanism that forces the model to capture the full covariance.
+
+    masked entries are zeroed before the rotation (rotation mixes nodes); call on
+    mostly-observed batches (PEMS flow mask is all-valid).
+    """
+    err = (R0_hat - R0) * mask.float()
+    C = torch.einsum("ki,bih,hj->bkj", prior_t.V_S.T, err, prior_t.V_T)   # (B,N,H) eigenbasis
+    theta = prior_t.theta.unsqueeze(0)                                     # (1,N,H) prior precision
+    w = (1.0 / (1.0 + 2.0 * (sigma ** 2) * c_t)).view(-1, 1, 1)            # (B,1,1) per-sample
+    wt = w * theta                                                         # (B,N,H) combined weight
+    return (wt * C.pow(2)).sum() / (wt.sum() + 1e-8)
+
+
 def graph_tv(R0_hat: torch.Tensor, A: torch.Tensor) -> torch.Tensor:
     """graph total-variation penalty on the prediction (GAD's tv_pred): mean over
     edges of A_ij·(x_i - x_j)². A is (N, N); R0_hat is (B, N, H). NOTE: GAD applies

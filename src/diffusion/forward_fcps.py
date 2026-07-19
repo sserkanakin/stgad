@@ -56,6 +56,12 @@ class FCPSSchedule:
                 f"c_0 ({self.c_0}) must exceed c_min·T ({self.c_min * self.T})"
             )
 
+    @property
+    def c_lo(self) -> float:
+        """noise-floor lower bound for log-uniform training draws (fixed, prior-independent;
+        matches noise_level_bounds' floor = NOISE_FLOOR²/2 ≈ 8e-4)."""
+        return 0.04 ** 2 / 2.0
+
     def _k(self) -> float:
         return (self.c_0 - self.c_min * self.T) * (self.alpha + 1) / self.T
 

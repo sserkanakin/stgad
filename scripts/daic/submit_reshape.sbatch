@@ -53,7 +53,7 @@ case "${DATASET}" in
   pems08f) DSS=08f;; pems08s) DSS=08s;; *) DSS="${DATASET}";; esac
 RUN_NAME="${DSS}-${BACKBONE}-${NAME}-s${SEED}-${EXP}"
 scontrol update job="${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_TASK_ID}" JobName="${RUN_NAME}" 2>/dev/null || true
-echo "===== task ${SLURM_ARRAY_TASK_ID}: ${DATASET} / ${NAME} (prior=${PRIOR} temporal=${TEMPORAL} sampler=${SAMPLER} cond=${COND}) ====="
+echo "===== task ${SLURM_ARRAY_TASK_ID}: ${DATASET}/${BACKBONE} / ${NAME} (prior=${PRIOR} temporal=${TEMPORAL} sampler=${SAMPLER} loss=${LOSS} cond=past) ====="
 
 LOG_SRC="${OUTPUT_ROOT}/logs/${EXP}/${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_TASK_ID}"
 copy_logs() {

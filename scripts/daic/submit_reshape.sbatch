@@ -21,7 +21,7 @@ source "${PROJECT_DIR}/scripts/daic/_common.sh"
 : "${GRID_FILE:?Set GRID_FILE via --export}"
 : "${EXP:?Set EXP via --export}"
 : "${SEED:?Set SEED via --export}"
-BACKBONE="${BACKBONE:-gwn}"
+# BACKBONE is read per-row from the grid (below), not from the env.
 EPOCHS="${EPOCHS:-200}"
 LR="${LR:-1e-4}"
 VAL_WINDOWS="${VAL_WINDOWS:-512}"
@@ -32,7 +32,7 @@ if [ -n "${OUTPUT_ROOT:-}" ]; then
 fi
 
 ROW="$(sed -n "$((SLURM_ARRAY_TASK_ID + 1))p" "${GRID_FILE}")"
-read -r IDX DATASET NAME PRIOR TEMPORAL CAP LOSS SCHED RUN_DIR <<< "${ROW}"
+read -r IDX DATASET BACKBONE NAME PRIOR TEMPORAL CAP LOSS SCHED RUN_DIR <<< "${ROW}"
 : "${DATASET:?empty row ${SLURM_ARRAY_TASK_ID} in ${GRID_FILE}}"
 
 # small GCNN denoiser, per-node norm, residual-history conditioning (validated locally).
@@ -51,7 +51,7 @@ export STAGE="diffusion"
 case "${DATASET}" in
   metrla) DSS=mt;; pemsbay) DSS=bay;; pems04f) DSS=04f;; pems04s) DSS=04s;;
   pems08f) DSS=08f;; pems08s) DSS=08s;; *) DSS="${DATASET}";; esac
-RUN_NAME="${DSS}-${NAME}-s${SEED}-${EXP}"
+RUN_NAME="${DSS}-${BACKBONE}-${NAME}-s${SEED}-${EXP}"
 scontrol update job="${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_TASK_ID}" JobName="${RUN_NAME}" 2>/dev/null || true
 echo "===== task ${SLURM_ARRAY_TASK_ID}: ${DATASET} / ${NAME} (prior=${PRIOR} temporal=${TEMPORAL} sampler=${SAMPLER} cond=${COND}) ====="
 

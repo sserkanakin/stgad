@@ -18,9 +18,11 @@ source "${HERE}/env.sh"
 SEED="${1:?usage: EXP=<tag> submit_reshape.sh <seed> [extra sbatch args]}"; shift
 : "${EXP:?set EXP=<dated tag>, e.g. EXP=20260719_reshape}"
 DATASETS="${DATASETS:-metrla pemsbay pems04f pems04s pems08f pems08s}"
-BACKBONE="${BACKBONE:-gwn}"
+BACKBONES="${BACKBONES:-mlp gcn gwn}"    # backbone-strength ladder (all 3 residual sets)
 EPOCHS="${EPOCHS:-200}"
-THROTTLE="${THROTTLE:-8}"
+# per-array throttle: with 6 dataset-arrays competing for the account's job slots, keep this
+# small so ALL datasets progress in parallel instead of one array hogging every slot.
+THROTTLE="${THROTTLE:-3}"
 
 # arm := name:prior:temporal:cap:loss:schedule   ('-' = omitted). sampler=loguniform and
 # --cond-past are FIXED in the sbatch (validated locally). tests: (a) prior iso/emp/reshaped,
@@ -48,21 +50,23 @@ RES=(--partition="${DAIC_PARTITION}" --gres="${GRES}")
 [ -n "${DAIC_GPU_EXCLUDE:-}" ] && RES+=(--exclude="${DAIC_GPU_EXCLUDE}")
 
 ln -sfn "${OUTPUT_ROOT}" "$(cd "${HERE}/../.." && pwd)/out" 2>/dev/null || true
-echo "===== reshape experiment ${EXP}  seed=${SEED}  backbone=${BACKBONE}  ${#ARMS[@]} arms/dataset ====="
+echo "===== reshape experiment ${EXP}  seed=${SEED}  backbones=[${BACKBONES}]  ${#ARMS[@]} arms × $(set -- ${BACKBONES}; echo $#) backbones /dataset ====="
 echo "datasets: ${DATASETS}   (one array each — parallel)"
 
 for DS in ${DATASETS}; do
   GRID_FILE="${LOG_DIR}/grid_${DS}_seed${SEED}.tsv"; : > "${GRID_FILE}"
   idx=0
-  for ARM in "${ARMS[@]}"; do
-    IFS=':' read -r NAME PR TMP CAP LOSS SCHED <<< "${ARM}"
-    RUN_DIR="${OUTPUT_ROOT}/${EXP}/${NAME}/${DS}/${BACKBONE}/${PR}/seed${SEED}"
-    printf '%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-      "${idx}" "${DS}" "${NAME}" "${PR}" "${TMP}" "${CAP}" "${LOSS}" "${SCHED}" "${RUN_DIR}" >> "${GRID_FILE}"
-    idx=$((idx + 1))
+  for BB in ${BACKBONES}; do
+    for ARM in "${ARMS[@]}"; do
+      IFS=':' read -r NAME PR TMP CAP LOSS SCHED <<< "${ARM}"
+      RUN_DIR="${OUTPUT_ROOT}/${EXP}/${NAME}/${DS}/${BB}/${PR}/seed${SEED}"
+      printf '%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "${idx}" "${DS}" "${BB}" "${NAME}" "${PR}" "${TMP}" "${CAP}" "${LOSS}" "${SCHED}" "${RUN_DIR}" >> "${GRID_FILE}"
+      idx=$((idx + 1))
+    done
   done
   N="${idx}"
-  EXPORTS="ALL,EXP=${EXP},SEED=${SEED},BACKBONE=${BACKBONE},EPOCHS=${EPOCHS},GRID_FILE=${GRID_FILE}"
+  EXPORTS="ALL,EXP=${EXP},SEED=${SEED},EPOCHS=${EPOCHS},GRID_FILE=${GRID_FILE}"
   EXPORTS="${EXPORTS},DATA_ROOT=${DATA_ROOT},RESULTS_ROOT=${RESULTS_ROOT},OUTPUT_ROOT=${OUTPUT_ROOT}"
   EXPORTS="${EXPORTS},WANDB_MODE=disabled"   # storage: all needed info is in validation_history.json
   JOBID="$(sbatch --parsable \

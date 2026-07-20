@@ -22,7 +22,7 @@ BACKBONES="${BACKBONES:-mlp gcn gwn}"    # backbone-strength ladder (all 3 resid
 EPOCHS="${EPOCHS:-200}"
 # per-array throttle: with 6 dataset-arrays competing for the account's job slots, keep this
 # small so ALL datasets progress in parallel instead of one array hogging every slot.
-THROTTLE="${THROTTLE:-3}"
+THROTTLE="${THROTTLE:-8}"
 
 # arm := name:prior:temporal:cap:loss:schedule   ('-' = omitted). sampler=loguniform and
 # --cond-past are FIXED in the sbatch (validated locally). tests: (a) prior iso/emp/reshaped,
@@ -54,6 +54,25 @@ if ! dd if=/dev/zero of="${LOG_DIR}/.spacetest" bs=1M count=32 status=none 2>/de
   exit 1
 fi
 rm -f "${LOG_DIR}/.spacetest"
+
+# PREFLIGHT 2: the residuals are INPUTS and are read from RESULTS_ROOT (see paths.py:
+# "RESULTS_ROOT inputs: residuals, backbone"). pointing RESULTS_ROOT at the *output* dir
+# is a silent killer — every task starts, then dies in its own preflight. check here once.
+missing=""
+for DS in ${DATASETS}; do
+  for BB in ${BACKBONES}; do
+    for SP in train val; do
+      f="${RESULTS_ROOT}/residuals/${DS}/${BB}/seed${SEED}/${SP}.npz"
+      [ -s "${f}" ] || missing="${missing}  ${f}"$'\n'
+    done
+  done
+done
+if [ -n "${missing}" ]; then
+  echo "ABORT: missing residual inputs under RESULTS_ROOT=${RESULTS_ROOT}" >&2
+  printf '%s' "${missing}" >&2
+  echo "  (residuals are read from RESULTS_ROOT, which must be the DATA share, not the output dir.)" >&2
+  exit 1
+fi
 
 source "${HERE}/_gpu.sh"
 GRES="$(gpu_blackwell_gres || true)"; GRES="${GRES:-${DAIC_GRES_GPU}}"

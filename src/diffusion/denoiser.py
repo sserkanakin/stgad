@@ -218,11 +218,16 @@ class GCNNDenoiser(nn.Module):
     """
 
     def __init__(self, N, H, adjacency, K=5, n_layers=3, hidden=24,
-                 device="cpu", T_h=0):
+                 device="cpu", T_h=0, n_cond=1):
+        """n_cond: how many H-wide conditioning fields are concatenated along the time axis
+        of the `Y_hat` argument. 1 = forecast only, (B,N,H). 2 = --cond-past, which passes
+        [R_past | Y_hat] as (B,N,2H); they are split back into separate CHANNELS here.
+        This keeps the conditioning axis testable at fixed (small) capacity — routing it
+        through UGnet instead would confound extra conditioning with 60x more parameters."""
         super().__init__()
         if T_h:
             raise ValueError("GCNNDenoiser supports base conditioning only (T_h=0)")
-        self.N, self.H, self.K = N, H, K
+        self.N, self.H, self.K, self.n_cond = N, H, K, int(n_cond)
         A = np.asarray(adjacency, dtype=np.float64).copy()
         np.fill_diagonal(A, 0.0)
         A = A + np.eye(N)                                     # self loops (gcn_self)
@@ -232,7 +237,7 @@ class GCNNDenoiser(nn.Module):
         for _ in range(K):
             Sp.append(Sp[-1] @ S)
         self.register_buffer("S_pow", torch.tensor(np.stack(Sp), dtype=torch.float32))
-        cs = [2] + [hidden] * n_layers                        # in: [R_t | Y_hat]
+        cs = [1 + self.n_cond] + [hidden] * n_layers          # in: [R_t | cond_1 .. cond_n]
         self.gmix = nn.ModuleList([
             nn.ModuleList([nn.Conv2d(cs[l], cs[l + 1], 1) for _ in range(K + 1)])
             for l in range(n_layers)])
@@ -251,7 +256,15 @@ class GCNNDenoiser(nn.Module):
     def forward(self, R_t, t, Y_hat):
         if R_t.shape[-2:] != (self.N, self.H):
             raise ValueError(f"R_t must be (B,{self.N},{self.H}); got {tuple(R_t.shape)}")
-        x = torch.stack([R_t, Y_hat], dim=1)                            # (B, 2, N, H)
+        exp_h = self.n_cond * self.H
+        if Y_hat.shape[-2:] != (self.N, exp_h):
+            raise ValueError(f"conditioning must be (B,{self.N},{exp_h}) for n_cond="
+                             f"{self.n_cond}; got {tuple(Y_hat.shape)}")
+        # conditioning arrives concatenated along TIME, [cond_1 | .. | cond_n] of H each
+        # (residual_dataset builds [R_past | Y_hat]). split it back into CHANNELS so each
+        # field keeps its own 1x1 mixes rather than being smeared across a 2H time axis.
+        conds = Y_hat.split(self.H, dim=-1) if self.n_cond > 1 else (Y_hat,)
+        x = torch.stack((R_t,) + tuple(conds), dim=1)                   # (B, 1+n_cond, N, H)
         emb = self._tau_embed(t * 10.0)                                 # t in [0,1]
         for gm, tc, fl in zip(self.gmix, self.tconv, self.film):
             acc = 0

@@ -988,11 +988,15 @@ def main() -> None:
     # conditioning width); else the forecast-conditioned R0Denoiser.
     A = load_adjacency(args.dataset)
     if args.denoiser == "gcnn":
-        if train_ds.Y_hat.shape[-1] != prior.H:
-            raise ValueError("gcnn expects (B,N,H) conditioning; got T_h != H")
+        # conditioning is n_cond H-wide fields concatenated along time (1 = Ŷ only,
+        # 2 = --cond-past's [R_past | Ŷ]); GCNNDenoiser splits them back into channels.
+        cond_w = train_ds.Y_hat.shape[-1]
+        if cond_w % prior.H:
+            raise ValueError(f"gcnn conditioning width {cond_w} is not a multiple of H={prior.H}")
         denoiser = GCNNDenoiser(
             N=prior.N, H=prior.H, adjacency=A, K=args.gcnn_hops,
             n_layers=args.gcnn_layers, hidden=args.gcnn_hidden,
+            n_cond=cond_w // prior.H,
         ).to(device)
     elif args.backbone == "raw":
         T_h = train_ds.Y_hat.shape[-1]

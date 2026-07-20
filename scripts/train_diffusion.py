@@ -681,6 +681,16 @@ def main() -> None:
                    help="experiment tag; namespaces checkpoints + wandb group "
                         "(results/diffusion/<exp>/..., wandb group <exp>-<dataset>)")
     p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--residual-seed", type=int, default=None,
+                   help="stage-1 seed: which residuals/<ds>/<bb>/seed<N>/ to train on, and "
+                        "which the prior is fit from. defaults to --seed (the historical "
+                        "1:1 coupling). set it to PIN the backbone while --seed varies, so "
+                        "multi-seed error bars measure diffusion-training stochasticity "
+                        "only. that is the right control for a prior comparison: every arm "
+                        "then reads byte-identical residuals, so backbone variance cancels "
+                        "in the paired per-seed difference instead of inflating both arms. "
+                        "it does NOT cancel if coupled — a different backbone changes the "
+                        "residual SPECTRUM, which is the very axis the prior acts on.")
     p.add_argument("--epochs", type=int, default=200)
     p.add_argument("--batch-size", type=int, default=32)
     p.add_argument("--lr", type=float, default=1e-4)
@@ -836,6 +846,10 @@ def main() -> None:
     cfg["backbone"] = args.backbone
     cfg["prior"] = args.prior
     cfg["gamma"] = args.gamma            # None -> load_prior uses GAMMA_DEFAULT (0.8); raw arm sets ~0.04
+    # record the RESOLVED stage-1 seed, not None, so config.json always states which
+    # residuals this run was trained on (it enters the cfg hash: different residuals =>
+    # different run identity, while --seed alone does not).
+    cfg["residual_seed"] = args.seed if args.residual_seed is None else args.residual_seed
     cfg["shrink_t"] = args.shrink_t      # None -> SHRINK_T (0.1); empirical-temporal only
     cfg["temporal"] = args.temporal      # 'empirical' or 'laplacian' (product graph)
     cfg["gamma_t"] = args.gamma_t        # temporal Laplacian shift (temporal=laplacian)
@@ -879,18 +893,23 @@ def main() -> None:
            if args.backbone == "raw" else
            f"run scripts/gwn_extract_residuals.py --variant {args.dataset} "
            f"--seed {args.seed} --backbone {args.backbone} --checkpoint <ckpt> first")
+    # stage-1 (backbone/residual) seed vs stage-2 (diffusion) seed. --residual-seed pins the
+    # former so error bars over --seed isolate diffusion-training stochasticity; every arm
+    # then reads byte-identical residuals and backbone variance cancels in the paired
+    # difference. defaults to --seed, preserving the original 1:1 coupling.
+    res_seed = args.seed if args.residual_seed is None else args.residual_seed
     paths.require_inputs([
-        (paths.residual_npz(args.dataset, "train", args.seed, args.backbone), _ex),
-        (paths.residual_npz(args.dataset, "val", args.seed, args.backbone), _ex),
+        (paths.residual_npz(args.dataset, "train", res_seed, args.backbone), _ex),
+        (paths.residual_npz(args.dataset, "val", res_seed, args.backbone), _ex),
         (paths.adj_npz(args.dataset), "run python scripts/build_datasets.py --all"),
     ])
 
     # ── Data (modeled in unit space; sigma_r from train, reused for val). backbone='raw'
     # → SignalDataset (future signal target + history conditioning); else ResidualDataset.
-    sigma_r = train_residual_sigma(args.dataset, args.seed, args.backbone, norm=args.norm)
-    train_ds = make_dataset(args.dataset, "train", args.seed, args.backbone, sigma_r,
+    sigma_r = train_residual_sigma(args.dataset, res_seed, args.backbone, norm=args.norm)
+    train_ds = make_dataset(args.dataset, "train", res_seed, args.backbone, sigma_r,
                             cond_past=args.cond_past, zero_masked=True)
-    val_ds = make_dataset(args.dataset, "val", args.seed, args.backbone, sigma_r,
+    val_ds = make_dataset(args.dataset, "val", res_seed, args.backbone, sigma_r,
                           cond_past=args.cond_past, zero_masked=True)
     if args.uncond:
         train_ds.Y_hat.zero_(); val_ds.Y_hat.zero_()
@@ -911,8 +930,10 @@ def main() -> None:
         num_workers=0, pin_memory=pin,
     )
 
-    # ── Prior + schedule
-    prior = load_prior(args.dataset, args.prior, args.seed,
+    # ── Prior + schedule. NB res_seed, not args.seed: the prior is FIT FROM the stage-1
+    # residuals, so it must follow the backbone seed. otherwise varying --seed would refit
+    # the prior on different data and the arms would stop being comparable across seeds.
+    prior = load_prior(args.dataset, args.prior, res_seed,
                        spatial=args.spatial, stiffness_cap=(args.stiffness_cap or None),
                        gamma=args.gamma, shrink_t=args.shrink_t,
                        temporal=args.temporal, gamma_t=args.gamma_t,
@@ -945,7 +966,12 @@ def main() -> None:
         f"prior N={prior.N} H={prior.H} γ={prior.gamma:.4f}  "
         f"θ_min={float(prior.theta.min()):.4f}  θ_max={float(prior.theta.max()):.2f}  "
         f"2·S·θ_min={2*schedule.c_0*float(prior.theta.min()):.2f} (GAD target ≈11.2)  "
-        f"train noise c̄ = c_0·u^0.65 ∈ [0, {schedule.c_0:.3g}]  loss={args.loss}  "
+        # report the sampler ACTUALLY in use — this line used to hardcode the power-law form
+        # and so claimed "c_0·u^0.65" on every run, including log-uniform ones.
+        + (f"train noise c̄ ~ logU[{getattr(schedule, 'c_lo', 0.0):.3g}, {schedule.c_0:.3g}]  "
+           if _NOISE_SAMPLER == "loguniform" or isinstance(schedule, VESchedule)
+           else f"train noise c̄ = c_0·u^0.65 ∈ [0, {schedule.c_0:.3g}]  ")
+        + f"loss={args.loss}  "
         f"repair_graph={REPAIR_GRAPH}"
     )
     # EM stability floor: explicit EM diverges to NaN when the step count is too low

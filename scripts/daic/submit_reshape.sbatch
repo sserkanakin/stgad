@@ -30,6 +30,8 @@ VAL_WINDOWS="${VAL_WINDOWS:-512}"
 # still improving monotonically — then got compared against iso, which ran the full 200.
 # that is a comparison of early-stopping luck, not of losses. 40 gives every arm a fair run.
 PATIENCE="${PATIENCE:-40}"
+# stage-1 seed (which residuals to train on), pinned by the submitter; stage-2 seed is SEED.
+RESIDUAL_SEED="${RESIDUAL_SEED:-42}"
 
 if [ -n "${OUTPUT_ROOT:-}" ]; then
   export WANDB_DIR="${OUTPUT_ROOT}/wandb"; export WANDB_CACHE_DIR="${OUTPUT_ROOT}/wandb/cache"
@@ -48,6 +50,7 @@ read -r IDX DATASET BACKBONE NAME PRIOR TEMPORAL CAP LOSS SCHED RUN_DIR <<< "${R
 SAMPLER=loguniform; [ "${PRIOR}" = "vp" ] && SAMPLER=powerlaw
 FLAGS=(--denoiser gcnn --norm pernode --noise-sampler "${SAMPLER}"
        --loss "${LOSS}" --schedule "${SCHED}" --patience "${PATIENCE}"
+       --residual-seed "${RESIDUAL_SEED}"
        --val-every 0 --val-windows "${VAL_WINDOWS}" --fast-val-steps 50)
 [ "${TEMPORAL}" != "-" ] && FLAGS+=(--temporal "${TEMPORAL}")
 [ "${CAP}" != "-" ]      && FLAGS+=(--stiffness-cap "${CAP}")

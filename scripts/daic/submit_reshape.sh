@@ -17,6 +17,13 @@ source "${HERE}/env.sh"
 
 SEED="${1:?usage: EXP=<tag> submit_reshape.sh <seed> [extra sbatch args]}"; shift
 : "${EXP:?set EXP=<dated tag>, e.g. EXP=20260719_reshape}"
+# stage-1 seed: which residuals/<ds>/<bb>/seed<N>/ every arm trains on. PINNED at 42 so that
+# varying SEED (stage 2) measures diffusion-training stochasticity with the backbone held
+# fixed — the same design as the competitor's frozen-prior phase-2 runs. all arms then read
+# byte-identical residuals, so backbone variance cancels in the paired per-seed difference.
+# set RESIDUAL_SEED=$SEED to restore the old fully-coupled behaviour (needs per-seed
+# backbones trained + residuals extracted first; only seed42 exists today).
+RESIDUAL_SEED="${RESIDUAL_SEED:-42}"
 DATASETS="${DATASETS:-metrla pemsbay pems04f pems04s pems08f pems08s}"
 BACKBONES="${BACKBONES:-mlp gcn gwn}"    # backbone-strength ladder (all 3 residual sets)
 EPOCHS="${EPOCHS:-200}"
@@ -72,7 +79,7 @@ missing=""
 for DS in ${DATASETS}; do
   for BB in ${BACKBONES}; do
     for SP in train val; do
-      f="${RESULTS_ROOT}/residuals/${DS}/${BB}/seed${SEED}/${SP}.npz"
+      f="${RESULTS_ROOT}/residuals/${DS}/${BB}/seed${RESIDUAL_SEED}/${SP}.npz"
       [ -s "${f}" ] || missing="${missing}  ${f}"$'\n'
     done
   done
@@ -107,7 +114,7 @@ for DS in ${DATASETS}; do
     done
   done
   N="${idx}"
-  EXPORTS="ALL,EXP=${EXP},SEED=${SEED},EPOCHS=${EPOCHS},GRID_FILE=${GRID_FILE}"
+  EXPORTS="ALL,EXP=${EXP},SEED=${SEED},RESIDUAL_SEED=${RESIDUAL_SEED},EPOCHS=${EPOCHS},GRID_FILE=${GRID_FILE}"
   EXPORTS="${EXPORTS},DATA_ROOT=${DATA_ROOT},RESULTS_ROOT=${RESULTS_ROOT},OUTPUT_ROOT=${OUTPUT_ROOT}"
   EXPORTS="${EXPORTS},WANDB_MODE=disabled"   # storage: all needed info is in validation_history.json
   # don't let one rejected sbatch (e.g. AssocMaxSubmitJobLimit) kill the loop under `set -e`:

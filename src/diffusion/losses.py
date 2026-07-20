@@ -96,13 +96,21 @@ def whitened_mse(
 
     masked entries are zeroed before the rotation (rotation mixes nodes); call on
     mostly-observed batches (PEMS flow mask is all-valid).
+
+    NB the denominator carries the per-sample OBSERVED FRACTION. zeroing masked entries
+    shrinks the numerator in proportion to how much data is missing, so a plain wt.sum()
+    (which counts all B·N·H modes regardless) would scale the whole loss by that fraction
+    — silently shrinking the effective LR on gappy datasets (metrla/pemsbay) while leaving
+    the all-valid PEMS-flow arms untouched. that would be an invisible per-dataset
+    asymmetry, not a fair comparison.
     """
     err = (R0_hat - R0) * mask.float()
     C = torch.einsum("ki,bih,hj->bkj", prior_t.V_S.T, err, prior_t.V_T)   # (B,N,H) eigenbasis
     theta = prior_t.theta.unsqueeze(0)                                     # (1,N,H) prior precision
     w = (1.0 / (1.0 + 2.0 * (sigma ** 2) * c_t)).view(-1, 1, 1)            # (B,1,1) per-sample
     wt = w * theta                                                         # (B,N,H) combined weight
-    return (wt * C.pow(2)).sum() / (wt.sum() + 1e-8)
+    frac = mask.float().flatten(1).mean(1).view(-1, 1, 1)                  # (B,1,1) observed frac
+    return (wt * C.pow(2)).sum() / ((wt * frac).sum() + 1e-8)
 
 
 def graph_tv(R0_hat: torch.Tensor, A: torch.Tensor) -> torch.Tensor:

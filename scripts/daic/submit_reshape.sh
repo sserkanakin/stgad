@@ -28,14 +28,24 @@ THROTTLE="${THROTTLE:-8}"
 # --cond-past are FIXED in the sbatch (validated locally). tests: (a) prior iso/emp/reshaped,
 # (b) loss snr vs whitened — does whitening make the structured prior actually help?, and
 # (c) a vanilla DDPM baseline (plain white noise + standard schedule — the textbook control).
+# NB no iso_w arm: with V_S=V_T=I and constant θ the whitening cancels algebraically, so
+# whitened_mse IS gad_snr_weighted_mse for the isotropic prior (verified: loss diff 2.3e-12,
+# grad diff 3.3e-15; the 20260720b run confirmed it empirically, iso 0.05799 == iso_w 0.05799).
+# it is a duplicate of `iso`, not a control.
+#
+# NB no stiffness cap on the reshaped arms. the cap floors θ from below, i.e. truncates the
+# LOUD modes — precisely the ones the reshaped prior exists to match. at cap=50 the clipped
+# modes hold 2.8% of residual energy on pems08f but 35/61/65/91% on metrla/pems04s/pems08s/
+# pemsbay, so `rsh` would be a different treatment on every dataset and "Σ_stat = v_emp"
+# would be false. the cap only ever existed for EM stability; the ancestral sampler has no
+# such floor (reverse.py:11-13) and this experiment is ancestral-only.
 ARMS=(
-  "ddpm:vp:-:-:snr:auto"                        # vanilla DDPM baseline (prior=vp auto-resolves VP schedule)
+  "ddpm:vp:-:-:snr:auto"                        # vanilla DDPM reference (NOT a controlled ablation)
   "iso:isotropic:-:-:snr:fcps"                  # iso control (white noise, our machinery)
-  "emp:kronecker:empirical:-:snr:fcps"          # empirical prior, GAD snr loss
-  "rsh:kronecker:reshaped:50:snr:fcps"          # reshaped prior, GAD snr loss
-  "iso_w:isotropic:-:-:whitened:fcps"           # iso + whitened (sanity: should ≈ iso)
-  "emp_w:kronecker:empirical:-:whitened:fcps"   # empirical + whitened  (KEY)
-  "rsh_w:kronecker:reshaped:50:whitened:fcps"   # reshaped + whitened   (KEY)
+  "emp:kronecker:empirical:-:snr:fcps"          # Kronecker prior, GAD snr loss   (KEY)
+  "rsh:kronecker:reshaped:-:snr:fcps"           # reshaped prior, GAD snr loss
+  "emp_w:kronecker:empirical:-:whitened:fcps"   # Kronecker + whitened (wins on gwn)
+  "rsh_w:kronecker:reshaped:-:whitened:fcps"    # reshaped + whitened  (best arm on gwn)
 )
 
 export DATA_ROOT="${DATA_ROOT:-${DAIC_DATA_DIR}}"

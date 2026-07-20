@@ -25,6 +25,11 @@ source "${PROJECT_DIR}/scripts/daic/_common.sh"
 EPOCHS="${EPOCHS:-200}"
 LR="${LR:-1e-4}"
 VAL_WINDOWS="${VAL_WINDOWS:-512}"
+# patience 15 (the default) truncated the whitened arms unfairly: on pems08f/mlp emp_w hit a
+# spurious sampled-CRPS minimum at epoch 3 and early-stopped at 18 while its val_loss was
+# still improving monotonically — then got compared against iso, which ran the full 200.
+# that is a comparison of early-stopping luck, not of losses. 40 gives every arm a fair run.
+PATIENCE="${PATIENCE:-40}"
 
 if [ -n "${OUTPUT_ROOT:-}" ]; then
   export WANDB_DIR="${OUTPUT_ROOT}/wandb"; export WANDB_CACHE_DIR="${OUTPUT_ROOT}/wandb/cache"
@@ -42,8 +47,8 @@ read -r IDX DATASET BACKBONE NAME PRIOR TEMPORAL CAP LOSS SCHED RUN_DIR <<< "${R
 # schedule has no log-uniform floor). schedule + loss per-arm; ancestral eval; NO final-val.
 SAMPLER=loguniform; [ "${PRIOR}" = "vp" ] && SAMPLER=powerlaw
 FLAGS=(--denoiser gcnn --norm pernode --noise-sampler "${SAMPLER}"
-       --loss "${LOSS}" --schedule "${SCHED}"
-       --val-every 0 --val-windows "${VAL_WINDOWS}" --fast-val-steps 50 --val-anc-steps 50)
+       --loss "${LOSS}" --schedule "${SCHED}" --patience "${PATIENCE}"
+       --val-every 0 --val-windows "${VAL_WINDOWS}" --fast-val-steps 50)
 [ "${TEMPORAL}" != "-" ] && FLAGS+=(--temporal "${TEMPORAL}")
 [ "${CAP}" != "-" ]      && FLAGS+=(--stiffness-cap "${CAP}")
 

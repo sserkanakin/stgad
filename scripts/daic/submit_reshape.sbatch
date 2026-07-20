@@ -42,6 +42,10 @@ SEEDS="${SEEDS:-42}"; SEEDS="${SEEDS//_/ }"
 # conditioning: fo = forecast only (C = Yhat, (B,N,H)); past = + previous window's residual
 # (C = [R_past | Yhat], (B,N,2H)). gcnn takes both since it splits them into channels.
 COND="${COND:-fo}"
+# denoiser: gcnn = GAD low-capacity graph-filter cascade (~17k); ugnet = expressive (~1M).
+# the capacity axis of the mechanism test — does a bigger denoiser learn what the prior
+# supplies, shrinking its advantage?
+DENOISER="${DENOISER:-gcnn}"
 
 if [ -n "${OUTPUT_ROOT:-}" ]; then
   export WANDB_DIR="${OUTPUT_ROOT}/wandb"; export WANDB_CACHE_DIR="${OUTPUT_ROOT}/wandb/cache"
@@ -56,7 +60,7 @@ read -r IDX DATASET BACKBONE NAME PRIOR TEMPORAL CAP LOSS SCHED RUN_DIR <<< "${R
 # vanilla DDPM baseline (its VP schedule has no log-uniform floor). schedule + loss per-arm;
 # ancestral eval; NO final-val.
 SAMPLER=loguniform; [ "${PRIOR}" = "vp" ] && SAMPLER=powerlaw
-FLAGS=(--denoiser gcnn --norm pernode --noise-sampler "${SAMPLER}"
+FLAGS=(--denoiser "${DENOISER}" --norm pernode --noise-sampler "${SAMPLER}"
        --loss "${LOSS}" --schedule "${SCHED}" --patience "${PATIENCE}"
        --residual-seed "${RESIDUAL_SEED}"
        --val-every 0 --val-windows "${VAL_WINDOWS}" --fast-val-steps 50)
@@ -68,14 +72,17 @@ FLAGS=(--denoiser gcnn --norm pernode --noise-sampler "${SAMPLER}"
 # cond=past run would silently overwrite the cond=fo results for the same arm. namespace the
 # arm by conditioning whenever it is not the default.
 ARM_EXP="${EXP}/${NAME}"
-[ "${COND}" != "fo" ] && ARM_EXP="${EXP}/${NAME}-${COND}"
+[ "${COND}" != "fo" ]        && ARM_EXP="${ARM_EXP}-${COND}"
+# same collision hazard as COND: the run dir has no denoiser component, so a ugnet run
+# would silently overwrite the gcnn results for the same arm.
+[ "${DENOISER}" != "gcnn" ]  && ARM_EXP="${ARM_EXP}-${DENOISER}"
 export STAGE="diffusion"
 case "${DATASET}" in
   metrla) DSS=mt;; pemsbay) DSS=bay;; pems04f) DSS=04f;; pems04s) DSS=04s;;
   pems08f) DSS=08f;; pems08s) DSS=08s;; *) DSS="${DATASET}";; esac
-RUN_NAME="${DSS}-${BACKBONE}-${NAME}-${COND}-${EXP}"
+RUN_NAME="${DSS}-${BACKBONE}-${NAME}-${COND}-${DENOISER}-${EXP}"
 scontrol update job="${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_TASK_ID}" JobName="${RUN_NAME}" 2>/dev/null || true
-echo "===== task ${SLURM_ARRAY_TASK_ID}: ${DATASET}/${BACKBONE} / ${NAME} (prior=${PRIOR} temporal=${TEMPORAL} sampler=${SAMPLER} loss=${LOSS} cond=${COND}) ====="
+echo "===== task ${SLURM_ARRAY_TASK_ID}: ${DATASET}/${BACKBONE} / ${NAME} (prior=${PRIOR} temporal=${TEMPORAL} sampler=${SAMPLER} loss=${LOSS} cond=${COND} denoiser=${DENOISER}) ====="
 echo "===== seeds (sequential in this one job): ${SEEDS} ====="
 
 LOG_SRC="${OUTPUT_ROOT}/logs/${EXP}/${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_TASK_ID}"

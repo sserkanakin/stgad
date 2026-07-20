@@ -24,6 +24,10 @@ SEEDS="${SEEDS:-42}"
 # conditioning arm: fo = C is the forecast Yhat only; past = C is [R_past | Yhat].
 COND="${COND:-fo}"
 case "${COND}" in fo|past) ;; *) echo "COND must be fo|past, got '${COND}'" >&2; exit 1;; esac
+# denoiser capacity axis. gcnn ~17k (default), ugnet ~1M.
+DENOISER="${DENOISER:-gcnn}"
+# ARMS_KEEP subsets the arm list, e.g. ARMS_KEEP="iso emp rsh" to skip ddpm + whitened.
+ARMS_KEEP="${ARMS_KEEP:-}"
 # stage-1 seed: which residuals/<ds>/<bb>/seed<N>/ every arm trains on. PINNED at 42 so that
 # varying SEED (stage 2) measures diffusion-training stochasticity with the backbone held
 # fixed — the same design as the competitor's frozen-prior phase-2 runs. all arms then read
@@ -112,23 +116,27 @@ RES_CPU=(--partition="${DAIC_PARTITION}")
 [ -n "${DAIC_QOS_MEDIUM:-}" ] && RES_CPU+=(--qos="${DAIC_QOS_MEDIUM}")
 
 ln -sfn "${OUTPUT_ROOT}" "$(cd "${HERE}/../.." && pwd)/out" 2>/dev/null || true
-echo "===== reshape experiment ${EXP}  seeds=[${SEEDS}]  cond=${COND}  backbones=[${BACKBONES}]  ${#ARMS[@]} arms × $(set -- ${BACKBONES}; echo $#) backbones /dataset ====="
+echo "===== reshape experiment ${EXP}  seeds=[${SEEDS}]  cond=${COND}  denoiser=${DENOISER}  backbones=[${BACKBONES}]  ${#ARMS[@]} arms × $(set -- ${BACKBONES}; echo $#) backbones /dataset ====="
 echo "datasets: ${DATASETS}   (one array each — parallel)"
 
 for DS in ${DATASETS}; do
-  GRID_FILE="${LOG_DIR}/grid_${DS}_${COND}.tsv"; : > "${GRID_FILE}"
+  GRID_FILE="${LOG_DIR}/grid_${DS}_${COND}_${DENOISER}.tsv"; : > "${GRID_FILE}"
   idx=0
   for BB in ${BACKBONES}; do
     for ARM in "${ARMS[@]}"; do
       IFS=':' read -r NAME PR TMP CAP LOSS SCHED <<< "${ARM}"
-      RUN_DIR="${OUTPUT_ROOT}/${EXP}/${NAME}/${DS}/${BB}/${PR}"
+      # skip arms not in ARMS_KEEP (when set)
+      if [ -n "${ARMS_KEEP}" ] && [[ " ${ARMS_KEEP} " != *" ${NAME} "* ]]; then continue; fi
+      ARMDIR="${NAME}"; [ "${COND}" != "fo" ] && ARMDIR="${ARMDIR}-${COND}"
+      [ "${DENOISER}" != "gcnn" ] && ARMDIR="${ARMDIR}-${DENOISER}"
+      RUN_DIR="${OUTPUT_ROOT}/${EXP}/${ARMDIR}/${DS}/${BB}/${PR}"
       printf '%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
         "${idx}" "${DS}" "${BB}" "${NAME}" "${PR}" "${TMP}" "${CAP}" "${LOSS}" "${SCHED}" "${RUN_DIR}" >> "${GRID_FILE}"
       idx=$((idx + 1))
     done
   done
   N="${idx}"
-  EXPORTS="ALL,EXP=${EXP},SEEDS=${SEEDS// /_},RESIDUAL_SEED=${RESIDUAL_SEED},COND=${COND},EPOCHS=${EPOCHS},GRID_FILE=${GRID_FILE}"
+  EXPORTS="ALL,EXP=${EXP},SEEDS=${SEEDS// /_},RESIDUAL_SEED=${RESIDUAL_SEED},COND=${COND},DENOISER=${DENOISER},EPOCHS=${EPOCHS},GRID_FILE=${GRID_FILE}"
   EXPORTS="${EXPORTS},DATA_ROOT=${DATA_ROOT},RESULTS_ROOT=${RESULTS_ROOT},OUTPUT_ROOT=${OUTPUT_ROOT}"
   EXPORTS="${EXPORTS},WANDB_MODE=disabled"   # storage: all needed info is in validation_history.json
   # don't let one rejected sbatch (e.g. AssocMaxSubmitJobLimit) kill the loop under `set -e`:

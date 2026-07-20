@@ -43,6 +43,18 @@ export RESULTS_ROOT="${RESULTS_ROOT:-${DAIC_DATA_DIR}}"
 export OUTPUT_ROOT="${OUTPUT_ROOT:-${DAIC_OUT_DIR:-$HOME/windowshome/research-tud-out}}"
 LOG_DIR="${OUTPUT_ROOT}/logs/${EXP}"; mkdir -p "${LOG_DIR}"
 
+# PREFLIGHT: these homes are quota'd (8G each) and the residuals alone nearly fill
+# windowshome. an over-quota OUTPUT_ROOT lets every task train for minutes and then die
+# with "OSError: [Errno 122] Disk quota exceeded" when it writes validation_history.json.
+# a `touch` is NOT enough to detect it (0-byte files slip through) — write real blocks.
+if ! dd if=/dev/zero of="${LOG_DIR}/.spacetest" bs=1M count=32 status=none 2>/dev/null; then
+  rm -f "${LOG_DIR}/.spacetest"
+  echo "ABORT: cannot write 32MB to OUTPUT_ROOT=${OUTPUT_ROOT} (quota full)." >&2
+  echo "  quota -s | free up space, or point OUTPUT_ROOT somewhere with room." >&2
+  exit 1
+fi
+rm -f "${LOG_DIR}/.spacetest"
+
 source "${HERE}/_gpu.sh"
 GRES="$(gpu_blackwell_gres || true)"; GRES="${GRES:-${DAIC_GRES_GPU}}"
 RES=(--partition="${DAIC_PARTITION}" --gres="${GRES}")
@@ -69,16 +81,27 @@ for DS in ${DATASETS}; do
   EXPORTS="ALL,EXP=${EXP},SEED=${SEED},EPOCHS=${EPOCHS},GRID_FILE=${GRID_FILE}"
   EXPORTS="${EXPORTS},DATA_ROOT=${DATA_ROOT},RESULTS_ROOT=${RESULTS_ROOT},OUTPUT_ROOT=${OUTPUT_ROOT}"
   EXPORTS="${EXPORTS},WANDB_MODE=disabled"   # storage: all needed info is in validation_history.json
-  JOBID="$(sbatch --parsable \
+  # don't let one rejected sbatch (e.g. AssocMaxSubmitJobLimit) kill the loop under `set -e`:
+  # that silently skipped every remaining dataset AND the summary job.
+  if ! JOBID="$(sbatch --parsable \
          --array="0-$((N - 1))%${THROTTLE}" \
          --export="${EXPORTS}" \
          --job-name="${DS}-${EXP}" \
          --output="${LOG_DIR}/%A_%a.out" \
          --error="${LOG_DIR}/%A_%a.err" \
-         "${RES[@]}" "$@" "${HERE}/submit_reshape.sbatch")"
+         "${RES[@]}" "$@" "${HERE}/submit_reshape.sbatch")"; then
+    echo "  ${DS}: SUBMIT FAILED (queue limit?) — skipping, resubmit later with DATASETS=${DS}" >&2
+    FAILED_DS="${FAILED_DS:+${FAILED_DS} }${DS}"
+    continue
+  fi
   echo "  ${DS}: array ${JOBID} (${N} arms)  grid=${GRID_FILE}"
   ARRAY_IDS="${ARRAY_IDS:+${ARRAY_IDS}:}${JOBID}"
 done
+
+if [ -z "${ARRAY_IDS:-}" ]; then
+  echo "no arrays submitted — nothing to summarize." >&2; exit 1
+fi
+[ -n "${FAILED_DS:-}" ] && echo "  !! not submitted: ${FAILED_DS}  (rerun: DATASETS=\"${FAILED_DS}\" EXP=${EXP} $0 ${SEED})"
 
 # automatic end-of-run summary: a tiny job that waits for ALL dataset arrays (afterany),
 # then writes OUTPUT_ROOT/EXP/SUMMARY.md.

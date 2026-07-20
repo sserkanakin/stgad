@@ -67,7 +67,10 @@ trap copy_logs EXIT
 log_run_header "${DAIC_PYTHON} scripts/train_diffusion.py --dataset ${DATASET} --prior ${PRIOR} \
 --backbone ${BACKBONE} --exp ${ARM_EXP} --seed ${SEED} --epochs ${EPOCHS} --lr ${LR} ${FLAGS[*]}"
 
+# NB: the loss is per-arm and lives in FLAGS (--loss "${LOSS}"). do NOT add a second
+# --loss here: argparse takes the last one, so a stray literal would silently decide the
+# whitened-vs-snr arm depending on flag order.
 srun --unbuffered --export=ALL "${DAIC_PYTHON}" -u scripts/train_diffusion.py \
     --dataset "${DATASET}" --prior "${PRIOR}" --backbone "${BACKBONE}" \
-    --exp "${ARM_EXP}" --seed "${SEED}" --epochs "${EPOCHS}" --lr "${LR}" --loss snr \
+    --exp "${ARM_EXP}" --seed "${SEED}" --epochs "${EPOCHS}" --lr "${LR}" \
     "${FLAGS[@]}"

@@ -15,8 +15,15 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=/dev/null
 source "${HERE}/env.sh"
 
-SEED="${1:?usage: EXP=<tag> submit_reshape.sh <seed> [extra sbatch args]}"; shift
+# seeds: all of them run SEQUENTIALLY inside each array task, so a 5-seed grid is 18 jobs of
+# ~2h rather than 90 jobs of ~25min. accepts either positional numbers or SEEDS=".. .. ..".
+SEEDS="${SEEDS:-}"
+while [[ "${1:-}" =~ ^[0-9]+$ ]]; do SEEDS="${SEEDS:+${SEEDS} }$1"; shift; done
+SEEDS="${SEEDS:-42}"
 : "${EXP:?set EXP=<dated tag>, e.g. EXP=20260719_reshape}"
+# conditioning arm: fo = C is the forecast Yhat only; past = C is [R_past | Yhat].
+COND="${COND:-fo}"
+case "${COND}" in fo|past) ;; *) echo "COND must be fo|past, got '${COND}'" >&2; exit 1;; esac
 # stage-1 seed: which residuals/<ds>/<bb>/seed<N>/ every arm trains on. PINNED at 42 so that
 # varying SEED (stage 2) measures diffusion-training stochasticity with the backbone held
 # fixed — the same design as the competitor's frozen-prior phase-2 runs. all arms then read
@@ -105,23 +112,23 @@ RES_CPU=(--partition="${DAIC_PARTITION}")
 [ -n "${DAIC_QOS_MEDIUM:-}" ] && RES_CPU+=(--qos="${DAIC_QOS_MEDIUM}")
 
 ln -sfn "${OUTPUT_ROOT}" "$(cd "${HERE}/../.." && pwd)/out" 2>/dev/null || true
-echo "===== reshape experiment ${EXP}  seed=${SEED}  backbones=[${BACKBONES}]  ${#ARMS[@]} arms × $(set -- ${BACKBONES}; echo $#) backbones /dataset ====="
+echo "===== reshape experiment ${EXP}  seeds=[${SEEDS}]  cond=${COND}  backbones=[${BACKBONES}]  ${#ARMS[@]} arms × $(set -- ${BACKBONES}; echo $#) backbones /dataset ====="
 echo "datasets: ${DATASETS}   (one array each — parallel)"
 
 for DS in ${DATASETS}; do
-  GRID_FILE="${LOG_DIR}/grid_${DS}_seed${SEED}.tsv"; : > "${GRID_FILE}"
+  GRID_FILE="${LOG_DIR}/grid_${DS}_${COND}.tsv"; : > "${GRID_FILE}"
   idx=0
   for BB in ${BACKBONES}; do
     for ARM in "${ARMS[@]}"; do
       IFS=':' read -r NAME PR TMP CAP LOSS SCHED <<< "${ARM}"
-      RUN_DIR="${OUTPUT_ROOT}/${EXP}/${NAME}/${DS}/${BB}/${PR}/seed${SEED}"
+      RUN_DIR="${OUTPUT_ROOT}/${EXP}/${NAME}/${DS}/${BB}/${PR}"
       printf '%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
         "${idx}" "${DS}" "${BB}" "${NAME}" "${PR}" "${TMP}" "${CAP}" "${LOSS}" "${SCHED}" "${RUN_DIR}" >> "${GRID_FILE}"
       idx=$((idx + 1))
     done
   done
   N="${idx}"
-  EXPORTS="ALL,EXP=${EXP},SEED=${SEED},RESIDUAL_SEED=${RESIDUAL_SEED},EPOCHS=${EPOCHS},GRID_FILE=${GRID_FILE}"
+  EXPORTS="ALL,EXP=${EXP},SEEDS=${SEEDS// /_},RESIDUAL_SEED=${RESIDUAL_SEED},COND=${COND},EPOCHS=${EPOCHS},GRID_FILE=${GRID_FILE}"
   EXPORTS="${EXPORTS},DATA_ROOT=${DATA_ROOT},RESULTS_ROOT=${RESULTS_ROOT},OUTPUT_ROOT=${OUTPUT_ROOT}"
   EXPORTS="${EXPORTS},WANDB_MODE=disabled"   # storage: all needed info is in validation_history.json
   # don't let one rejected sbatch (e.g. AssocMaxSubmitJobLimit) kill the loop under `set -e`:
@@ -129,7 +136,7 @@ for DS in ${DATASETS}; do
   if ! JOBID="$(sbatch --parsable \
          --array="0-$((N - 1))%${THROTTLE}" \
          --export="${EXPORTS}" \
-         --job-name="${DS}-${EXP}" \
+         --job-name="${DS}-${COND}-${EXP}" \
          --output="${LOG_DIR}/%A_%a.out" \
          --error="${LOG_DIR}/%A_%a.err" \
          "${RES[@]}" "$@" "${HERE}/submit_reshape.sbatch")"; then
@@ -144,7 +151,7 @@ done
 if [ -z "${ARRAY_IDS:-}" ]; then
   echo "no arrays submitted — nothing to summarize." >&2; exit 1
 fi
-[ -n "${FAILED_DS:-}" ] && echo "  !! not submitted: ${FAILED_DS}  (rerun: DATASETS=\"${FAILED_DS}\" EXP=${EXP} $0 ${SEED})"
+[ -n "${FAILED_DS:-}" ] && echo "  !! not submitted: ${FAILED_DS}  (rerun: DATASETS=\"${FAILED_DS}\" EXP=${EXP} SEEDS=\"${SEEDS}\" COND=${COND} $0)"
 
 # automatic end-of-run summary: a tiny job that waits for ALL dataset arrays (afterany),
 # then writes OUTPUT_ROOT/EXP/SUMMARY.md.

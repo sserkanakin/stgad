@@ -20,7 +20,7 @@ source "${PROJECT_DIR}/scripts/daic/_common.sh"
 
 : "${GRID_FILE:?Set GRID_FILE via --export}"
 : "${EXP:?Set EXP via --export}"
-: "${SEED:?Set SEED via --export}"
+: "${SEEDS:?Set SEEDS via --export (underscore-separated, e.g. 42_126_2022)}"
 # BACKBONE is read per-row from the grid (below), not from the env.
 EPOCHS="${EPOCHS:-200}"
 LR="${LR:-1e-4}"
@@ -86,7 +86,7 @@ copy_logs() {
 }
 trap copy_logs EXIT
 
-SEED="${SEED:-$(set -- ${SEEDS}; echo $1)}"   # for log_run_header's identity block only
+SEED="${SEEDS}"   # log_run_header prints "seed:"; show the whole list, not just the first
 log_run_header "${DAIC_PYTHON} scripts/train_diffusion.py --dataset ${DATASET} --prior ${PRIOR} \
 --backbone ${BACKBONE} --exp ${ARM_EXP} --seeds '${SEEDS}' --epochs ${EPOCHS} --lr ${LR} ${FLAGS[*]}"
 

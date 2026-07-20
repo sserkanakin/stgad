@@ -3,9 +3,26 @@
 Written 2026-07-20, after the full code + paper + thesis audit. Supersedes ad-hoc launches.
 
 **The claim we are now testing** (changed by the 20260720b_reshape result): the structured
-Kronecker prior substitutes for denoiser capacity — its advantage grows as the backbone
-weakens. Pre-registered in `prior_design_note.md:115,125` *before* the runs; first evidence
-on pems08f is a monotone ladder **−11.3% (mlp) → −3.5% (gcn) → −1.5% (gwn)**.
+Kronecker prior helps in proportion to **how much graph structure survives in the residual**.
+First evidence on pems08f is a monotone ladder **−11.3% (mlp) → −3.5% (gcn) → −1.1% (gwn)**.
+
+**The ladder axis is the BACKBONE, not the denoiser.** `mlp`/`gcn`/`gwn` (312 / 17k / 309k
+params) are the deterministic forecasters that produce Ŷ; the residual R = Y − Ŷ is what the
+diffusion model sees. **The denoiser is fixed at 17,305 params (`--denoiser gcnn`) in every
+cell** — verified in all 21 logs of 20260720b. So what varies along the ladder is the *data*,
+not the model capacity: a weak backbone fails to absorb the spatiotemporal structure and
+leaves it in the residual, where the prior can exploit it; a strong backbone absorbs it, so
+the residual is closer to white and there is little left for the prior to add.
+
+This is falsifiable, and the test already exists: `scripts/analysis/prior_residual_match.py`
+measures per-cell prior-vs-residual mismatch. **Deliverable: correlate the per-cell CRPS gain
+against the measured graph-structure content of that backbone's residual.** If they track,
+the mechanism is demonstrated rather than inferred.
+
+⚠ Unresolved tension to settle before writing: the earlier static prior-match analysis found
+the empirical Kronecker prior matched *best on gwn/gcn, with iso winning on weak MLP* — the
+opposite ordering to the end-to-end CRPS ladder above. Different measurements (static
+distributional match vs end-to-end sampled CRPS), but the discrepancy must be explained.
 
 Everything below exists to (a) put error bars on that ladder, (b) produce metrics that are
 directly comparable to published papers, and (c) measure the two axes nobody else reports.
@@ -46,8 +63,8 @@ The core claim. Two datasets, both PEMS08 (flow + speed), both already on DAIC.
 - seeds: **42, 43, 44**
 - **48 runs per dataset** (45 + 3 ddpm) ≈ 2.3 h; **96 runs** for the pair ≈ **4.7 h**
 
-The whitened arms stay in the grid. The 20260720b result shows the loss **interacts with
-backbone capacity in the opposite direction to the prior**, which is a second mechanism on
+The whitened arms stay in the grid. The 20260720b result shows the loss **interacts with the
+residual's spectrum in the opposite direction to the prior**, which is a second mechanism on
 the same axis, not noise:
 
 | backbone | best snr | best whitened | whitening |
@@ -56,10 +73,12 @@ the same axis, not noise:
 | gcn | emp **0.11934** | rsh_w 0.12382 | hurts |
 | gwn | rsh 0.05718 | **rsh_w 0.05706** | helps |
 
-Reading: a weak denoiser needs the prior to carry the variance profile, and equalising every
-mode on top wastes its capacity on quiet modes; a strong denoiser has capacity to spare and
-benefits from the equalisation. `rsh_w` ran 200/144 epochs on mlp/gcn so its loss there is
-real; only `emp_w` (19/22 epochs) was truncated, which F4 fixes.
+Reading (again: the denoiser is identical in all nine cells, only the residual changes): a
+weak backbone leaves a strongly *coloured* residual spectrum, and whitening equalises every
+mode, destroying the emphasis the loud modes deserve — so it hurts. A strong backbone leaves
+a flatter residual spectrum, where whitening is close to a no-op and slightly helps.
+`rsh_w` ran 200/144 epochs on mlp/gcn so its loss there is real; only `emp_w` (19/22 epochs)
+was truncated, which F4 fixes.
 
 Submit one dataset at a time (21–27 jobs each) — the account submit cap rejects ~105+.
 

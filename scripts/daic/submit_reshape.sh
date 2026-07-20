@@ -97,6 +97,13 @@ RES=(--partition="${DAIC_PARTITION}" --gres="${GRES}")
 [ -n "${DAIC_QOS_MEDIUM:-}" ] && RES+=(--qos="${DAIC_QOS_MEDIUM}")
 [ -n "${DAIC_GPU_EXCLUDE:-}" ] && RES+=(--exclude="${DAIC_GPU_EXCLUDE}")
 
+# the summary job walks validation_history.json with stdlib python — it needs NO GPU.
+# it must NOT inherit RES: sbatch command-line args override the script's #SBATCH lines, so
+# passing --gres here would hand a GPU to a job that reads JSON, burn one of the 8 concurrent
+# slots, and make it queue behind the very training jobs it is waiting for.
+RES_CPU=(--partition="${DAIC_PARTITION}")
+[ -n "${DAIC_QOS_MEDIUM:-}" ] && RES_CPU+=(--qos="${DAIC_QOS_MEDIUM}")
+
 ln -sfn "${OUTPUT_ROOT}" "$(cd "${HERE}/../.." && pwd)/out" 2>/dev/null || true
 echo "===== reshape experiment ${EXP}  seed=${SEED}  backbones=[${BACKBONES}]  ${#ARMS[@]} arms × $(set -- ${BACKBONES}; echo $#) backbones /dataset ====="
 echo "datasets: ${DATASETS}   (one array each — parallel)"
@@ -145,8 +152,8 @@ SUM_ID="$(sbatch --parsable \
        --dependency="afterany:${ARRAY_IDS}" \
        --export="ALL,EXP=${EXP},OUTPUT_ROOT=${OUTPUT_ROOT}" \
        --job-name="sum-${EXP}" \
-       --output="${LOG_DIR}/summary.out" --error="${LOG_DIR}/summary.err" \
-       "${RES[@]}" "${HERE}/summarize_reshape.sbatch")"
+       --output="${LOG_DIR}/summary_%j.out" --error="${LOG_DIR}/summary_%j.err" \
+       "${RES_CPU[@]}" "${HERE}/summarize_reshape.sbatch")"
 echo "  summary job ${SUM_ID} (runs after all arrays → ${OUTPUT_ROOT}/${EXP}/SUMMARY.md)"
 echo
 echo "watch:   squeue --me   |   logs: ${LOG_DIR}/"

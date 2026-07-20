@@ -119,20 +119,29 @@ def _load_residuals_train(dataset: str, seed: int = 0, backbone: str = "gwn",
 
 
 def _load_laplacian_eig(dataset: str, repaired: bool) -> tuple[np.ndarray, np.ndarray]:
-    # self-healing: if the eig cache isn't there yet, build it from the
-    # adjacency (repaired to one connected component by default) and cache it,
-    # so a missing file never crashes a run.
+    # self-healing: rebuild if the eig cache is MISSING *or* CORRUPT (a truncated /
+    # bad-CRC npz from a storage incident used to crash every kron arm), and if the
+    # cache location is read-only/full (e.g. a full qtree) fall back to an in-memory
+    # recompute so a bad or unwritable cache never crashes a run.
     cache = paths.laplacian_eigs(dataset, repaired)
-    if not cache.exists():
-        from src.data.adjacency import (
-            compute_normalized_laplacian,
-            laplacian_eigendecomposition,
-            load_adjacency,
-        )
-        L = compute_normalized_laplacian(load_adjacency(dataset, repair=repaired))
-        laplacian_eigendecomposition(L, dataset, cache=True, repaired=repaired)
-    d = np.load(cache)
-    return d["eigenvalues"].astype(np.float64), d["eigenvectors"].astype(np.float64)
+    if cache.exists():
+        try:
+            d = np.load(cache)
+            return d["eigenvalues"].astype(np.float64), d["eigenvectors"].astype(np.float64)
+        except Exception as e:                       # BadZipFile, EOFError, OSError, ...
+            import warnings
+            warnings.warn(f"corrupt laplacian cache {cache} ({e}); recomputing from adjacency")
+    from src.data.adjacency import compute_normalized_laplacian, load_adjacency
+    L = compute_normalized_laplacian(load_adjacency(dataset, repair=repaired))
+    lam, V = np.linalg.eigh(L)
+    o = np.argsort(lam)
+    lam, V = lam[o].astype(np.float64), V[:, o].astype(np.float64)
+    try:                                             # best-effort re-cache (ok if unwritable)
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        np.savez(cache, eigenvalues=lam, eigenvectors=V)
+    except Exception:
+        pass
+    return lam, V
 
 
 def _knn_correlation_graph(R: np.ndarray, k: int = 15) -> np.ndarray:

@@ -230,6 +230,9 @@ def evaluate(dataset, prior, seed, *, exp, device, k, n_steps, alpha,
     pit_hist = torch.zeros(H, pit_bins)
     reliab_hit = torch.zeros(len(diag_levels), H)
     examples = None
+    gen_seconds = 0.0    # pure reverse-sampling wall time (excludes metric computation),
+                         # the DiffSTG-comparable number: their csv 'time' = np.sum(time_lst)
+                         # accumulated the same way around their sampler on this cluster.
     for ci, start in enumerate(range(0, n_total, chunk)):
         end = min(start + chunk, n_total)
         R0 = R0_all[start:end].to(device) * sig           # raw residual
@@ -238,7 +241,11 @@ def evaluate(dataset, prior, seed, *, exp, device, k, n_steps, alpha,
         yt = Ytrue_all[start:end].to(device)              # raw ground-truth signal
         yp = yt - R0                                      # raw backbone forecast (0 for 'raw')
         b = R0.shape[0]
+        _t0 = time.time()
         samp = _reverse(Y.repeat(k, 1, 1), tag=f"point {ci + 1}/{nchunks}")
+        if device.type == "cuda":
+            torch.cuda.synchronize()
+        gen_seconds += time.time() - _t0
         samp = samp.view(k, b, N, H) * sig                # raw residual samples
         # reconstruct the forecast and clip to [0,∞) (non-negative flow/speed; matches DiffSTG).
         # all metrics are now in raw FORECAST space (= residual space + y_pred, then clip).
@@ -346,6 +353,10 @@ def evaluate(dataset, prior, seed, *, exp, device, k, n_steps, alpha,
         "w1": float(np.mean(w1_h)), "energy": float(np.mean(ed_h)),
         "w1_h": w1_h, "energy_h": ed_h,
         "w1_clean_windows": int(n_w1), "w1_frac_of_test": w1_frac,
+        # sampling speed (point-metrics pass only; W1's extra generation excluded).
+        # s_per_window is at THIS k and n_steps — divide by k for per-sample cost.
+        "gen_seconds": round(gen_seconds, 2),
+        "s_per_window": round(gen_seconds / max(n_total, 1), 4),
     }
     if save_diagnostics:
         # reliability: empirical central-interval coverage vs nominal (per horizon + overall)

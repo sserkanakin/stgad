@@ -74,7 +74,10 @@ echo "(MaxSubmit=100, MaxJobs=8 on this account; check 'squeue --me' usage befor
 
 total_tasks=0; total_skip=0
 for DS in ${DATASETS}; do
-  GRID_FILE="${LOG_DIR}/eval_grid_${DS}.tsv"; : > "${GRID_FILE}"
+  # unique per invocation ($$): several submissions share EXP's log dir (main test eval,
+  # few-step val curve, EM robustness) and array tasks read the grid at RUN time — a fixed
+  # name would let a later submission overwrite a pending array's grid.
+  GRID_FILE="${LOG_DIR}/eval_grid_${DS}_${SPLIT}_${SAMPLER}_$$.tsv"; : > "${GRID_FILE}"
   idx=0
   for BB in ${BACKBONES}; do
     for ARM in ${ARMS}; do

@@ -80,10 +80,16 @@ def load_run(dataset, prior, seed, exp, device, backbone="gwn", ckpt_name="best.
     cfg = json.loads((ckpt_dir / "config.json").read_text())
     ckpt = torch.load(ckpt_dir / ckpt_name, map_location=device, weights_only=False)
 
+    # stage-1 (residual/prior) seed vs stage-2 (diffusion) seed: the ladder trains all
+    # diffusion seeds on ONE residual set (residual_seed, pinned at 42), so the residuals,
+    # sigma_r and the fitted prior all live under res_seed, NOT the diffusion seed. old
+    # configs predate the split -> fall back to the diffusion seed.
+    res_seed = cfg.get("residual_seed", seed)
+
     # rebuild the SAME prior the run trained with (spatial + stiffness cap + graph
     # repair + residual norm from config; defaults keep back-compat with configs
     # written before those flags existed).
-    prior_obj = load_prior(dataset, prior, seed,
+    prior_obj = load_prior(dataset, prior, res_seed,
                            spatial=cfg.get("spatial", "structured"),
                            stiffness_cap=(cfg.get("stiffness_cap") or None),
                            gamma=cfg.get("gamma"),
@@ -123,7 +129,7 @@ def load_run(dataset, prior, seed, exp, device, backbone="gwn", ckpt_name="best.
         ).to(device)
     elif backbone == "raw":
         import numpy as _np
-        T_h = int(_np.load(residual_path(dataset, "test", seed, backbone))["history"].shape[-1])
+        T_h = int(_np.load(residual_path(dataset, "test", res_seed, backbone))["history"].shape[-1])
         denoiser = SignalDenoiser(
             N=prior_obj.N, H=prior_obj.H, T_h=T_h, adjacency=load_adjacency(dataset),
             d_h=cfg["d_h"], channel_multipliers=tuple(cfg["channel_multipliers"]),
@@ -153,6 +159,9 @@ def evaluate(dataset, prior, seed, *, exp, device, k, n_steps, alpha,
     denoiser, prior_obj, schedule, cfg, ckpt_epoch = load_run(
         dataset, prior, seed, exp, device, backbone, ckpt_name=ckpt_name)
     N, H = prior_obj.N, prior_obj.H
+    # residuals/sigma/dataset are keyed by the STAGE-1 seed (see load_run); the diffusion
+    # seed still names the checkpoint dir, the eval output dir and the sampling RNG.
+    res_seed = cfg.get("residual_seed", seed)
 
     if sampler == "em":
         # EM stability floor: explicit EM NaNs when the step count is too low for this
@@ -183,9 +192,9 @@ def evaluate(dataset, prior, seed, *, exp, device, k, n_steps, alpha,
         return s
 
     # same residual scale + dataset flags the run trained with (from config.json)
-    sigma_r = train_residual_sigma(dataset, seed, backbone, norm=cfg.get("norm", "global"))
+    sigma_r = train_residual_sigma(dataset, res_seed, backbone, norm=cfg.get("norm", "global"))
     sig = sigma_to_torch(sigma_r, device)                     # (1,1) or (N,1), broadcasts
-    ds = make_dataset(dataset, split, seed, backbone, sigma_r,
+    ds = make_dataset(dataset, split, res_seed, backbone, sigma_r,
                       cond_past=bool(cfg.get("cond_past")),
                       zero_masked=bool(cfg.get("zero_masked_input")))
     R0_all, Y_all, M_all = ds.R0, ds.Y_hat, ds.mask

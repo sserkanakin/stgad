@@ -126,6 +126,9 @@ def load_run(dataset, prior, seed, exp, device, backbone="gwn", ckpt_name="best.
             N=prior_obj.N, H=prior_obj.H, adjacency=load_adjacency(dataset),
             K=cfg.get("gcnn_hops", 5), n_layers=cfg.get("gcnn_layers", 3),
             hidden=cfg.get("gcnn_hidden", 24),
+            # cond-past runs train with n_cond=2 ([R_past | Yhat]); without this the
+            # state_dict load fails on the first conv (3 vs 2 input channels).
+            n_cond=(2 if cfg.get("cond_past") else 1),
         ).to(device)
     elif backbone == "raw":
         import numpy as _np
@@ -327,7 +330,7 @@ def evaluate(dataset, prior, seed, *, exp, device, k, n_steps, alpha,
         w1_h.append(sliced_wasserstein1(gen_c, true_c, w1_proj, generator))
         ed_h.append(energy_distance(gen_c, true_c))
 
-    return {
+    res = {
         "dataset": dataset, "backbone": backbone, "prior": prior, "seed": seed,
         "exp": exp, "ckpt_epoch": ckpt_epoch, "split": split, "ckpt": ckpt_name,
         "n_test_windows": int(n_total), "k_samples": k, "n_steps": n_steps,

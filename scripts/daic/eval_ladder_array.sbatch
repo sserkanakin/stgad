@@ -75,7 +75,7 @@ for S in ${SEEDS}; do
   # AUTOSPREAD (comma grid, e.g. "1.0,1.2,1.4,1.6,1.8"): fit the ensemble-spread scalar on
   # VAL, then evaluate SPLIT at the best s (recalibrated protocol; uniform across arms).
   EXTRA=()
-  [ -n "${AUTOSPREAD:-}" ] && EXTRA+=(--auto-spread "${AUTOSPREAD}")
+  [ -n "${AUTOSPREAD:-}" ] && EXTRA+=(--auto-spread "${AUTOSPREAD//_/,}")
   for NS in ${NSTEPS}; do
     echo "───── seed ${S}  (${DATASET}/${BACKBONE}/${NAME})  ${SAMPLER}@${NS} ─────"
     srun --unbuffered --export=ALL "${DAIC_PYTHON}" -u scripts/eval_diffusion.py \

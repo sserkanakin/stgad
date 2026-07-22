@@ -106,7 +106,9 @@ for DS in ${DATASETS}; do
   fi
   EXPORTS="ALL,EXP=${EXP},GRID_FILE=${GRID_FILE},SEEDS=${SEEDS// /_}"
   EXPORTS="${EXPORTS},SPLIT=${SPLIT},SAMPLER=${SAMPLER},NSTEPS=${NSTEPS// /_},K=${K},CKPT=${CKPT}"
-  [ -n "${AUTOSPREAD:-}" ] && EXPORTS="${EXPORTS},AUTOSPREAD=${AUTOSPREAD}"
+  # commas are --export's SEPARATOR — encode them as underscores (sbatch decodes back),
+  # else the grid silently truncates to its first element and the fit is degenerate.
+  [ -n "${AUTOSPREAD:-}" ] && EXPORTS="${EXPORTS},AUTOSPREAD=${AUTOSPREAD//,/_}"
   EXPORTS="${EXPORTS},DATA_ROOT=${DATA_ROOT},RESULTS_ROOT=${RESULTS_ROOT},OUTPUT_ROOT=${OUTPUT_ROOT},WANDB_MODE=disabled"
   # don't let one rejected sbatch (queue limit) kill the loop under set -e.
   if ! JOBID="$(sbatch --parsable \

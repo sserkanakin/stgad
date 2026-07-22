@@ -658,6 +658,10 @@ def main() -> None:
     p.add_argument("--shrink-t", type=float, default=None,
                    help="temporal ridge ρ: μ_T ← (1-ρ)μ_T + ρ·μ̄ (shrinks empirical Σ_T toward "
                         "isotropic). None = SHRINK_T (0.1). only used when --temporal empirical.")
+    p.add_argument("--shrink-s", type=float, default=None,
+                   help="joint-spectrum ridge λ for --temporal reshaped: v_emp ← (1-λ)v_emp + "
+                        "λ·mean(v_emp) (Ledoit-Wolf-style shrink toward flat; λ=1 ≈ iso). "
+                        "robustifies the per-mode fit against train→test spectrum drift.")
     p.add_argument("--temporal", choices=("empirical", "laplacian", "cartesian", "reshaped"), default="empirical",
                    help="temporal factor: 'empirical' Σ_T fit from data; 'laplacian' = path-graph "
                         "Laplacian, multiplicative product (ablation); 'cartesian' = GAD-literal "
@@ -935,7 +939,7 @@ def main() -> None:
     # the prior on different data and the arms would stop being comparable across seeds.
     prior = load_prior(args.dataset, args.prior, res_seed,
                        spatial=args.spatial, stiffness_cap=(args.stiffness_cap or None),
-                       gamma=args.gamma, shrink_t=args.shrink_t,
+                       gamma=args.gamma, shrink_t=args.shrink_t, shrink_s=args.shrink_s,
                        temporal=args.temporal, gamma_t=args.gamma_t,
                        spatial_graph=args.spatial_graph, knn_k=args.knn_k, winsor=args.winsor,
                        backbone=args.backbone, norm=args.norm)

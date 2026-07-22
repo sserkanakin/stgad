@@ -72,13 +72,17 @@ for S in ${SEEDS}; do
   if [ ! -f "${ckpt}" ]; then
     echo "  !! skip seed ${S}: no ${CKPT} at ${ckpt}"; FAILED="${FAILED} ${S}(no-ckpt)"; continue
   fi
+  # AUTOSPREAD (comma grid, e.g. "1.0,1.2,1.4,1.6,1.8"): fit the ensemble-spread scalar on
+  # VAL, then evaluate SPLIT at the best s (recalibrated protocol; uniform across arms).
+  EXTRA=()
+  [ -n "${AUTOSPREAD:-}" ] && EXTRA+=(--auto-spread "${AUTOSPREAD}")
   for NS in ${NSTEPS}; do
     echo "───── seed ${S}  (${DATASET}/${BACKBONE}/${NAME})  ${SAMPLER}@${NS} ─────"
     srun --unbuffered --export=ALL "${DAIC_PYTHON}" -u scripts/eval_diffusion.py \
         --dataset "${DATASET}" --prior "${PRIOR}" --backbone "${BACKBONE}" \
         --exp "${ARM_EXP}" --seed "${S}" --split "${SPLIT}" \
         --sampler "${SAMPLER}" --n-steps "${NS}" --k "${K}" --ckpt "${CKPT}" \
-        --w1-samples 4 --save-diagnostics --gen-batch "${GB}"
+        --w1-samples 4 --save-diagnostics --gen-batch "${GB}" "${EXTRA[@]}"
     rc=$?
     [ ${rc} -ne 0 ] && { echo "  !! seed ${S} steps ${NS} FAILED rc=${rc}"; FAILED="${FAILED} ${S}@${NS}"; }
   done

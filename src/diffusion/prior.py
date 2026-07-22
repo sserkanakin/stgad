@@ -272,6 +272,7 @@ def load_prior(
     stiffness_cap: float | None = None,
     gamma: float | None = None,
     shrink_t: float | None = None,
+    shrink_s: float | None = None,
     temporal: str = "empirical",
     gamma_t: float = 0.6,
     spatial_graph: str = "road",
@@ -394,6 +395,14 @@ def load_prior(
         Rz = np.where(mask, R_full, 0.0)
         C = np.matmul(V_S.T, Rz); C = np.matmul(C, V_T)          # (B,N,H) graph×temporal coeffs
         v_emp = np.clip((C ** 2).mean(0), 1e-8, None)            # (N,H)
+        # joint-spectrum ridge (Ledoit-Wolf-style shrinkage toward flat): the same
+        # regularizer the other components already have (γ for space, ρ=SHRINK_T for
+        # time). the raw per-mode fit is brittle under train→test spectrum drift —
+        # the loud modes grow at test (energy-weighted ratio 1.3–3.8×) and a tightly
+        # matched prior under-disperses exactly there. λ=0 = faithful v_emp (old
+        # behaviour); λ=1 = flat = iso. trace-preserving.
+        if shrink_s:
+            v_emp = (1.0 - shrink_s) * v_emp + shrink_s * v_emp.mean()
         theta = 1.0 / v_emp
         if stiffness_cap is not None:
             theta = np.maximum(theta, theta.max() / stiffness_cap)

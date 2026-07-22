@@ -94,6 +94,7 @@ def load_run(dataset, prior, seed, exp, device, backbone="gwn", ckpt_name="best.
                            stiffness_cap=(cfg.get("stiffness_cap") or None),
                            gamma=cfg.get("gamma"),
                            shrink_t=cfg.get("shrink_t"),
+                           shrink_s=cfg.get("shrink_s"),
                            temporal=cfg.get("temporal", "empirical"),
                            gamma_t=cfg.get("gamma_t", 0.6),
                            spatial_graph=cfg.get("spatial_graph", "road"),
@@ -158,7 +159,8 @@ def evaluate(dataset, prior, seed, *, exp, device, k, n_steps, alpha,
              w1_windows, w1_samples, w1_proj, gen_batch, max_windows, generator,
              backbone="gwn", mask_zero=True, split="test", sampler="em",
              ckpt_name="best.pt", save_diagnostics=False,
-             pit_bins=20, n_examples=6, n_example_sensors=4):
+             pit_bins=20, n_examples=6, n_example_sensors=4,
+             spread_scale=1.0, fit_spread_grid=None):
     denoiser, prior_obj, schedule, cfg, ckpt_epoch = load_run(
         dataset, prior, seed, exp, device, backbone, ckpt_name=ckpt_name)
     N, H = prior_obj.N, prior_obj.H
@@ -222,6 +224,9 @@ def evaluate(dataset, prior, seed, *, exp, device, k, n_steps, alpha,
     mae_n = torch.zeros(H); mse_n = torch.zeros(H); cnt = torch.zeros(H)
     mape_n = torch.zeros(H); wink_n = torch.zeros(H); cov_n = torch.zeros(H); crps_n = torch.zeros(H)
     qnum_n = torch.zeros(H); qden_n = torch.zeros(H)
+    if fit_spread_grid is not None:
+        fit_qnum = [torch.zeros(H) for _ in fit_spread_grid]
+        fit_cov = [torch.zeros(1) for _ in fit_spread_grid]
     # ── calibration diagnostics (figure data; free to accumulate from the samples) ──
     #   PIT histogram per horizon (flat = calibrated) + reliability curve (empirical
     #   coverage of central intervals at many nominal levels) + a few example fan charts.
@@ -250,6 +255,25 @@ def evaluate(dataset, prior, seed, *, exp, device, k, n_steps, alpha,
         # reconstruct the forecast and clip to [0,∞) (non-negative flow/speed; matches DiffSTG).
         # all metrics are now in raw FORECAST space (= residual space + y_pred, then clip).
         fc = (yp.unsqueeze(0) + samp).clamp(min=0.0)      # (k, b, N, H) raw forecast samples
+        # ensemble spread recalibration (val-fitted, applied identically to every arm):
+        # inflate/deflate around the ensemble mean; fixes the universal test-time
+        # under-dispersion (val→test residual-variance growth up to 1.7x).
+        if spread_scale != 1.0:
+            _m = fc.mean(dim=0, keepdim=True)
+            fc = (_m + spread_scale * (fc - _m)).clamp(min=0.0)
+        if fit_spread_grid is not None:
+            # score the WHOLE grid from this one set of samples: quantiles of the
+            # scaled ensemble are the scaled quantiles, so lo/hi come for free.
+            _m = fc.mean(dim=0, keepdim=True)
+            _lo0 = torch.quantile(fc, alpha / 2.0, dim=0)
+            _hi0 = torch.quantile(fc, 1.0 - alpha / 2.0, dim=0)
+            for si, s in enumerate(fit_spread_grid):
+                fc_s = (_m + s * (fc - _m)).clamp(min=0.0)
+                fit_qnum[si] += quantile_crps_num(fc_s, yt, Mk).cpu()
+                lo_s = (_m[0] + s * (_lo0 - _m[0])).clamp(min=0.0)
+                hi_s = _m[0] + s * (_hi0 - _m[0])
+                sn, _ = _masked_sums(((yt >= lo_s) & (yt <= hi_s)).float(), Mk)
+                fit_cov[si] += sn.sum().cpu()
         mean = fc.mean(dim=0)
         sn, cn = _masked_sums((mean - yt).abs(), Mk);  mae_n += sn.cpu(); cnt += cn.cpu()
         sn, _ = _masked_sums((mean - yt).pow(2), Mk);  mse_n += sn.cpu()
@@ -357,7 +381,19 @@ def evaluate(dataset, prior, seed, *, exp, device, k, n_steps, alpha,
         # s_per_window is at THIS k and n_steps — divide by k for per-sample cost.
         "gen_seconds": round(gen_seconds, 2),
         "s_per_window": round(gen_seconds / max(n_total, 1), 4),
+        "spread_scale": spread_scale,
     }
+    if fit_spread_grid is not None:
+        tot_cnt = float(cnt.sum())
+        fit_crps = [float(q.sum() / (qden_n.sum().clamp(min=1e-8) * 19.0)) for q in fit_qnum]
+        best_i = int(np.argmin(fit_crps))
+        res["spread_fit"] = {
+            "grid": [float(s) for s in fit_spread_grid],
+            "crps": fit_crps,
+            "coverage": [float(c.item()) / tot_cnt for c in fit_cov],
+            "best": float(fit_spread_grid[best_i]),
+            "best_crps": fit_crps[best_i],
+        }
     if save_diagnostics:
         # reliability: empirical central-interval coverage vs nominal (per horizon + overall)
         reliab_cov = (reliab_hit / cnt).tolist()                         # (L,H)
@@ -385,6 +421,11 @@ def _save(res):
     # per-(split, ckpt, sampler, steps) filename so parallel evals never clobber
     ck = "bestcrps" if res.get("ckpt") == "best_crps.pt" else "best"
     stem = f"{res.get('split', 'test')}_metrics_{ck}_{res.get('sampler', 'em')}{res['n_steps']}"
+    # recalibrated / fit runs get their own names so they NEVER clobber the raw eval.
+    if res.get("spread_fit") is not None:
+        stem += "_sfit"
+    elif res.get("spread_scale", 1.0) != 1.0:
+        stem += "_srecal"
     # calibration/example figure data (large arrays) go in a companion .npz, not the json
     diag = res.pop("_diag", None)
     if diag is not None:
@@ -460,6 +501,11 @@ def main():
                         "closed-form OU posterior, exact for the linear SDE, ~100 steps")
     p.add_argument("--ckpt", choices=("best.pt", "best_crps.pt"), default="best.pt",
                    help="which checkpoint to evaluate (val-loss or sweep-CRPS selection)")
+    p.add_argument("--spread-scale", type=float, default=1.0,
+                   help="ensemble spread recalibration: fc <- mean + s*(fc-mean). 1.0 = off.")
+    p.add_argument("--auto-spread", default=None,
+                   help="comma grid, e.g. '1.0,1.2,1.4,1.6,1.8': fit s on VAL (min CRPS), "
+                        "then evaluate --split at the best s. applied uniformly to every arm.")
     p.add_argument("--save-diagnostics", action="store_true",
                    help="also dump calibration + example figure data to a companion "
                         "<split>_diag_*.npz (PIT histogram, reliability curve, example fan charts)")
@@ -495,13 +541,26 @@ def main():
         setup_logging(logf)     # stdout (slurm .out) AND this run's eval.log
         log.info(f"=== eval {ds}/{pr} · exp={args.exp} · {args.split} · sampler={args.sampler} "
                  f"n_steps={args.n_steps} · ckpt={args.ckpt} · k={args.k} · device={device} ===")
-        res = evaluate(ds, pr, args.seed, exp=args.exp, device=device, k=args.k,
-                       n_steps=args.n_steps, alpha=args.alpha,
-                       w1_windows=args.w1_windows, w1_samples=args.w1_samples,
-                       w1_proj=args.w1_proj, gen_batch=args.gen_batch,
-                       max_windows=args.max_windows, generator=g, backbone=args.backbone,
-                       mask_zero=args.mask_zero, split=args.split, sampler=args.sampler,
-                       ckpt_name=args.ckpt, save_diagnostics=args.save_diagnostics)
+        common = dict(exp=args.exp, device=device, k=args.k,
+                      n_steps=args.n_steps, alpha=args.alpha,
+                      w1_windows=args.w1_windows, w1_samples=args.w1_samples,
+                      w1_proj=args.w1_proj, gen_batch=args.gen_batch,
+                      max_windows=args.max_windows, generator=g, backbone=args.backbone,
+                      mask_zero=args.mask_zero, sampler=args.sampler,
+                      ckpt_name=args.ckpt)
+        spread = args.spread_scale
+        if args.auto_spread:
+            # phase 1: fit the spread scalar on VAL (grid scored from one sample set),
+            # phase 2 below evaluates the target split at the best s. no test leakage.
+            grid = [float(x) for x in args.auto_spread.split(",")]
+            fit = evaluate(ds, pr, args.seed, split="val", spread_scale=1.0,
+                           fit_spread_grid=grid, save_diagnostics=False, **common)
+            _save(fit)
+            spread = fit["spread_fit"]["best"]
+            log.info(f"[auto-spread] val-fitted s={spread}  "
+                     f"(grid crps: {['%.4f' % c for c in fit['spread_fit']['crps']]})")
+        res = evaluate(ds, pr, args.seed, split=args.split, spread_scale=spread,
+                       save_diagnostics=args.save_diagnostics, **common)
         _print_one(res)
         # record the headline numbers in eval.log too (_print_one only hits stdout)
         log.info(f"[done] {ds}/{pr} MAE={res['mae']:.4f} RMSE={res['rmse']:.4f} "

@@ -32,8 +32,11 @@ stationary variance `σ²/θ[k,h]`. The three arms differ ONLY in `θ`:
 
 **Scale normalization.** Rescale `θ ← θ·(0.8/θ_min)`, `σ² ← σ²·(0.8/θ_min)` (leaves `σ²/θ`
 unchanged) so `θ_min = 0.8` → one fixed schedule `c₀=7` mixes every dataset. `σ²` then matched
-to total residual variance. `reshaped` uses `--stiffness-cap` (~50) since raw `θ_max/θ_min`
-reaches ~5891 (near-zero-variance noise modes).
+to total residual variance. **No stiffness cap on `reshaped`** (dropped per run_plan F1: the
+cap floors θ from below, truncating exactly the loud modes the reshaped prior exists to
+match — 35–91% of residual energy on 4/6 datasets; the cap existed only for EM stability and
+the experiment is ancestral-only, which has no such floor). Verified: schedule covers 100% of
+modes even at 300× stiffness (hyperparameter_audit §2b).
 
 ## Stage 4 — Forward process (heat equation)
 

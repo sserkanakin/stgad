@@ -90,6 +90,16 @@ module saved by their `torch.save(model, path)`. Without this the reload throws 
 **test** eval silently falls back to the last-epoch model instead of the best checkpoint. Add
 `weights_only=False` to the `torch.load(model_path, ...)` in the `try:` before the test loop.
 
+### PATCH 7 — `shutil.copyfile` not `shutil.copy` for the final log archive (`main`, end)
+
+After the test eval, `main()` copies the run log to a metric-tagged name via `shutil.copy`.
+`shutil.copy` also copies the mode bits (`copymode` → `chmod` on the destination), and our
+`output/log/` is symlinked onto **windowshome/NetApp**, which refuses `chmod` → crashes the
+whole run with `PermissionError: [Errno 1] Operation not permitted`. This step is purely
+cosmetic and runs *after* `save2file()` already wrote the metrics CSV, so a completed run was
+being marked FAILED over a log rename. Fix: use `shutil.copyfile` (bytes only, no chmod) inside
+a `try/except OSError` that just prints and continues.
+
 ---
 
 ## third_party/Graph-WaveNet (commit 6b162e8)

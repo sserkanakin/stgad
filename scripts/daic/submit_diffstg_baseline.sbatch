@@ -88,6 +88,17 @@ if [ ! -f "${DS_DIR}/flow.npy" ] || [ ! -f "${DS_DIR}/adj.npy" ]; then
   python scripts/baselines/build_diffstg_data.py "${DATASET}"
 fi
 
+# eval-only recovery mode: skip training, run DiffSTG's final test eval on the saved
+# best-val checkpoint (walltime recovery, or S=100 resampling). MODE=eval + optional
+# CKPT (abs path; else newest match) and NSAMPLES.
+if [ "${MODE:-train}" = "eval" ]; then
+  echo "─── diffstg EVAL-only recovery ${DATASET} seed ${SEED} (n_samples=${NSAMPLES}) ───"
+  EV=(--data "${DATASET}" --seed "${SEED}" --n-samples "${NSAMPLES}")
+  [ -n "${CKPT:-}" ] && EV+=(--ckpt "${CKPT}")
+  "${DAIC_PYTHON}" scripts/baselines/eval_diffstg_ckpt.py "${EV[@]}"
+  exit $?
+fi
+
 echo "─── diffstg baseline ${DATASET} seed ${SEED} "\
 "(N=${N} steps=${SAMPLE_STEPS} hidden=${HIDDEN} n_samples=${NSAMPLES} bs=${BATCH_SIZE} lr=${LR}) ───"
 

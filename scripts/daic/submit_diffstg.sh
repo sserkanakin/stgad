@@ -43,9 +43,10 @@ DIFFSTG_HOME="${DIFFSTG_HOME:-$(dirname "${DAIC_DATA_DIR}")/research-tud-diffstg
 LOGDIR="${DIFFSTG_HOME}/logs/${EXP}/diffstg"
 mkdir -p "${LOGDIR}"
 
-# forward faithful-default hyperparam overrides to the job env if set.
+# forward faithful-default hyperparam overrides to the job env if set. MODE=eval (+
+# optional CKPT) runs the eval-only recovery instead of training (see the sbatch).
 EXPORTS="ALL,SEED=${SEED},EXP=${EXP},DIFFSTG_HOME=${DIFFSTG_HOME}"
-for k in N SAMPLE_STEPS HIDDEN NSAMPLES BATCH_SIZE LR BETA_END; do
+for k in N SAMPLE_STEPS HIDDEN NSAMPLES BATCH_SIZE LR BETA_END MODE CKPT; do
   v="${!k:-}"; [ -n "${v}" ] && EXPORTS="${EXPORTS},${k}=${v}"
 done
 

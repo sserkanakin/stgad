@@ -345,13 +345,11 @@ def load_prior(
         # and the prior is exactly GAD's:  Q = L_ST + γ I,  one FIXED small γ (0.04),
         # Σ_stat = σ²(L_ST+γI)^{-1} with σ² a single scalar matched to the data variance.
         # NO data-fit covariance, no winsor, no per-dataset γ — pure GAD, one more axis.
-        # CAUTION on γ: stiffness = (2+γ)/γ. GAD runs γ=0.8 → stiffness 3.5 (a gentle
-        # graded cascade, fast modes 90%-corrupted at c̄≈0.41, slow at c̄≈1.44). γ=0.04
-        # gives stiffness 51 (fast modes gone by c̄≈0.03 — a violent, near-degenerate
-        # collapse and an EM-unfriendly reverse SDE). To reproduce GAD's regime pass the
-        # GAD value γ=0.8; the small-γ default below only matched the data's low-pass
-        # spectrum, which GAD never does (the denoiser carries the spectrum, not the prior).
-        gamma = 0.04 if gamma is None else gamma
+        # γ sets the spectrum: θ = λ_ST + γ ∈ [γ, 2+γ], stiffness (2+γ)/γ. GAD Fig.1 uses
+        # θ∈[0.1,1.79] (γ=0.1) — a graded cascade where modes die across the whole timeline.
+        # γ=0.1 reproduces that on the graph-smooth traffic SIGNAL (low-freq-dominant, since
+        # Σ_stat[mode]=σ²/θ puts ~20× more variance on the smoothest mode than the roughest).
+        gamma = 0.1 if gamma is None else gamma
         if repair is None:
             from src.data.adjacency import REPAIR_GRAPH
             repair = REPAIR_GRAPH
@@ -362,10 +360,15 @@ def load_prior(
         omega, V_T = np.linalg.eigh(compute_normalized_laplacian(A_T))
         omega = np.clip(omega, 0.0, None)
         lam_ST = 0.5 * (lam_S[:, None] + omega[None, :])          # (N, H) ∈ [0, 2]
-        theta = lam_ST + gamma                                     # GAD precision λ + γ
+        theta = lam_ST + gamma                                     # GAD precision λ + γ ∈ [γ, 2+γ]
         if stiffness_cap is not None:
             theta = np.maximum(theta, theta.max() / stiffness_cap)
-        theta, sigma2_scale = _normalize_scale(theta)
+        # GAD-FAITHFUL: θ = λ_ST+γ is ALREADY the canonical bounded heat spectrum — do NOT
+        # rescale θ_min→0.8. That ×~20 inflation (the residual arm's _normalize_scale) crushes
+        # the cascade: median θ→20, every mode dies by c̄≈0.15, only the smoothest survives
+        # (see scripts/analysis/gad_forward.py, top row). Keeping θ∈[γ,2+γ] gives GAD Fig.1's
+        # graded forward. The schedule must mix the slow mode: 2·c_0·γ ≳ 5 (γ=0.1 → c_0=25).
+        sigma2_scale = 1.0
         # single-scalar variance match (GAD's σ): Σ_stat mean = data variance.
         cur = float((sigma2_scale / theta).mean())
         sigma2_scale *= var_full / max(cur, 1e-12)

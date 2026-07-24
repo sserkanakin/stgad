@@ -2,6 +2,18 @@
 
 Written 2026-07-20, after the full code + paper + thesis audit. Supersedes ad-hoc launches.
 
+> **STATUS 2026-07-22** — Phases 1+3 training DONE beyond spec (`20260721_ladder`: all 6
+> arms × 3 backbones × **5 seeds** on all four PEMS, both conditionings on pems08; 589
+> ckpts merged locally). Phase 2 evals **QUEUED overnight**: pems08 main+past 274614/5,
+> pems04 main 274631/2 (dkrylov), few-step 274620, EM 274621, plus γ-refit eval 274616-9
+> (dep. on refit training 274607). γ-sweep DONE (γ=0.8→0.2, see
+> docs/prior_emp_vs_reshape_explained.md §12); empirical retrained at γ=0.2. Phase 5
+> DiffSTG anchor DONE (5/6 datasets; pemsbay died on quota). Phase 4 (metrla/pemsbay) NOT
+> started — remains the only training gap. **All banked numbers: docs/results_bank.md.**
+> Story/chapter skeleton: docs/thesis_story.md. F1–F4 code-audit fixes below are in
+> (F4 patience=40 in the ladder; caps dropped; iso_w deleted); two NEW eval bugs found+
+> fixed 2026-07-22 (commit bb9d562): GCNN n_cond for -past evals, dead save-diagnostics.
+
 **The claim we are now testing** (changed by the 20260720b_reshape result): the structured
 Kronecker prior helps in proportion to **how much graph structure survives in the residual**.
 First evidence on pems08f is a monotone ladder **−11.3% (mlp) → −3.5% (gcn) → −1.1% (gwn)**.
@@ -116,7 +128,10 @@ score they report. Targets to beat//land near:
 
 **NB** every number we have so far is **val** with **k=4** samples — a coarse estimator
 (19 quantiles from 4 order statistics). Rankings are fair (identical CRN across arms) but
-absolute values will move at S=100. There are still **zero test numbers on disk**.
+absolute values will move at S=100. ~~There are still zero test numbers on disk~~ →
+*2026-07-22: the full test-eval campaign is queued (see STATUS block); banked val numbers
+live in docs/results_bank.md. Also: the grid ran 5 seeds (42/1/126/2022/3407), not the
+3 planned below.*
 
 ### 2b — the two axes nobody else reports
 

@@ -24,6 +24,14 @@
 #                          on ULS while the kronecker arm gets FCPS -- that would
 #                          confound the prior comparison with a schedule change, and
 #                          the ladder's iso cells are all fcps)
+#   --val-windows 512     (default 64) NOT a diagnostic knob: _fast_val scores this
+#                          same clean-window subset, and that signal drives
+#                          best_crps.pt, early stopping and the LR plateau. At 64 the
+#                          checkpoint would be selected on an 8x smaller val set than
+#                          the ladder's forecast-only cells we compare against.
+#   --val-every 0         (default 10) disables the periodic EM step-sweep diagnostic,
+#                          as the ladder did. It does not select anything, but it costs
+#                          GPU time every 10 epochs for a number we do not use here.
 # submit via scripts/daic/histcond.sh.
 set -uo pipefail
 export PROJECT_DIR="${SLURM_SUBMIT_DIR:-$PWD}"
@@ -42,6 +50,8 @@ NORM="${NORM:-pernode}"
 LOSS="${LOSS:-snr}"
 NOISE_SAMPLER="${NOISE_SAMPLER:-loguniform}"
 RESIDUAL_SEED="${RESIDUAL_SEED:-42}"     # backbone pinned; only the diffusion seed varies
+VAL_WINDOWS="${VAL_WINDOWS:-512}"        # sizes the checkpoint-SELECTION signal, see above
+VAL_EVERY="${VAL_EVERY:-0}"              # EM step-sweep diagnostic off, as the ladder had
 HEAD_K="${HEAD_K:-100}"
 HEAD_STEPS="${HEAD_STEPS:-50}"
 
@@ -73,6 +83,7 @@ for cell in "${CELL_ARR[@]}"; do
       --c-0 "${C0}" --schedule "${SCHEDULE}" --noise-sampler "${NOISE_SAMPLER}" \
       --loss "${LOSS}" --norm "${NORM}" \
       --epochs "${EPOCHS}" --patience "${PATIENCE}" \
+      --val-windows "${VAL_WINDOWS}" --val-every "${VAL_EVERY}" \
       --exp "${exp}" --seed "${seed}" --residual-seed "${RESIDUAL_SEED}" \
     || { echo "TRAIN FAILED ${cell}"; fail=$((fail+1)); continue; }
 

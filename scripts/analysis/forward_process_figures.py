@@ -192,7 +192,11 @@ def figure_stationary(prior, sched, R, A, ds, bb, rng):
     f.bar(np.array(hops) + w / 2, c_d, w, label="draws from the prior")
     f.set_xlabel("graph distance (hops)")
     f.set_ylabel("mean |correlation|")
-    f.set_title("(f) node domain: the prior asserts more\n1-hop coupling than the data has")
+    # the direction flips by dataset (pems08f: prior over-couples at 1 hop; metrla:
+    # under-couples), so read it off the numbers rather than asserting one.
+    word = "more" if c_d[0] > c_r[0] else "less"
+    f.set_title(f"(f) node domain: the prior asserts {word}\n"
+                f"1-hop coupling than the data ({c_d[0]:.2f} vs {c_r[0]:.2f})")
     f.set_xticks(hops); f.legend(fontsize=8); f.grid(alpha=0.25, axis="y")
 
     fig.suptitle(

@@ -106,10 +106,13 @@ survives with the *actual* history is what phase A/B answers.
   the stationary law it was designed for: sampler vs closed form σ²/θ over all N·H modes
   (rel. error 0.049–0.053 across datasets), convergence vs c̄ with c̄_hi = 5/θ_min marked,
   the cascade, and how prior draws compare to the residuals in **each factor separately**.
-  Σ_T is fit, so per-horizon variance tracks the data in shape; Σ_S is imposed, so it is a
-  smooth heat-kernel envelope over a ragged empirical spectrum, and in the node domain the
-  prior asserts more 1-hop coupling (0.19) than the residual has (0.14). Both are labelled
-  as what they are rather than presented as matches.
+  Σ_T is fit, so per-horizon variance tracks the data in shape (level off by 0.83–1.14×
+  from the ρ=0.1 ridge and trace matching); Σ_S is imposed, so it is a smooth heat-kernel
+  envelope over a ragged empirical spectrum. In the node domain the mismatch **changes
+  sign by dataset** — on pems08f the prior asserts *more* 1-hop coupling than the residual
+  has (0.19 vs 0.14), on metrla *less* (0.07 vs 0.15) — so the panel reads the direction
+  off the numbers instead of asserting one. All of this is labelled as what it is rather
+  than presented as a match.
 - `results/analysis/forward_process/gad_forward_<ds>_gwn.png` — GAD Fig. 1 on our θ: mean
   decay `e^{−θc̄_t}` and covariance growth `(σ²/θ)(1−e^{−2θc̄_t})` per eigenvalue under FCPS
   vs ULS at **matched total heat** (ULS slope 2c₀ ⇒ c̄(T) = c₀ = 7), coloured across the

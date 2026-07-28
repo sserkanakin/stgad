@@ -82,6 +82,26 @@ Submitted 2026-07-28 as `20260728_histcond`: iso and kron × 6 datasets × 3 bac
 - **Phase B** (metrla, pems04f, pems04s): needs a storage rotation first — windowshome has
   an 8 G quota against ~10 G of caches, so phase A's caches come off before these go on.
 
+  Rotation, in order (do **not** start before phase A reports 40/40 test evals — a failed
+  cell needs its cache to re-run, and deleting it first strands the re-run):
+
+  1. confirm `find …/20260728_histcond -name 'test_metrics_bestcrps_ancestral50.json' | wc -l`
+     is 40 and no log contains `TRAIN FAILED` / `EVAL FAILED`;
+  2. `rm -rf` the `pems08f`, `pems08s`, `pemsbay` dirs under
+     `~/windowshome/research-tud-data/residuals/` (frees ≈5.4 G; the Mac keeps the
+     full 9.7 G copy, so this is recoverable);
+  3. rsync `metrla`, `pems04f`, `pems04s` residual caches up (≈4.5 G);
+  4. `DATASETS="metrla pems04f pems04s" scripts/daic/histcond.sh` — the script refuses
+     to submit any cell whose cache is absent, so a partial upload cannot half-run;
+  5. `CONDS=fo DATASETS=metrla BACKBONES=gcn scripts/daic/histcond.sh` for the last
+     forecast-only hole;
+  6. re-run `config_parity.py` against `results/20260721_ladder` once the first configs
+     land, **before** the queue drains.
+
+  Sequential on purpose. Uploading pems04s early to overlap with phase A would leave
+  ~1.1 G of headroom for both campaigns' outputs, and a quota exhaustion mid-run fails
+  jobs silently — not worth the couple of hours saved.
+
 Every hyperparameter is pinned to `20260721_ladder`, verified by a per-cell preflight that
 asserts the conditioning is 2H wide, that its forecast half is bit-identical to the
 forecast-only arm, that the target is unchanged, and that the history half really is the

@@ -60,6 +60,15 @@ def main():
     if not new:
         print(f"no configs under {args.new} — nothing to check yet")
         return 0
+    # an empty reference would make every cell "no twin" and print PARITY OK, which is
+    # the one failure this script exists to prevent. The ladder results live on the Mac,
+    # not on DAIC, so running this cluster-side with a --ref that is not there is an easy
+    # mistake to make. Refuse instead of passing vacuously.
+    if not ref:
+        print(f"ERROR: no configs found under --ref {args.ref}"
+              + (f" (arms={args.ref_arms})" if args.ref_arms else ""))
+        print("       nothing to compare against — refusing to report parity.")
+        return 2
     expect = set(args.expect)
     print(f"{len(new)} new configs vs {len(ref)} reference configs")
     print(f"expected to differ: {sorted(expect)}\n")

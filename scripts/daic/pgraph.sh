@@ -53,7 +53,16 @@ DATASETS="${DATASETS:-metrla pemsbay pems04f pems04s pems08f pems08s}"
 CELLS_PER_JOB="${CELLS_PER_JOB:-2}"
 SHARD="${SHARD:-all}"
 DRY="${DRY:-0}"
-PY="${DAIC_PYTHON:?}"
+# DAIC_PYTHON is exported by activate.sh / _common.sh (the module stack + project venv).
+# rawsig.sh requires you to have sourced activate.sh first and dies with a bare
+# "parameter null or not set" if you forget; do it here instead so the orchestrator
+# works whether or not the caller pre-sourced it.
+if [ -z "${DAIC_PYTHON:-}" ]; then
+  echo "  [env] DAIC_PYTHON unset — sourcing activate.sh"
+  # shellcheck source=/dev/null
+  source "${HERE}/activate.sh"
+fi
+PY="${DAIC_PYTHON:?activate.sh did not set DAIC_PYTHON — check the module stack}"
 
 # ── 1. raw signal caches ─────────────────────────────────────────────────────
 echo "=== 1. raw signal caches ==="

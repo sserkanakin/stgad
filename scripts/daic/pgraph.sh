@@ -26,9 +26,12 @@
 #           r gives 46-52 across all cells, and 100 clears it with room.
 #
 # USAGE (run ON the cluster, once per account -- 16 jobs total across two accounts):
-#   SHARD=a scripts/daic/pgraph.sh          # cells 1-15  -> 8 jobs   (e.g. sakin)
-#   SHARD=b scripts/daic/pgraph.sh          # cells 16-30 -> 7 jobs   (e.g. dkrylov)
+#   SHARD=a scripts/daic/pgraph.sh          # half the jobs   (e.g. sakin)
+#   SHARD=b scripts/daic/pgraph.sh          # the other half  (e.g. dkrylov)
 #   SHARD=all DRY=1 scripts/daic/pgraph.sh  # preview everything, submit nothing
+# anything after the script name passes straight through to sbatch, same as
+# submit_experiment.sh:   SHARD=a scripts/daic/pgraph.sh --nodelist=gpu[36-53]
+# DATASETS=... restricts the run to the datasets whose caches are on this machine.
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${HERE}/env.sh"
@@ -54,15 +57,34 @@ PY="${DAIC_PYTHON:?}"
 
 # ── 1. raw signal caches ─────────────────────────────────────────────────────
 echo "=== 1. raw signal caches ==="
+# DAIC rotates datasets through the storage quota, so a missing cache usually means the
+# dataset simply isn't on this machine — not that it should be rebuilt. Report the split
+# clearly and let the caller decide (DATASETS=... to run what is here, or rsync first);
+# building blind can blow the quota mid-campaign and strand every job.
+missing_ds=""; present_ds=""
 for ds in ${DATASETS}; do
-  if [ -s "${RESULTS_ROOT}/residuals/${ds}/raw/seed${SEED}/train.npz" ]; then
-    echo "  ${ds}: present"
+  n=0
+  for sp in train val test; do
+    [ -s "${RESULTS_ROOT}/residuals/${ds}/raw/seed${SEED}/${sp}.npz" ] && n=$((n+1))
+  done
+  if [ "${n}" = "3" ]; then
+    echo "  ${ds}: present (3/3 splits)"; present_ds="${present_ds}${ds} "
   else
-    echo "  ${ds}: building"
-    "${PY}" "${HERE}/../build_signal_cache.py" --dataset "${ds}" \
-      || { echo "cache build FAILED ${ds}"; exit 1; }
+    echo "  ${ds}: MISSING (${n}/3 splits)"; missing_ds="${missing_ds}${ds} "
   fi
 done
+if [ -n "${missing_ds}" ]; then
+  echo
+  echo "  raw caches absent for: ${missing_ds}"
+  echo "  either rsync them from the Mac, or restrict the run to what is here:"
+  echo "    DATASETS=\"${present_ds% }\" SHARD=${SHARD} scripts/daic/pgraph.sh"
+  [ "${BUILD_MISSING:-0}" = "1" ] || { echo "  (set BUILD_MISSING=1 to build them here — watch the quota)"; exit 1; }
+  for ds in ${missing_ds}; do
+    echo "  building ${ds}"
+    "${PY}" "${HERE}/../build_signal_cache.py" --dataset "${ds}" \
+      || { echo "cache build FAILED ${ds}"; exit 1; }
+  done
+fi
 
 # ── 2. parametric product-graph coefficients (needed before prod_param loads) ─
 if echo "${ARMS}" | grep -q prod_param; then
@@ -132,7 +154,7 @@ for spec in "${sel[@]}"; do
         --job-name="pg-${tag}" \
         --output="${LOG}/%j_${tag}.out" \
         --export=ALL,CELLS="${spec}",EXP="${EXP}",SEED="${SEED}",GAMMA="${GAMMA}",C0="${C0}",SCHEDULE="${SCHEDULE}" \
-        "${HERE}/pgraph_cell.sbatch")
+        "$@" "${HERE}/pgraph_cell.sbatch")
   echo "  job ${njob} (${jid}): ${spec}"
 done
 echo "=== submitted ${njob} jobs for shard '${SHARD}' (exp ${EXP}_<arm>) ==="

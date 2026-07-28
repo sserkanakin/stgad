@@ -172,7 +172,7 @@ GRES="$(gpu_blackwell_gres 2>/dev/null || true)"; GRES="${GRES:-${DAIC_GRES_GPU}
 QOS=""; [ -n "${DAIC_QOS_MEDIUM:-}" ] && QOS="--qos=${DAIC_QOS_MEDIUM}"
 LOG="${OUTPUT_ROOT}/logs/${EXP}"; mkdir -p "${LOG}"
 
-njob=0
+njob=0; submitted=0
 for spec in "${sel[@]}"; do
   tag="$(echo "${spec%%;*}" | tr '|' '-')"
   njob=$((njob+1))
@@ -180,6 +180,7 @@ for spec in "${sel[@]}"; do
     echo "  [dry] job ${njob}: CELLS='${spec}'"
     continue
   fi
+  submitted=1
   jid=$(sbatch --parsable --partition="${DAIC_PARTITION}" ${QOS} --gres="${GRES}" \
         ${DAIC_GPU_EXCLUDE:+--exclude=$DAIC_GPU_EXCLUDE} \
         --job-name="pg-${tag}" \
@@ -188,4 +189,11 @@ for spec in "${sel[@]}"; do
         "$@" "${HERE}/pgraph_cell.sbatch")
   echo "  job ${njob} (${jid}): ${spec}"
 done
-echo "=== submitted ${njob} jobs for shard '${SHARD}' (exp ${EXP}_<arm>) ==="
+if [ "${DRY}" = "1" ]; then
+  echo "=== DRY RUN — NOTHING WAS SUBMITTED. ${njob} jobs would be submitted for shard"
+  echo "    '${SHARD}' (exp ${EXP}_<arm>). Re-run without DRY=1 to actually submit."
+  echo "    (verify with: squeue -u \$USER)"
+else
+  echo "=== submitted ${njob} jobs for shard '${SHARD}' (exp ${EXP}_<arm>) ==="
+  echo "    verify with: squeue -u \$USER"
+fi

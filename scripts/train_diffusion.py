@@ -71,7 +71,7 @@ from src.diffusion.forward_fcps import (
     sample_log_c_bar_torch,
     sample_R_t_from_c_bar_torch,
 )
-from src.diffusion.prior import load_prior
+from src.diffusion.prior import PRODUCT_FORMS, load_prior
 from src.diffusion.reverse import min_em_steps, reverse_sample_ancestral, reverse_sample_em
 from src.eval.crps import empirical_crps, quantile_crps_num
 
@@ -451,22 +451,31 @@ def _run_test_eval(args, device, best_epoch, run_id) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     gen = (None if device.type == "mps"
            else torch.Generator(device=device.type).manual_seed(args.seed))
-    steps_list = [int(x) for x in str(args.eval_steps).split(",") if x.strip()]
-    log.info(f"[test] best.pt (epoch {best_epoch}); eval at sample_steps={steps_list}")
+    # (sampler, n_steps) grid. EM carries the GAD-parity headline but is floored at
+    # max(200, θ_max·c₀), so the few-step comparison can only be made on the ancestral
+    # sampler — run both families and tag every row with the sampler that produced it.
+    em_steps = [int(x) for x in str(args.eval_steps).split(",") if x.strip()]
+    anc_steps = [int(x) for x in str(args.eval_anc_steps).split(",") if x.strip()]
+    grid = [("ancestral", n) for n in anc_steps] + [("em", n) for n in em_steps]
+    log.info(f"[test] {args.eval_ckpt} (epoch {best_epoch}); grid={grid}")
     results = []
-    for ns in steps_list:
+    for sampler, ns in grid:
         res = evaluate(args.dataset, args.prior, args.seed, exp=args.exp, device=device,
                        k=args.eval_k, n_steps=ns, alpha=0.1,
                        w1_windows=512, w1_samples=4, w1_proj=128, gen_batch=args.eval_gen_batch,
                        max_windows=args.eval_max_windows, generator=gen,
-                       backbone=args.backbone, mask_zero=True)
+                       backbone=args.backbone, mask_zero=True,
+                       sampler=sampler, ckpt_name=args.eval_ckpt)
+        # evaluate() may raise n_steps to the EM floor; record what was ASKED and what RAN
+        res = {**res, "sampler": sampler, "requested_steps": ns}
         results.append(res)
-        log.info(f"  [test n_steps={ns}] MAE={res['mae']:.4f} RMSE={res['rmse']:.4f} "
+        log.info(f"  [test {sampler}@{ns}] MAE={res['mae']:.4f} RMSE={res['rmse']:.4f} "
                  f"MAPE={res['mape']:.4f} CRPS={res['crps']:.4f} "
                  f"Winkler={res['winkler']:.4f} cov={res['coverage']:.3f}")
     payload = {"run_id": run_id, "dataset": args.dataset, "prior": args.prior,
                "backbone": args.backbone, "seed": args.seed, "exp": args.exp,
-               "best_epoch": best_epoch, "select_metric": "crps", "test_results": results}
+               "best_epoch": best_epoch, "select_metric": "crps",
+               "eval_ckpt": args.eval_ckpt, "test_results": results}
     (out_dir / "test_results.json").write_text(json.dumps(payload, indent=2))
     log.info(f"[test] wrote {out_dir / 'test_results.json'}")
     _write_run_summary(payload, out_dir)
@@ -610,19 +619,24 @@ def _write_run_summary(payload: dict, out_dir) -> None:
     L.append("=" * 72)
     L.append(f" dataset={payload['dataset']}  prior={payload['prior']}  "
              f"backbone={payload['backbone']}  seed={payload['seed']}  exp={payload['exp']}")
-    L.append(f" reverse=EM (GAD)  select={payload['select_metric']}  "
+    L.append(f" ckpt={payload.get('eval_ckpt', 'best.pt')}  select={payload['select_metric']}  "
              f"best_epoch={payload['best_epoch']}")
     L.append("-" * 72)
-    L.append(f" {'n_steps':>7} | {'MAE':>8} {'RMSE':>8} {'MAPE':>7} {'CRPS':>7} "
+    L.append(f" {'sampler':>9} {'n_steps':>7} | {'MAE':>8} {'RMSE':>8} {'MAPE':>7} {'CRPS':>7} "
              f"{'Winkler':>8} {'cov':>5}")
     L.append("-" * 72)
     for r in res_list:
-        L.append(f" {r['n_steps']:>7} | {r['mae']:>8.4f} {r['rmse']:>8.4f} "
+        # requested_steps differs from n_steps when EM's stability floor raised it
+        ns = (f"{r['n_steps']}" if r.get("requested_steps", r["n_steps"]) == r["n_steps"]
+              else f"{r['requested_steps']}→{r['n_steps']}")
+        L.append(f" {r.get('sampler', 'em'):>9} {ns:>7} | {r['mae']:>8.4f} {r['rmse']:>8.4f} "
                  f"{r['mape']:>7.4f} {r['crps']:>7.4f} {r['winkler']:>8.4f} "
                  f"{r['coverage']:>5.3f}")
     L.append("-" * 72)
     if res_list:
-        best = max(res_list, key=lambda r: r["n_steps"])          # most steps = reference run
+        # reference run = most steps within the headline (EM) family if present, else most steps
+        _em = [r for r in res_list if r.get("sampler", "em") == "em"]
+        best = max(_em or res_list, key=lambda r: r["n_steps"])
         mae_h = best.get("mae_h", [])
         ph = "  ".join(f"h{h}={mae_h[h-1]:.3f}" for h in hl if h <= len(mae_h))
         L.append(f" per-horizon MAE (n_steps={best['n_steps']}):  {ph}")
@@ -662,11 +676,16 @@ def main() -> None:
                    help="joint-spectrum ridge λ for --temporal reshaped: v_emp ← (1-λ)v_emp + "
                         "λ·mean(v_emp) (Ledoit-Wolf-style shrink toward flat; λ=1 ≈ iso). "
                         "robustifies the per-mode fit against train→test spectrum drift.")
-    p.add_argument("--temporal", choices=("empirical", "laplacian", "cartesian", "reshaped"), default="empirical",
+    p.add_argument("--temporal",
+                   choices=("empirical", "laplacian", "cartesian", "reshaped") + PRODUCT_FORMS,
+                   default="empirical",
                    help="temporal factor: 'empirical' Σ_T fit from data; 'laplacian' = path-graph "
                         "Laplacian, multiplicative product (ablation); 'cartesian' = GAD-literal "
                         "spatio-temporal extension — normalized Cartesian product graph, "
-                        "λ_ST=(λ_S+λ_T)/2 ∈ [0,2], θ=λ_ST+γ, one fixed γ. raw arm uses 'cartesian'.")
+                        "λ_ST=(λ_S+λ_T)/2 ∈ [0,2], θ=λ_ST+γ, one fixed γ. raw arm uses 'cartesian'. "
+                        "prod_* = the GTCNN product-graph family (cartesian/strong/tensor/param), "
+                        "spectrum rescaled to [0,2] so one γ fixes θ_min, stiffness and the mixing "
+                        "number identically across every form and dataset.")
     p.add_argument("--gamma-t", type=float, default=0.6,
                    help="temporal Laplacian shift γ_t (only for --temporal laplacian). mild γ_t≈0.6 "
                         "keeps the temporal spread bounded (ratio (2+γ_t)/γ_t) so the prior isn't stiff.")
@@ -763,6 +782,16 @@ def main() -> None:
     p.add_argument("--eval-k", type=int, default=8, help="samples/window for the full eval (Vimal uses 8)")
     p.add_argument("--eval-steps", default="1000",
                    help="comma-separated EM reverse steps for the locked test (GAD uses ~5000)")
+    p.add_argument("--eval-anc-steps", default="",
+                   help="comma-separated ANCESTRAL reverse steps for the test eval, run in "
+                        "addition to --eval-steps. the ancestral sampler is exact for the "
+                        "linear per-mode OU SDE and has NO stability floor, so it is the only "
+                        "family that can answer 'does the prior help at few steps' — EM is "
+                        "floored at max(200, θ_max·c₀). empty = EM only (legacy behaviour).")
+    p.add_argument("--eval-ckpt", choices=("best.pt", "best_crps.pt"), default="best.pt",
+                   help="checkpoint the test eval loads. best_crps.pt (EMA weights, min "
+                        "sampled val CRPS) is the shipped model per the 2026-07-08 decision; "
+                        "best.pt (min val loss) is the legacy default kept for comparability.")
     p.add_argument("--eval-max-windows", type=int, default=0,
                    help="cap test windows in the --eval-after path (0=all; bound the EM eval cost)")
     p.add_argument("--eval-gen-batch", type=int, default=1024,

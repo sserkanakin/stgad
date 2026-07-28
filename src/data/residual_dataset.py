@@ -75,11 +75,13 @@ class ResidualDataset(Dataset):
         -y_pred — up to ~11 sigma on metrla. the loss never scores them, but the
         graph convs smear them into scored neighbors, so we zero them at the INPUT
         (loss mask + raw y tensors untouched).
-    cond_past: prepend the PREVIOUS window's residual field (window i-H, whose
-        forecast horizons end exactly at this window's origin — fully observed at
-        forecast time, no leakage) to the conditioning: cond = [R_past | Y_hat_z]
-        along time, (B, N, H+H). carries recent backbone-error volatility, the
-        heteroscedastic structure the forecast alone cannot signal."""
+    cond_past: prepend the observed HISTORY window to the conditioning:
+        cond = [X_z | Y_hat_z] along time, (B, N, P+H). the history is the window
+        the backbone consumed to make this forecast, so it is available at forecast
+        time by construction and carries the recent traffic state the point forecast
+        summarises away. requires 'history' in the npz (extract_residuals.py writes
+        it); falls back to the previous window's residual field if absent, which is
+        the older behaviour."""
 
     def __init__(self, npz_path: str | Path, sigma_r, *,
                  cond_past: bool = False, zero_masked: bool = True) -> None:
@@ -100,12 +102,15 @@ class ResidualDataset(Dataset):
         # condition on the z-scored backbone forecast (the signal scaler, distinct)
         Yz = (Y_hat - mean) / std                                         # (B, N, H)
         if cond_past:
-            H = R0u.shape[-1]
-            past = np.zeros_like(R0u)                                     # first H windows: none
-            src = R0u if zero_masked else np.where(mask, R0u, 0.0).astype(np.float32)
-            past[H:] = src[:-H]                                           # window i-H
+            if "history" in d:
+                past = (d["history"].astype(np.float32) - mean) / std     # (B, N, P) z-scored
+            else:                                                          # legacy caches
+                H = R0u.shape[-1]
+                past = np.zeros_like(R0u)
+                src = R0u if zero_masked else np.where(mask, R0u, 0.0).astype(np.float32)
+                past[H:] = src[:-H]
             self.Y_hat = torch.from_numpy(
-                np.concatenate([past, Yz], axis=-1).astype(np.float32))   # (B, N, 2H)
+                np.concatenate([past, Yz], axis=-1).astype(np.float32))   # (B, N, P+H)
         else:
             self.Y_hat = torch.from_numpy(Yz.astype(np.float32))          # (B, N, H)
         self.mask = torch.from_numpy(mask)                                # (B, N, H)

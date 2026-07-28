@@ -81,9 +81,14 @@ def main():
         resid = _bnh((y - yhat)[..., None])                      # (B,N,H)
         y_pred = _bnh(yhat[..., None])
         mask = _bnh(ym).astype(bool)
+        # observed history window, raw units, (B,N,P) — the conditioning input for
+        # the history-conditioned arm. saved alongside so the dataset can pick it up
+        # without re-running the backbone.
+        history = _bnh(x.numpy())                                # (B,N,P)
         np.savez_compressed(out_dir / f"{split}.npz",
                             residuals=resid.astype(np.float32),
                             y_pred=y_pred.astype(np.float32),
+                            history=history.astype(np.float32),
                             mask=mask, mean=np.float32(mean), std=np.float32(std))
         rv = resid[mask]
         print(f"  {split}: residuals {resid.shape}  masked mean={rv.mean():+.3f} "

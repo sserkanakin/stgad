@@ -164,6 +164,60 @@ def _knn_correlation_graph(R: np.ndarray, k: int = 15) -> np.ndarray:
     return A
 
 
+# ── GTCNN product-graph family (Sabbaqi & Isufi, arXiv:2206.15174) ──────────────
+# the three product graphs are defined on the FACTOR GSOs, not by re-normalizing the
+# product graph (their Sec. 2.1), and their Prop. 3 gives the eigendecomposition
+#     S_◇ = (V_T ⊗ V_S)(Λ_T ◇ Λ_S)(V_T ⊗ V_S)^H
+# so the eigenvectors are EXACTLY V_S ⊗ V_T for every form — the whole diffusion stays
+# separable and reuses the verified 2-D rotation. with normalized-Laplacian factors
+# (λ ∈ [0,2] each) the three combination rules are:
+#     cartesian  λ_S + λ_T                     [0,4]   1 zero mode
+#     strong     (1+λ_S)(1+λ_T) - 1            [0,8]   1 zero mode
+#     tensor     λ_S · λ_T                     [0,4]   N+H-1 zero modes  (degenerate)
+# we rescale each to exactly [0,2] so ONE γ gives the same θ_min, mixing number and
+# stiffness for every form and dataset — the scale is absorbed by σ², so this is an
+# exact reparameterization, not a modelling choice.
+PRODUCT_FORMS = ("prod_cartesian", "prod_strong", "prod_tensor", "prod_param")
+
+
+def _product_spectrum(form: str, lam_S: np.ndarray, lam_T: np.ndarray,
+                      s_ij: np.ndarray | None = None) -> np.ndarray:
+    """(N,H) product-graph eigenvalues, rescaled to [0,2]. lam_S/lam_T are the
+    normalized-Laplacian spectra of the two factors."""
+    a, b = lam_S[:, None], lam_T[None, :]
+    if form == "prod_cartesian":
+        lam = a + b
+    elif form == "prod_strong":
+        lam = (1.0 + a) * (1.0 + b) - 1.0
+    elif form == "prod_tensor":
+        lam = a * b
+    elif form == "prod_param":
+        # GTCNN eq.10 parametric product graph: S_◇ = Σ_ij s_ij (S_T^i ⊗ S^j).
+        # s_00 is a self-loop term = GAD's γ, so this family strictly contains
+        # cartesian (s=[0,1,1,0]), tensor ([0,0,0,1]) and strong ([0,1,1,1]).
+        if s_ij is None:
+            raise ValueError("prod_param needs fitted s_ij (run fit_product_graph.py)")
+        s00, s01, s10, s11 = (float(x) for x in s_ij)
+        lam = s00 + s01 * a + s10 * b + s11 * a * b
+        lam = lam - lam.min()                    # shift so the slowest mode sits at 0
+    else:
+        raise ValueError(f"unknown product form {form!r}; use one of {PRODUCT_FORMS}")
+    m = float(lam.max())
+    return 2.0 * lam / m if m > 0 else lam       # -> exactly [0, 2]
+
+
+def _load_s_ij(dataset: str, backbone: str, seed: int) -> np.ndarray:
+    """fitted parametric-product-graph coefficients, written by
+    scripts/analysis/fit_product_graph.py. kept on disk so training never refits."""
+    p = paths.analysis_dir("product_graph") / f"s_ij_{dataset}_{backbone}_seed{seed}.npy"
+    if not p.exists():
+        raise FileNotFoundError(
+            f"parametric product-graph coefficients missing: {p}\n"
+            f"  run: python scripts/analysis/fit_product_graph.py --dataset {dataset} "
+            f"--backbone {backbone} --seed {seed}")
+    return np.load(p)
+
+
 def _spatial_graph_eig(dataset: str, R: np.ndarray, spatial_graph: str, knn_k: int,
                        repair: bool) -> tuple[np.ndarray, np.ndarray]:
     """(lam_S, V_S) for the spatial factor. 'road' = the given adjacency (right for speed);
@@ -338,6 +392,40 @@ def load_prior(
         R = np.clip(R, -thr, thr)
     _, N, H = R.shape
 
+    if temporal in PRODUCT_FORMS:
+        # GTCNN product-graph heat prior. Q = L_◇ + γI on the product of the sensor graph
+        # and the horizon path graph, with L_◇ built from the FACTOR GSOs exactly as
+        # GTCNN Sec. 2.1 defines it (so eigvecs are V_S ⊗ V_T, Prop. 3) and rescaled to
+        # [0,2]. one γ for every form and dataset: θ = λ_◇ + γ ∈ [γ, 2+γ], so θ_min = γ,
+        # stiffness (2+γ)/γ and the mixing number 2·c₀·γ are IDENTICAL across arms — the
+        # only thing that varies is the SHAPE of θ over modes, which is the whole point.
+        # NO θ_min→0.8 renormalization (that inflation crushes the heat cascade; see the
+        # GAD-faithful note in the legacy "cartesian" branch below).
+        gamma = 0.1 if gamma is None else gamma
+        if repair is None:
+            from src.data.adjacency import REPAIR_GRAPH
+            repair = REPAIR_GRAPH
+        lam_S, V_S = _spatial_graph_eig(dataset, R, spatial_graph, knn_k, repair)
+        from src.data.adjacency import compute_normalized_laplacian
+        A_T = np.zeros((H, H)); idx = np.arange(H - 1)
+        A_T[idx, idx + 1] = 1.0; A_T[idx + 1, idx] = 1.0
+        omega, V_T = np.linalg.eigh(compute_normalized_laplacian(A_T))
+        omega = np.clip(omega, 0.0, None)
+        s_ij = _load_s_ij(dataset, backbone, seed) if temporal == "prod_param" else None
+        lam_prod = _product_spectrum(temporal, lam_S, omega, s_ij)     # (N,H) in [0,2]
+        theta = lam_prod + gamma
+        if stiffness_cap is not None:
+            theta = np.maximum(theta, theta.max() / stiffness_cap)
+        # single-scalar variance match (GAD's σ): mean stationary variance = data variance.
+        sigma2_scale = 1.0
+        sigma2_scale *= var_full / max(float((sigma2_scale / theta).mean()), 1e-12)
+        Rf = R_full.reshape(-1, H); keep = mask.reshape(-1, H).all(1)
+        return KroneckerPrior(
+            dataset=dataset, gamma=gamma, V_S=V_S, lam_S=lam_S,
+            V_T=V_T, mu_T=1.0 / (omega + gamma),
+            theta=theta, delta_h=(Rf[keep] ** 2).mean(0),
+            R_H=np.corrcoef(Rf[keep].T), sigma2_scale=sigma2_scale,
+        )
     if temporal == "cartesian":
         # GAD-LITERAL SPATIO-TEMPORAL EXTENSION: the graph is the normalized CARTESIAN
         # product of the sensor graph and the horizon path-graph. its Laplacian spectrum is

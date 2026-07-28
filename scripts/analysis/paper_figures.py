@@ -200,21 +200,21 @@ def fig_horizons():
     fig, axes = plt.subplots(1, 2, figsize=(7.6, 2.9))
     h = np.arange(1, 13) * 5
     for ax, bb, ttl in [(axes[0], "mlp", "MLP backbone"), (axes[1], "gwn", "GWN backbone")]:
-        for arm, pr, col in [("iso", "isotropic", GRAY), ("emp", "kronecker", BLUE)]:
+        for arm, pr, col, lbl in [("iso", "isotropic", GRAY, "isotropic"),
+                                  ("emp", "kronecker", BLUE, "structured")]:
             cs = []
             cell = ROOT / "20260721_ladder" / arm / "pems08f" / bb / pr
-            hits = list(cell.glob("seed*/eval/test_metrics_bestcrps_ancestral50_srecal.json")) \
-                or list(cell.glob("seed*/eval/test_metrics_bestcrps_ancestral50.json"))
-            for p in hits:
+            # raw (uncalibrated) files only: the srecal set has a different seed
+            # count per backbone, which would mix calibration states across panels
+            for p in sorted(cell.glob("seed*/eval/test_metrics_bestcrps_ancestral50.json")):
                 cs.append(jload(p)["crps_h"])
             m = np.mean(cs, axis=0)
-            ax.plot(h, m, "-o", color=col, lw=1.8, ms=3.5)
-            ax.annotate(arm, (h[-1] + 1.5, m[-1]), color=col, fontsize=8)
+            ax.plot(h, m, "-o", color=col, lw=1.8, ms=3.5, label=lbl)
         ax.set_xlabel("horizon (min)")
         ax.set_title(ttl, fontsize=9)
+        ax.legend(fontsize=8, frameon=False, loc="upper left")
     axes[0].set_ylabel("test CRPS")
-    fig.suptitle("Per-horizon CRPS (PEMS08-F): the structured margin grows with lead time",
-                 fontsize=10, y=1.03)
+    fig.tight_layout()
     save(fig, "f7_horizons")
 
 
@@ -297,7 +297,8 @@ def fig_residual_stats():
         s = [R[:, :, h][M[:, :, h]].std() for h in range(12)]
         s = np.array(s) / s[0]
         axes[0].plot(np.arange(1, 13) * 5, s, "-o", color=col, lw=1.8, ms=3.5)
-        axes[0].annotate(bb.upper(), (61, s[-1]), color=col, fontsize=8)
+        axes[0].annotate({"mlp": "linear", "gcn": "GCN", "gwn": "GWN"}[bb],
+                         (61, s[-1]), color=col, fontsize=8)
     axes[0].set_xlabel("horizon (min)"); axes[0].set_ylabel("residual std (relative to 5 min)")
     axes[0].set_title("scale grows with lead time", fontsize=9)
     # (b) horizon correlation matrix (gwn)
@@ -307,10 +308,10 @@ def fig_residual_stats():
     Ch = np.corrcoef(X.T)
     im = axes[1].imshow(Ch, cmap="Blues", vmin=0, vmax=1, origin="lower")
     axes[1].set_xlabel("horizon"); axes[1].set_ylabel("horizon")
-    axes[1].set_title("horizons err together (GWN)", fontsize=9)
+    axes[1].set_title("cross-horizon correlation (GWN)", fontsize=9)
     axes[1].grid(False)
     fig.colorbar(im, ax=axes[1], fraction=0.046)
-    fig.suptitle("The residual field the prior models (PEMS08-F, training split)", fontsize=10, y=1.04)
+    fig.suptitle("")
     save(fig, "f10_residual_stats")
 
 

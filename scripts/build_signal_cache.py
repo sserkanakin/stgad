@@ -2,18 +2,22 @@
 """build the 'raw signal' diffusion cache from the processed split.npz.
 
 the pure-signal arm (backbone='raw') diffuses the FUTURE signal directly, conditioned
-on the HISTORY window (DiffSTG-style), with NO trained backbone. to reuse the residual
-pipeline unchanged we write the future signal under the "residuals" key (so the prior
-fit + sigma_r + dataset all work as-is) and add a "history" field for the conditioning;
-"y_pred" is zeros so y_true = y_pred + residual = the signal.
+on the HISTORY window (DiffSTG-style), with NO trained backbone and NO forecast.
+
+NAMING WARNING: the output lands under results/residuals/<ds>/raw/ and the target is
+stored under the "residuals" key, but NOTHING here is a forecast residual — it is the
+raw signal, centred. Both are legacies of reusing paths.residual_npz + ResidualDataset
+unchanged, so the prior fit, sigma_r and the eval reconstruction all work as-is.
 
   python scripts/build_signal_cache.py --dataset pems08f
   python scripts/build_signal_cache.py --all
 
 writes results/residuals/<ds>/raw/seed42/{train,val,test}.npz with:
-  residuals (B,N,H)  the future signal, raw units (the diffusion target)
+  residuals (B,N,H)  the future signal MINUS the train mean (the diffusion target)
   history   (B,N,T_h) the history window, raw units (the conditioning)
-  y_pred    (B,N,H)  zeros (so y_true = signal)
+  y_pred    (B,N,H)  the train climatology mean, broadcast — a trivial "backbone", so
+                     y_true = y_pred + residual = the signal, and the eval
+                     reconstruction (mean + std·sample) works unchanged
   mask      (B,N,H)  bool (future observation validity)
   mean,std           the signal scaler (train only), for z-scoring the conditioning
 """

@@ -103,11 +103,16 @@ def _load_residuals_train(dataset: str, seed: int = 0, backbone: str = "gwn",
     diffusion runs in. the de-norm back to physical units happens at the output
     (r_raw = r_unit * sigma_r).
     """
-    paths.require_inputs([(
-        paths.residual_npz(dataset, "train", seed, backbone),
-        f"run scripts/gwn_extract_residuals.py --variant {dataset} --seed {seed} "
-        f"--backbone {backbone} first",
-    )])
+    # backbone="raw" is the pure-signal arm: the cache under residuals/<ds>/raw/ holds the
+    # RAW SIGNAL + history, not a forecast residual (the directory name is a legacy of
+    # sharing paths.residual_npz). it is produced by a different script, so point at the
+    # right one instead of sending people to the backbone extractor.
+    _how = (f"run scripts/build_signal_cache.py --dataset {dataset} first "
+            f"(backbone='raw' is the pure-signal cache, not a forecast residual)"
+            if backbone == "raw" else
+            f"run scripts/gwn_extract_residuals.py --variant {dataset} --seed {seed} "
+            f"--backbone {backbone} first")
+    paths.require_inputs([(paths.residual_npz(dataset, "train", seed, backbone), _how)])
     from src.data.residual_dataset import train_residual_sigma
     d = np.load(paths.residual_npz(dataset, "train", seed, backbone))
     R = d["residuals"].astype(np.float64)

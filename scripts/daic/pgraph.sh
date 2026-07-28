@@ -103,7 +103,10 @@ if echo "${ARMS}" | grep -q prod_param; then
     [ -s "${RESULTS_ROOT}/analysis/product_graph/s_ij_${ds}_raw_seed${SEED}.npy" ] || missing=1
   done
   if [ "${missing}" = "1" ]; then
-    "${PY}" "${HERE}/../analysis/fit_product_graph.py" --all --backbone raw --seed "${SEED}" \
+    # NB --datasets, not --all: --all hardcodes all six and would look for caches this
+    # machine may not have (DAIC rotates datasets through the storage quota).
+    "${PY}" "${HERE}/../analysis/fit_product_graph.py" --datasets ${DATASETS} \
+        --backbone raw --seed "${SEED}" \
       || { echo "parametric fit FAILED"; exit 1; }
   else
     echo "  all coefficients present"

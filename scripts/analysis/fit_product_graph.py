@@ -155,13 +155,16 @@ def fit(dataset, seed=42, backbone="raw", verbose=True):
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--dataset", choices=DATASETS)
-    p.add_argument("--all", action="store_true")
+    p.add_argument("--datasets", nargs="+", choices=DATASETS,
+                   help="explicit subset — use this when only some datasets' caches are on "
+                        "this machine (DAIC rotates them through the storage quota)")
+    p.add_argument("--all", action="store_true", help="every dataset (needs every cache present)")
     p.add_argument("--backbone", default="raw")
     p.add_argument("--seed", type=int, default=42)
     a = p.parse_args()
-    todo = DATASETS if a.all else [a.dataset]
-    if not todo or todo == [None]:
-        p.error("pass --dataset or --all")
+    todo = DATASETS if a.all else (a.datasets or ([a.dataset] if a.dataset else []))
+    if not todo:
+        p.error("pass --dataset, --datasets or --all")
 
     out = paths.analysis_dir("product_graph")
     summary = {}

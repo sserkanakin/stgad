@@ -65,6 +65,34 @@ def sigma_to_torch(sigma_r, device=None) -> torch.Tensor:
     return t.reshape(1, 1) if t.ndim == 0 else t.reshape(-1, 1)
 
 
+def _load_history(d, npz_path, dataset, split, n_rows) -> np.ndarray:
+    """observed history window (B, N, P) in RAW units for the cond_past arm.
+
+    prefers the 'history' key inside the residual npz; otherwise reads the
+    processed split it was extracted from. raises when neither is available —
+    never silently substitutes a different conditioning field."""
+    if "history" in d:
+        return d["history"].astype(np.float32)
+    if dataset is None or split is None:
+        raise ValueError(
+            f"cond_past needs the observed history: {npz_path} has no 'history' key "
+            "and no dataset/split was passed to locate the processed split. "
+            "call make_dataset(...), or re-run scripts/extract_residuals.py.")
+    xp = paths.split_npz(dataset, split)
+    if not Path(xp).exists():
+        raise FileNotFoundError(
+            f"cond_past needs the observed history: {npz_path} has no 'history' key "
+            f"and the processed split {xp} is missing.")
+    x = np.load(xp)["x"]                                       # (B, T, N, 1) raw
+    hist = np.ascontiguousarray(x[..., 0].transpose(0, 2, 1))  # (B, N, P)
+    if hist.shape[0] != n_rows:
+        raise ValueError(
+            f"history/residual row mismatch for {dataset}/{split}: processed split has "
+            f"{hist.shape[0]} windows, residual cache has {n_rows}. the caches are stale "
+            "— re-run scripts/extract_residuals.py for this cell.")
+    return hist.astype(np.float32)
+
+
 class ResidualDataset(Dataset):
     """In-memory wrapper around a residuals .npz, normalized to unit space.
 
@@ -79,12 +107,24 @@ class ResidualDataset(Dataset):
         cond = [X_z | Y_hat_z] along time, (B, N, P+H). the history is the window
         the backbone consumed to make this forecast, so it is available at forecast
         time by construction and carries the recent traffic state the point forecast
-        summarises away. requires 'history' in the npz (extract_residuals.py writes
-        it); falls back to the previous window's residual field if absent, which is
-        the older behaviour."""
+        summarises away.
+
+        the history comes from 'history' in the residual npz when present
+        (extract_residuals.py writes it); otherwise it is read straight from the
+        processed split (data/processed/<ds>/<split>.npz['x']), which is the SAME
+        array — extract_residuals.py consumes that split in order, no shuffle, so
+        row i lines up by construction. reading it there means the ~10G of residual
+        caches never have to be regenerated to gain the channel. pass dataset/split
+        (make_dataset does) to enable that path.
+
+        there is deliberately NO fallback to the previous window's residual field.
+        that used to be the silent default and it is a DIFFERENT experiment
+        (cond = [R_prev | Y_hat]); a run that cannot find the history must fail
+        loudly rather than quietly train the wrong arm."""
 
     def __init__(self, npz_path: str | Path, sigma_r, *,
-                 cond_past: bool = False, zero_masked: bool = True) -> None:
+                 cond_past: bool = False, zero_masked: bool = True,
+                 dataset: str | None = None, split: str | None = None) -> None:
         d = np.load(npz_path)
         self.sigma_r = sigma_r
         self.cond_past = bool(cond_past)
@@ -102,13 +142,8 @@ class ResidualDataset(Dataset):
         # condition on the z-scored backbone forecast (the signal scaler, distinct)
         Yz = (Y_hat - mean) / std                                         # (B, N, H)
         if cond_past:
-            if "history" in d:
-                past = (d["history"].astype(np.float32) - mean) / std     # (B, N, P) z-scored
-            else:                                                          # legacy caches
-                H = R0u.shape[-1]
-                past = np.zeros_like(R0u)
-                src = R0u if zero_masked else np.where(mask, R0u, 0.0).astype(np.float32)
-                past[H:] = src[:-H]
+            hist = _load_history(d, npz_path, dataset, split, R0u.shape[0])
+            past = (hist - mean) / std                                    # (B, N, P) z-scored
             self.Y_hat = torch.from_numpy(
                 np.concatenate([past, Yz], axis=-1).astype(np.float32))   # (B, N, P+H)
         else:
@@ -168,7 +203,8 @@ def make_dataset(dataset: str, split: str, seed: int, backbone: str, sigma_r,
     path = residual_path(dataset, split, seed, backbone)
     if backbone == "raw":
         return SignalDataset(path, sigma_r)
-    return ResidualDataset(path, sigma_r, cond_past=cond_past, zero_masked=zero_masked)
+    return ResidualDataset(path, sigma_r, cond_past=cond_past, zero_masked=zero_masked,
+                           dataset=dataset, split=split)
 
 
 def residual_path(dataset: str, split: str, seed: int = 0, backbone: str = "gwn") -> Path:

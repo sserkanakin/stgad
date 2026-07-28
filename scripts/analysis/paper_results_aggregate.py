@@ -43,9 +43,13 @@ BACKBONES = ["mlp", "gcn", "gwn"]
 
 
 def parse_arm(exp: str):
-    """(campaign, base, cond, whit, ugnet) from exp='20260721_ladder/emp-past'."""
-    campaign, armdir = exp.split("/", 1)
-    d = armdir
+    """(campaign, base, cond, whit, ugnet) from exp='20260721_ladder/emp-past'.
+
+    some campaigns (the 2026-07-28 product-graph runs) write a flat exp with no
+    "<campaign>/<arm>" split; treat the whole string as the campaign then.
+    """
+    campaign, _, armdir = exp.partition("/")
+    d = armdir or campaign
     ugnet = d.endswith("-ugnet")
     if ugnet:
         d = d[: -len("-ugnet")]

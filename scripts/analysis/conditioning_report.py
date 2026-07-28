@@ -55,9 +55,10 @@ def load():
                 continue
             camp, base, cond = r["campaign"], r["base"], r["cond"]
             if camp == LADDER:
+                # the ladder's "-past" is C=[R_prev|Yhat], not the history arm
                 cond = {"fo": "fo", "past": "prev"}.get(cond)
             elif camp == HISTCAMP:
-                cond = {"past": "hist", "hist": "hist", "fo": "fo"}.get(cond)
+                cond = {"hist": "hist", "fo": "fo"}.get(cond)
             else:
                 continue
             if cond is None or base not in PRIOR_LABEL:

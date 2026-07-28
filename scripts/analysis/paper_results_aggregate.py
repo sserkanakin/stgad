@@ -53,8 +53,15 @@ def parse_arm(exp: str):
     ugnet = d.endswith("-ugnet")
     if ugnet:
         d = d[: -len("-ugnet")]
+    # "-hist" = C=[X|Ŷ] (20260728_histcond). "-past" = C=[R_prev|Ŷ], the 20260721_ladder
+    # arm that took the silent fallback -- a DIFFERENT conditioning, kept distinct here so
+    # the two never pool. Without the "-hist" case, "iso-hist" falls through to the else
+    # and is recorded as base="iso-hist", cond="fo": the arm silently disappears from
+    # every downstream table instead of erroring.
     if d.endswith("-past"):
         cond, d = "past", d[: -len("-past")]
+    elif d.endswith("-hist"):
+        cond, d = "hist", d[: -len("-hist")]
     elif d.endswith("-fo"):
         cond, d = "fo", d[: -len("-fo")]
     else:

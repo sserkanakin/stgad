@@ -72,10 +72,43 @@ The structured prior's advantage tracks how weak the backbone is, and only there
 
 This is the ladder law the thesis already reports, now on a complete forecast-only grid.
 
-## Result 2 — history + forecast (running)
+## Result 2 — history + forecast
 
-Submitted 2026-07-28 as `20260728_histcond`: iso and kron × 6 datasets × 3 backbones ×
-2 seeds, same 17k denoiser, same locked protocol.
+`20260728_histcond`: iso and kron × 6 datasets × 3 backbones × 2 seeds, same 17k
+denoiser, same locked protocol. **Phase A complete** (20/20 jobs, exit 0:0, 40/40 cells);
+phase B running.
+
+CRPS change vs forecast-only, paired on seed (iso / kron in each cell):
+
+| dataset | mlp | gcn | gwn |
+|---|---|---|---|
+| pems08f | −60.1% / −55.7% | −29.5% / −29.8% | +0.1% / +0.2% |
+| pems08s | −35.6% / −37.7% | −11.7% / −11.9% | +1.0% / −0.9% |
+| pemsbay | −41.2% / −39.6% | −23.1% / −23.4% | −0.6% / −0.5% |
+
+**The gain is inversely proportional to backbone capacity** — large on mlp, substantial on
+gcn, exactly nothing on gwn — and it is almost independent of the prior (iso and kron
+deltas agree within ~2 points in all nine cells). Conditioning and prior act on different
+margins; gwn has already extracted the history, so repeating it to the denoiser is
+redundant.
+
+**It compresses the structured prior's advantage**, which is the substitution story with
+the real history (kron-minus-iso, %):
+
+| cell | forecast-only | history+forecast |
+|---|---|---|
+| pems08f/mlp | −13.8 | −2.0 |
+| pemsbay/mlp | −4.4 | −1.8 |
+| pems08s/mlp | −0.4 | −3.2 |
+
+Two of three weak-backbone cells lose most of the prior's edge once the history is
+supplied; pems08s moves the other way. State this as a tendency with the exception named,
+not as a law — phase B's three datasets decide it.
+
+**History is NOT a relabelling of the retired prev-residual arm.** The two differ
+substantially and not in one direction: history is better on every gcn cell
+(pems08f −29.5% vs −19.1%), worse on pems08s/mlp (−35.6% vs −43.2%), and slightly worse on
+pems08f/mlp (−60.1% vs −63.9%). The old numbers cannot be carried over.
 
 - **Phase A** (pems08f, pems08s, pemsbay — caches already on DAIC): 18 jobs, 36 runs,
   plus 2 jobs filling the pemsbay/gcn forecast-only hole.

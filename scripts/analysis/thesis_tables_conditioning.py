@@ -66,11 +66,66 @@ def fmt(v, nd, better):
     return rf"\textbf{{{s}}}" if better else s
 
 
+def dist_rows(cell):
+    """tab:exp_dist -- coverage (no Delta), Winkler and energy score (Delta each)."""
+    print(r"% ---- tab:exp_dist rows ----")
+    for ds, label in DATASETS:
+        first = True
+        for bb, bblabel in BACKBONES:
+            cov = paired(cell, ds, bb, "coverage")
+            wnk = paired(cell, ds, bb, "winkler")
+            eng = paired(cell, ds, bb, "energy")
+            if cov is None and wnk is None:
+                continue
+            cols = []
+            # coverage: both under-cover, so higher (closer to 0.90) is better
+            i, k, _ = cov
+            cols += [fmt(i, 3, i >= k), fmt(k, 3, k > i)]
+            for r, nd in ((wnk, 2 if ds in ("pems08f", "pems04f") else 2), (eng, 2)):
+                i, k, _ = r
+                d = 100.0 * (i - k) / i
+                cols += [fmt(i, nd, i <= k), fmt(k, nd, k < i),
+                         (r"$+$" if d >= 0 else r"$-$") + f"{abs(d):.1f}"]
+            head = f"{label:<12}" if first else " " * 12
+            first = False
+            print(f"{head} & {bblabel:<6} & " + " & ".join(cols) + r" \\")
+        if ds == RULE_AFTER:
+            print(r"\midrule")
+
+
+def paired_counts(cell):
+    """tab:exp_paired -- per-run wins, structured vs isotropic, over matched runs."""
+    from math import comb
+    print(r"% ---- tab:exp_paired counts ----")
+    PEMS = {"pems08f", "pems08s", "pems04f", "pems04s"}
+    for metric, lower_better in (("mae", True), ("rmse", True), ("crps", True),
+                                 ("energy", True), ("coverage", False)):
+        for scope, keep in (("PEMS", PEMS), ("all", {d for d, _ in DATASETS})):
+            w = t = 0
+            for ds, _ in DATASETS:
+                if ds not in keep:
+                    continue
+                for bb, _ in BACKBONES:
+                    i = cell.get(("iso", ds, bb, metric), {})
+                    k = cell.get(("emp", ds, bb, metric), {})
+                    for s in sorted(set(i) & set(k)):
+                        t += 1
+                        w += (k[s] < i[s]) if lower_better else (k[s] > i[s])
+            if t:
+                p = sum(comb(t, x) for x in range(w, t + 1)) / 2 ** t
+                print(f"%   {metric:<9}{scope:<5}{w}/{t}  p={p:.1g}")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--cond", default="hist", choices=list(COND_CAMPAIGN))
+    ap.add_argument("--table", default="main", choices=("main", "dist", "paired"))
     args = ap.parse_args()
     cell = load(args.cond)
+    if args.table == "dist":
+        return dist_rows(cell)
+    if args.table == "paired":
+        return paired_counts(cell)
 
     # decimals per metric, per dataset family (flow is O(10), speed O(1))
     def nd_for(ds, metric):

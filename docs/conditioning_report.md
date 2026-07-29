@@ -75,55 +75,69 @@ This is the ladder law the thesis already reports, now on a complete forecast-on
 ## Result 2 — history + forecast
 
 `20260728_histcond`: iso and kron × 6 datasets × 3 backbones × 2 seeds, same 17k
-denoiser, same locked protocol. **Phase A complete** (20/20 jobs, exit 0:0, 40/40 cells);
-phase B running.
+denoiser, same locked protocol. **COMPLETE** — 80/80 cells (both phases), every job exit
+0:0, zero failures, config parity verified field-by-field against the ladder on every cell.
 
 CRPS change vs forecast-only, paired on seed (iso / kron in each cell):
 
 | dataset | mlp | gcn | gwn |
 |---|---|---|---|
-| pems08f | −60.1% / −55.7% | −29.5% / −29.8% | +0.1% / +0.2% |
-| pems08s | −35.6% / −37.7% | −11.7% / −11.9% | +1.0% / −0.9% |
-| pemsbay | −41.2% / −39.6% | −23.1% / −23.4% | −0.6% / −0.5% |
+| pems08f | −60.1 / −55.7 | −29.5 / −29.8 | +0.1 / +0.2 |
+| pems08s | −35.6 / −37.7 | −11.7 / −11.9 | +1.0 / −0.9 |
+| pems04f | −56.0 / −55.4 | −18.8 / −20.7 | +0.0 / +0.1 |
+| pems04s | −36.8 / −37.5 | −9.9 / −10.5 | −0.0 / −0.3 |
+| metrla | −28.8 / −25.7 | −10.3 / −11.8 | −0.6 / −1.1 |
+| pemsbay | −41.2 / −39.6 | −23.1 / −23.4 | −0.6 / −0.5 |
 
-**The gain is inversely proportional to backbone capacity** — large on mlp, substantial on
-gcn, exactly nothing on gwn — and it is almost independent of the prior (iso and kron
-deltas agree within ~2 points in all nine cells). Conditioning and prior act on different
-margins; gwn has already extracted the history, so repeating it to the denoiser is
-redundant.
+Rolled up over all six datasets:
 
-**It compresses the structured prior's advantage**, which is the substitution story with
-the real history (kron-minus-iso, %):
+| backbone | iso | kron | cells improved |
+|---|---|---|---|
+| mlp (312) | **−43.1%** | **−41.9%** | 12/12 |
+| gcn (17k) | **−17.2%** | **−18.0%** | 12/12 |
+| gwn (309k) | −0.0% | −0.4% | 7/12 |
 
-| cell | forecast-only | history+forecast |
+**The gain is inversely proportional to backbone capacity** — unanimous on mlp and gcn,
+nil on gwn — and almost independent of the prior (iso and kron agree within ~2 points in
+all 18 cells). Conditioning and prior act on different margins; gwn has already extracted
+the history, so repeating it to the denoiser is redundant.
+
+**It halves the structured prior's advantage** — the substitution story with the real
+history (kron-minus-iso, mean over 6 datasets, cells won in brackets):
+
+| backbone | forecast-only | history+forecast |
 |---|---|---|
-| pems08f/mlp | −13.8 | −2.0 |
-| pemsbay/mlp | −4.4 | −1.8 |
-| pems08s/mlp | −0.4 | −3.2 |
+| mlp | **−4.7%** (5/6) | −1.5% (5/6) |
+| gcn | +0.2% (3/6) | −0.7% (5/6) |
+| gwn | +1.1% (0/6) | +0.8% (1/6) |
 
-Two of three weak-backbone cells lose most of the prior's edge once the history is
-supplied; pems08s moves the other way. State this as a tendency with the exception named,
-not as a law — phase B's three datasets decide it.
+Against the measured **1.0 pp seed-noise floor** (median seed-to-seed range of the
+kron-vs-iso delta), only the mlp/forecast-only column clears noise: −13.8 pems08f,
+−6.6 pems04f, −4.4 pemsbay, −3.2 metrla, every seed negative. Supplying the history cuts
+that mean advantage from −4.7% to −1.5%. The gcn sign flip (+0.2 → −0.7, 5/6 cells) is
+suggestive but inside noise at 2 seeds. On gwn iso wins 0/6 and 1/6 with per-seed ranges
+as tight as 0.2 pp — small, but reproducible rather than noise.
 
 **History is NOT a relabelling of the retired prev-residual arm.** The two differ
 substantially and not in one direction: history is better on every gcn cell
 (pems08f −29.5% vs −19.1%), worse on pems08s/mlp (−35.6% vs −43.2%), and slightly worse on
 pems08f/mlp (−60.1% vs −63.9%). The old numbers cannot be carried over.
 
-- **Phase A** (pems08f, pems08s, pemsbay — caches already on DAIC): 18 jobs, 36 runs,
-  plus 2 jobs filling the pemsbay/gcn forecast-only hole.
-- **Phase B** (metrla, pems04f, pems04s): needs a storage rotation first — windowshome has
-  an 8 G quota against ~10 G of caches, so phase A's caches come off before these go on.
+- **Phase A** (pems08f, pems08s, pemsbay): 40/40 cells. **Done.**
+- **Phase B** (metrla, pems04f, pems04s): 40/40 cells. **Done.** Needed a storage
+  rotation — windowshome has an 8 G quota against ~10 G of caches.
 
-  Rotation, in order (do **not** start before phase A reports 40/40 test evals — a failed
-  cell needs its cache to re-run, and deleting it first strands the re-run):
+  Rotation, in order (do **not** start before the prior phase reports 40/40 test evals — a
+  failed cell needs its cache to re-run, and deleting it first strands the re-run):
 
   1. confirm `find …/20260728_histcond -name 'test_metrics_bestcrps_ancestral50.json' | wc -l`
      is 40 and no log contains `TRAIN FAILED` / `EVAL FAILED`;
   2. `rm -rf` the `pems08f`, `pems08s`, `pemsbay` dirs under
      `~/windowshome/research-tud-data/residuals/` (frees ≈5.4 G; the Mac keeps the
      full 9.7 G copy, so this is recoverable);
-  3. rsync `metrla`, `pems04f`, `pems04s` residual caches up (≈4.5 G);
+  3. rsync `metrla`, `pems04f`, `pems04s` residual caches up (≈4.5 G) — **with
+     `--inplace`**: windowshome rejects rsync's temp files with `mkstemp … Operation not
+     permitted`, and without it the transfer reports success while copying nothing;
   4. `DATASETS="metrla pems04f pems04s" scripts/daic/histcond.sh` — the script refuses
      to submit any cell whose cache is absent, so a partial upload cannot half-run;
   5. `CONDS=fo DATASETS=metrla BACKBONES=gcn scripts/daic/histcond.sh` for the last
@@ -171,6 +185,31 @@ survives with the *actual* history is what phase A/B answers.
   vs ULS at **matched total heat** (ULS slope 2c₀ ⇒ c̄(T) = c₀ = 7), coloured across the
   whole spectrum so the eigenvalue cascade is visible rather than sampled at five points.
   FCPS holds the slow graph modes to t ≈ 0.6 while ULS has erased them by t ≈ 0.3.
+
+## Calibration, and why it may be a sampler artifact
+
+Under the locked ancestral@50 protocol the structured prior under-covers in all 18 cells
+(0.70–0.79 vs iso's 0.77–0.83, nominal 0.90). The one matched EM step sweep on disk
+(pems08f/gwn/seed42, iso vs emp vs rsh at identical steps) says much of that is the
+sampler, not the prior:
+
+| sampler | iso CRPS | emp CRPS | emp−iso | iso cov | emp cov | rsh cov |
+|---|---|---|---|---|---|---|
+| ancestral@50 | 0.04966 | 0.05010 | +0.9% | 0.822 | 0.764 | 0.646 |
+| EM@1000 | 0.04953 | 0.04957 | +0.1% | 0.857 | 0.860 | — |
+| EM@1500 | 0.04953 | 0.04957 | +0.1% | 0.856 | 0.855 | 0.878 |
+
+EM's stability floor scales as n ≳ θ_max·c₀. The structured prior is stiff (θ_max 16 here,
+94–152 on the gcn cells) while iso is flat (θ_max = 0.8), so at fixed steps EM integrates
+the structured arm far less accurately. Push it to convergence and the accuracy gap closes
+to a **tie** (+0.1%, inside noise) while iso barely moves — and the calibration gap closes
+entirely (emp 0.764 → 0.855, matching iso; rsh 0.646 → 0.878, the *best* of the three).
+
+**Caveat: one cell, one seed, on the strongest backbone** — where both priors nearly tie
+anyway. Every other EM eval on disk is iso-only, so it cannot be paired. The untested and
+more interesting regime is mlp/gcn, which are stiffer and where structure actually wins.
+`scripts/daic/em_sweep.sbatch` runs that (eval-only on saved checkpoints, ~3.3 h/cell at
+1000 steps vs 10 min for ancestral@50 — 29×). Written, not queued.
 
 ## Run health
 

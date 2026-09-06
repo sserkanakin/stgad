@@ -119,14 +119,35 @@ def repair_adjacency(dataset: str, adj: np.ndarray) -> np.ndarray:
     return out.astype(adj.dtype, copy=False)        # preserve the raw loader's dtype
 
 
-def load_adjacency(dataset: str, repair: bool = REPAIR_GRAPH) -> np.ndarray:
+def add_global_edge(adj: np.ndarray, beta: float) -> np.ndarray:
+    """add a weak edge between EVERY pair of sensors, weight beta x the mean road-edge
+    weight. the residual has a network-wide component -- all sensors off together
+    (weather, holidays, city-wide demand) -- that travels through no road, and a road
+    graph alone cannot represent it at any gamma. the complete graph can: its
+    normalised laplacian has eigenvalue 0 on the constant vector and 1 on everything
+    else. this also makes the repaired graphs genuinely connected (fiedler value
+    0.0003 -> 0.46 on pems04) instead of stitched together by single edges."""
+    if not beta:
+        return adj
+    A = adj.astype(np.float64).copy()
+    np.fill_diagonal(A, 0.0)
+    w = float(A[A > 0].mean())
+    N = A.shape[0]
+    return (A + beta * w * (np.ones((N, N)) - np.eye(N))).astype(adj.dtype, copy=False)
+
+
+def load_adjacency(dataset: str, repair: bool = REPAIR_GRAPH, global_edge: float = 0.0) -> np.ndarray:
     """load the (N, N) adjacency, reconnecting ALL disconnected components by
-    default so the graph is a single connected component (see repair_adjacency).
-    pass repair=False for the bare road graph. cached per (dataset, repair)."""
-    key = (dataset, repair)
+    default so the graph is a single connected component (see repair_adjacency),
+    plus an optional all-to-all edge of relative weight `global_edge` (see
+    add_global_edge). pass repair=False for the bare road graph. cached per
+    (dataset, repair, global_edge). the prior AND the denoiser read the graph
+    through here, so both see the same edge."""
+    key = (dataset, repair, float(global_edge or 0.0))
     if key not in _ADJ_CACHE:
         A = _load_raw_adjacency(dataset)
-        _ADJ_CACHE[key] = repair_adjacency(dataset, A) if repair else A
+        A = repair_adjacency(dataset, A) if repair else A
+        _ADJ_CACHE[key] = add_global_edge(A, float(global_edge or 0.0))
     return _ADJ_CACHE[key].copy()
 
 

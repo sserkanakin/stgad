@@ -1,23 +1,28 @@
-"""builds the kronecker prior Σ = Σ_T ⊗ Σ_S used by the diffusion sde.
+"""the two noise priors the diffusion can corrupt with.
 
-  Σ_T = D_H^{1/2} R_H D_H^{1/2}, fit from the training residuals:
-        D_H[h] = mean(r_h^2)   (true per-horizon variance / second moment)
-        R_H    = corrcoef of the residuals   (empirical horizon correlation)
-        then Σ_T is ridge-shifted toward scaled-identity, μ ← (1-ρ)μ + ρ·μ̄
-        (SHRINK_T, the "γ for time"): a smooth, trace-preserving regulariser —
-        the exact temporal twin of the spatial γ — that keeps the noise schedule
-        trainable without throwing away the real horizon correlation.
-  Σ_S   the spatial factor: structured Σ_S = (L + γI)^{-1} with fixed γ = 0.8
-        (GAD), or flat Σ_S = I (temporal-only ablation, spatial="flat"). γ both
-        well-conditions the operator and lifts the Laplacian's zero modes, so
-        disconnected graphs (e.g. pems04's 12 components) need no graph surgery.
-  τ²    a thin scale calibration (= N / tr(Σ_S)) so flattening or structuring
-        the spatial factor does not shift the overall variance. the *scale* is
-        set by the true-variance D_H above; τ² only trims it (τ² = 1 when flat).
+  isotropic  Σ = σ²·I            white noise, σ² = the residual's own variance.
+                                  the control: same total noise energy, no structure.
+
+  kronecker  Σ = Σ_T ⊗ Σ_S        the structured prior.
+      Σ_T = D_H^{1/2} R_H D_H^{1/2}   fit from the training residuals:
+            D_H[h] = mean(r_h^2)   diagonal  = the noise variance at each horizon
+            R_H    = corrcoef      off-diag  = the pearson correlation between horizons
+            then a ridge ρ toward scaled identity on its eigenvalues, μ ← (1-ρ)μ + ρ·μ̄
+      Σ_S ∝ (L + γI)^{-1}          the heat kernel of the repaired road graph PLUS a weak
+                                    all-to-all edge (adjacency.add_global_edge), then
+                                    normalised to UNIT DIAGONAL: per-sensor normalisation
+                                    already makes every node's variance 1, so the prior
+                                    must say the same and γ controls correlation only.
+      (β, γ)                       chosen on the TRAIN residuals so the prior's spread
+                                    on the NETWORK TOTAL equals the measured one
+                                    (global_edge="match"), or given.
 
 residuals have shape (N, H) with vec(R)[h·N + i] = R[i, h], so np.kron(Σ_T, Σ_S)
 matches numpy's vec. the precision Q = Σ^{-1} has eigenvalues θ[k,h] = q_S[k]/(τ² μ_h)
-in the V_S ⊗ V_T basis, where q_S[k] = 1 (flat) or λ_k + γ (structured).
+in the V_S ⊗ V_T basis, q_S[k] = λ_k + γ. both arms are rescaled so θ_min = γ (GAD's
+scale), with σ² absorbing the rescale so the stationary covariance is unchanged, and
+both are then scaled to the SAME total variance -- the masked second moment of the
+training residuals -- so the comparison isolates the effect of structure exactly.
 """
 from __future__ import annotations
 
@@ -28,57 +33,42 @@ import numpy as np
 
 from src.utils import paths
 
-# fixed graph-shift γ in Σ_S = (L + γI)^{-1} for the structured-spatial arm.
-# NOT data-fit: we follow GAD (Rozada et al. 2025), which fixes γ = 0.8 across
-# datasets. this keeps the prior a principled, paper-aligned hyperparameter
-# (cf. Vimal's mas_gamma, also a fixed 1e-3/1e-2 shift) rather than a bespoke
-# per-dataset value. override per call via load_prior(gamma=...) for sweeps.
+# graph shift γ in Σ_S = (L + γI)^{-1}. inherited from GAD (rozada et al. 2025).
+# override per call via load_prior(gamma=...).
 GAMMA_DEFAULT: float = 0.8
 
-# temporal twin of the spatial γ: shrink Σ_T toward scaled-identity by a fixed
-# fraction ρ,  μ_T ← (1-ρ)·μ_T + ρ·μ̄  (μ̄ = mean eigenvalue). this is the exact
-# analogue of γ — γ→∞ drives Σ_S→isotropic, ρ→1 drives Σ_T→isotropic — applied as
-# a smooth, trace-preserving shift instead of the old hard cond-number clamp.
-# ρ=0.1 tames the stiffest case (pems-bay cond 116→44, ~matching the old κ=40)
-# while barely touching the already-mild datasets (metr-la 23→16, pems08f 8→6).
-# override per call via load_prior(shrink_t=...). keeps the real horizon
-# correlation (not a path-graph assumption); the c̄-schedule handles any residual stiffness.
+# temporal ridge ρ: μ_T ← (1-ρ)·μ_T + ρ·μ̄. the temporal twin of γ — γ→∞ drives
+# Σ_S→isotropic, ρ→1 drives Σ_T→isotropic — applied as a smooth, trace-preserving
+# shift. tames the stiffest case (pems-bay cond 116→44) while barely touching the
+# mild datasets. override per call via load_prior(shrink_t=...); 0 = faithful Σ_T.
 SHRINK_T: float = 0.1
 
-# default spatial factor for the "kronecker" prior:
-#   "structured" -> Σ_S = (L + γI)^{-1} on the repaired (connected) graph: the
-#                   spatio-temporal prior — the thesis contribution.
-#   "flat"       -> Σ_S = I (temporal-only): keeps the horizon correlation, drops
-#                   the graph smoothness. residuals of a frozen GWN are spatially
-#                   ~white (Dirichlet energy ≈ 0.80), so flat is a fair ablation.
-# the choice is passed explicitly through load_prior and recorded in config.json
-# (do NOT infer it from a module constant — the run must say what it used).
-DEFAULT_SPATIAL = "structured"
 
 @dataclass(frozen=True)
 class KroneckerPrior:
-    """the fitted kronecker prior, cached after building from training residuals.
+    """a fitted prior, cached after building from the training residuals.
 
     fields:
-      gamma            laplacian shift, locked per dataset
+      gamma            laplacian shift (0 for the isotropic arm)
       V_S, lam_S       eigenvectors/eigenvalues of the normalised laplacian (N)
       V_T, mu_T        eigenvectors/eigenvalues of Σ_T (H)
       theta            (N, H) precision eigenvalues q_S[k]/(τ² μ_h); the stationary
-                       variance per mode is 1/theta
-      delta_h          (H,) per-horizon true variance (diagonal of D_H, pre-cap)
-      R_H              (H, H) empirical horizon correlation (pre-cap)
+                       variance per mode is sigma2_scale/theta
+      delta_h          (H,) per-horizon variance (diagonal of D_H)
+      R_H              (H, H) horizon correlation
     """
 
     dataset: str
     gamma: float
     V_S: np.ndarray
-    lam_S: np.ndarray
+    lam_S: np.ndarray             # spatial precision eigenvalues MINUS γ, so q_S = lam_S + γ holds
     V_T: np.ndarray
     mu_T: np.ndarray
     theta: np.ndarray
     delta_h: np.ndarray
     R_H: np.ndarray
     sigma2_scale: float = 1.0     # σ²: scales the noise so Σ_stat = σ²/θ (see _normalize_scale)
+    global_edge: float = 0.0      # β: all-to-all edge weight relative to the mean road edge
 
     @property
     def N(self) -> int:
@@ -90,27 +80,20 @@ class KroneckerPrior:
 
     @property
     def sigma2(self) -> np.ndarray:
-        """Stationary variance in the joint eigenbasis (σ²/θ). Shape (N, H)."""
+        """stationary variance in the joint eigenbasis (σ²/θ). shape (N, H)."""
         return self.sigma2_scale / self.theta
 
 
 def _load_residuals_train(dataset: str, seed: int = 0, backbone: str = "gwn",
                           norm: str = "global") -> tuple[np.ndarray, np.ndarray]:
-    """Train residuals in unit-variance space, with the mask.
+    """train residuals in unit-variance space, with the mask.
 
     divides by the SAME scaler ResidualDataset uses (global scalar std, or the
     per-node std for norm="pernode"), so the prior is fit in the exact space the
     diffusion runs in. the de-norm back to physical units happens at the output
     (r_raw = r_unit * sigma_r).
     """
-    # backbone="raw" is the pure-signal arm: the cache under residuals/<ds>/raw/ holds the
-    # RAW SIGNAL + history, not a forecast residual (the directory name is a legacy of
-    # sharing paths.residual_npz). it is produced by a different script, so point at the
-    # right one instead of sending people to the backbone extractor.
-    _how = (f"run scripts/build_signal_cache.py --dataset {dataset} first "
-            f"(backbone='raw' is the pure-signal cache, not a forecast residual)"
-            if backbone == "raw" else
-            f"run scripts/gwn_extract_residuals.py --variant {dataset} --seed {seed} "
+    _how = (f"run scripts/extract_residuals.py --variant {dataset} --seed {seed} "
             f"--backbone {backbone} first")
     paths.require_inputs([(paths.residual_npz(dataset, "train", seed, backbone), _how)])
     from src.data.residual_dataset import train_residual_sigma
@@ -123,11 +106,18 @@ def _load_residuals_train(dataset: str, seed: int = 0, backbone: str = "gwn",
     return R / sigma_r.reshape(-1, 1), mask
 
 
-def _load_laplacian_eig(dataset: str, repaired: bool) -> tuple[np.ndarray, np.ndarray]:
-    # self-healing: rebuild if the eig cache is MISSING *or* CORRUPT (a truncated /
-    # bad-CRC npz from a storage incident used to crash every kron arm), and if the
-    # cache location is read-only/full (e.g. a full qtree) fall back to an in-memory
-    # recompute so a bad or unwritable cache never crashes a run.
+def _load_laplacian_eig(dataset: str, repaired: bool,
+                        global_edge: float = 0.0) -> tuple[np.ndarray, np.ndarray]:
+    """(λ, V) of the normalised laplacian, ascending. self-healing: rebuild if the
+    eig cache is missing or corrupt, and fall back to an in-memory recompute if the
+    cache location is unwritable, so a bad cache never crashes a run. with a global
+    edge the graph is run-specific, so it is computed fresh (an eigh of N<=325)."""
+    from src.data.adjacency import compute_normalized_laplacian, load_adjacency
+    if global_edge:
+        L = compute_normalized_laplacian(load_adjacency(dataset, repair=repaired, global_edge=global_edge))
+        lam, V = np.linalg.eigh(L)
+        o = np.argsort(lam)
+        return lam[o].astype(np.float64), V[:, o].astype(np.float64)
     cache = paths.laplacian_eigs(dataset, repaired)
     if cache.exists():
         try:
@@ -136,7 +126,6 @@ def _load_laplacian_eig(dataset: str, repaired: bool) -> tuple[np.ndarray, np.nd
         except Exception as e:                       # BadZipFile, EOFError, OSError, ...
             import warnings
             warnings.warn(f"corrupt laplacian cache {cache} ({e}); recomputing from adjacency")
-    from src.data.adjacency import compute_normalized_laplacian, load_adjacency
     L = compute_normalized_laplacian(load_adjacency(dataset, repair=repaired))
     lam, V = np.linalg.eigh(L)
     o = np.argsort(lam)
@@ -149,134 +138,24 @@ def _load_laplacian_eig(dataset: str, repaired: bool) -> tuple[np.ndarray, np.nd
     return lam, V
 
 
-def _knn_correlation_graph(R: np.ndarray, k: int = 15) -> np.ndarray:
-    """kNN graph from residual spatial correlation (functional similarity). the road
-    network is the wrong graph for FLOW (volume correlates by function, not road distance) —
-    on the flow residual the road-graph prior has NEGATIVE spatial contribution, while a
-    correlation graph gives +11–21%. speed keeps the road graph (congestion propagates along
-    roads). R is (B, N, H); returns a symmetric weighted adjacency (N, N)."""
-    Rf = R.transpose(1, 0, 2).reshape(R.shape[1], -1)     # (N, B*H)
-    corr = np.corrcoef(Rf)
-    np.fill_diagonal(corr, -np.inf)
-    N = corr.shape[0]
-    idx = np.argsort(-corr, axis=1)[:, :k]
-    A = np.zeros((N, N))
-    rows = np.repeat(np.arange(N), k)
-    cols = idx.ravel()
-    w = np.clip(corr[rows, cols], 0.0, None)
-    A[rows, cols] = w
-    A = np.maximum(A, A.T)                                # symmetrize (mutual OR)
-    return A
-
-
-# ── GTCNN product-graph family (Sabbaqi & Isufi, arXiv:2206.15174) ──────────────
-# the three product graphs are defined on the FACTOR GSOs, not by re-normalizing the
-# product graph (their Sec. 2.1), and their Prop. 3 gives the eigendecomposition
-#     S_◇ = (V_T ⊗ V_S)(Λ_T ◇ Λ_S)(V_T ⊗ V_S)^H
-# so the eigenvectors are EXACTLY V_S ⊗ V_T for every form — the whole diffusion stays
-# separable and reuses the verified 2-D rotation. with normalized-Laplacian factors
-# (λ ∈ [0,2] each) the three combination rules are:
-#     cartesian  λ_S + λ_T                     [0,4]   1 zero mode
-#     strong     (1+λ_S)(1+λ_T) - 1            [0,8]   1 zero mode
-#     tensor     λ_S · λ_T                     [0,4]   N+H-1 zero modes  (degenerate)
-# we rescale each to exactly [0,2] so ONE γ gives the same θ_min, mixing number and
-# stiffness for every form and dataset — the scale is absorbed by σ², so this is an
-# exact reparameterization, not a modelling choice.
-PRODUCT_FORMS = ("prod_cartesian", "prod_strong", "prod_tensor", "prod_param")
-
-
-def _product_spectrum(form: str, lam_S: np.ndarray, lam_T: np.ndarray,
-                      s_ij: np.ndarray | None = None) -> np.ndarray:
-    """(N,H) product-graph eigenvalues, rescaled to [0,2]. lam_S/lam_T are the
-    normalized-Laplacian spectra of the two factors."""
-    a, b = lam_S[:, None], lam_T[None, :]
-    if form == "prod_cartesian":
-        lam = a + b
-    elif form == "prod_strong":
-        lam = (1.0 + a) * (1.0 + b) - 1.0
-    elif form == "prod_tensor":
-        lam = a * b
-    elif form == "prod_param":
-        # GTCNN eq.10 parametric product graph: S_◇ = Σ_ij s_ij (S_T^i ⊗ S^j).
-        # s_00 is a self-loop term = GAD's γ, so this family strictly contains
-        # cartesian (s=[0,1,1,0]), tensor ([0,0,0,1]) and strong ([0,1,1,1]).
-        if s_ij is None:
-            raise ValueError("prod_param needs fitted s_ij (run fit_product_graph.py)")
-        s00, s01, s10, s11 = (float(x) for x in s_ij)
-        lam = s00 + s01 * a + s10 * b + s11 * a * b
-        lam = lam - lam.min()                    # shift so the slowest mode sits at 0
-    else:
-        raise ValueError(f"unknown product form {form!r}; use one of {PRODUCT_FORMS}")
-    m = float(lam.max())
-    return 2.0 * lam / m if m > 0 else lam       # -> exactly [0, 2]
-
-
-def _load_s_ij(dataset: str, backbone: str, seed: int) -> np.ndarray:
-    """fitted parametric-product-graph coefficients, written by
-    scripts/analysis/fit_product_graph.py. kept on disk so training never refits."""
-    p = paths.analysis_dir("product_graph") / f"s_ij_{dataset}_{backbone}_seed{seed}.npy"
-    if not p.exists():
-        raise FileNotFoundError(
-            f"parametric product-graph coefficients missing: {p}\n"
-            f"  run: python scripts/analysis/fit_product_graph.py --dataset {dataset} "
-            f"--backbone {backbone} --seed {seed}")
-    return np.load(p)
-
-
-def _spatial_graph_eig(dataset: str, R: np.ndarray, spatial_graph: str, knn_k: int,
-                       repair: bool) -> tuple[np.ndarray, np.ndarray]:
-    """(lam_S, V_S) for the spatial factor. 'road' = the given adjacency (right for speed);
-    'correlation' = kNN on residual correlation (right for flow); 'hybrid' = road ∪ 0.25·corr."""
-    if spatial_graph == "road":
-        return _load_laplacian_eig(dataset, repaired=repair)
-    from src.data.adjacency import compute_normalized_laplacian, load_adjacency
-    A_corr = _knn_correlation_graph(R, knn_k)
-    if spatial_graph == "correlation":
-        A = A_corr
-    elif spatial_graph == "hybrid":
-        A_road = np.asarray(load_adjacency(dataset, repair=repair)).astype(np.float64)
-        np.fill_diagonal(A_road, 0.0)
-        A = A_road + 0.25 * A_corr
-    else:
-        raise ValueError(f"unknown spatial_graph {spatial_graph!r}; use road/correlation/hybrid")
-    lam, V = np.linalg.eigh(compute_normalized_laplacian(A))
-    o = np.argsort(lam)
-    return lam[o], V[:, o]
-
-
-def _temporal_laplacian_eig(H: int, gamma_t: float) -> tuple[np.ndarray, np.ndarray]:
-    """temporal factor from a PATH-graph (chain) normalized Laplacian on the H horizons:
-    Σ_T = (L_path + γ_t I)^{-1} — the temporal twin of the spatial (L_S + γI)^{-1}, so the
-    prior is a clean spatio-temporal PRODUCT GRAPH (both sides Laplacian, Kronecker/
-    multiplicative). a mild γ_t keeps the temporal spread bounded (ratio (2+γ_t)/γ_t),
-    unlike the empirical Σ_T whose one giant common mode makes the prior very stiff.
-    returns (mu_T, V_T) with mu_T = 1/(ω+γ_t) the covariance eigenvalues."""
-    from src.data.adjacency import compute_normalized_laplacian
-    A = np.zeros((H, H))
-    idx = np.arange(H - 1)
-    A[idx, idx + 1] = 1.0
-    A[idx + 1, idx] = 1.0
-    omega, V_T = np.linalg.eigh(compute_normalized_laplacian(A))
-    mu_T = 1.0 / (np.clip(omega, 0.0, None) + gamma_t)
-    return mu_T, V_T
-
-
 def _fit_sigma_T(R: np.ndarray, mask: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Return (delta_h, R_H, Sigma_T).
+    """(delta_h, R_H, Sigma_T) from the residuals.
 
-    D_H is the true per-horizon variance (second moment). this replaced the old
-    MAD estimator, which undercounts the variance 4-11x on these heavy-tailed
-    residuals (excess kurtosis 19-40) and flattens the real horizon growth.
-    R_H is the empirical horizon correlation.
+    D_H is the per-horizon second moment over ALL observed entries (not a MAD: that
+    undercounts the variance 4-11x on these heavy-tailed residuals and flattens the
+    real horizon growth). it is deliberately NOT restricted to fully observed rows:
+    on metr-la sensors drop out during the hard periods, and the fully observed rows
+    carry only 52-63% of the variance -- a prior fitted there is fitted on the easy
+    periods. R_H, the horizon correlation, is a SHAPE and is fitted on the fully
+    observed rows where it is well defined.
     """
     B, N, H = R.shape
     R_flat = R.reshape(B * N, H)
     M_flat = mask.reshape(B * N, H)
+    Rz = np.where(M_flat, R_flat, 0.0)
+    delta_h = (Rz ** 2).sum(axis=0) / np.maximum(M_flat.sum(axis=0), 1)   # per-horizon variance
     keep = M_flat.all(axis=1)
-    R_valid = R_flat[keep]
-
-    delta_h = (R_valid ** 2).mean(axis=0)        # true per-horizon variance
-    R_H = np.corrcoef(R_valid.T)
+    R_H = np.corrcoef(R_flat[keep].T)
 
     D_sqrt = np.sqrt(delta_h)
     Sigma_T = (D_sqrt[:, None] * R_H) * D_sqrt[None, :]
@@ -284,42 +163,92 @@ def _fit_sigma_T(R: np.ndarray, mask: np.ndarray) -> tuple[np.ndarray, np.ndarra
 
 
 def _normalize_scale(theta: np.ndarray) -> tuple[np.ndarray, float]:
-    """rescale the precision to GAD's scale: put the slowest mode at θ_min = γ (GAD's
-    smooth-mode precision λ_min+γ = γ). then the schedule's c_0 ≈ 5/γ ≈ 6 for EVERY
-    dataset (GAD fixes S≈7), instead of a per-dataset 30–80. σ² absorbs the rescale,
-    so the stationary covariance Σ_stat = σ²/θ is UNCHANGED — an exact reparameterization
-    that only moves the scale from c̄ into θ. returns (theta_scaled, sigma2_scale)."""
+    """put the slowest mode at θ_min = γ (GAD's smooth-mode precision), so the
+    schedule's c_0 ≈ 5/γ mixes it on every dataset instead of a per-dataset 30-80.
+    σ² absorbs the rescale, so the stationary covariance Σ_stat = σ²/θ is UNCHANGED —
+    an exact reparameterization that only moves scale from c̄ into θ.
+    returns (theta_scaled, sigma2_scale)."""
     s = GAMMA_DEFAULT / float(theta.min())
     return theta * s, s
 
 
-def _build_isotropic_prior(dataset: str, seed: int = 0, backbone: str = "gwn",
-                           norm: str = "global", winsor: float | None = None) -> KroneckerPrior:
-    """Scale-matched white-noise baseline: Σ = σ²·I, σ² = masked variance of the
-    training residuals. identity eigenbasis (no spatial/temporal structure) with
-    a constant per-mode precision θ = 1/σ², so the stationary variance is σ²
-    everywhere. strips all structure but keeps the overall noise energy, so the
-    comparison against the kronecker prior isolates the effect of structure.
-    winsor matches the kronecker arm's clipping so the σ² scale is comparable.
-    """
+def _build_isotropic_prior(dataset: str, seed: int, backbone: str, norm: str) -> KroneckerPrior:
+    """scale-matched white noise: Σ = σ²·I, σ² = masked variance of the training
+    residuals. identity eigenbasis (no spatial/temporal structure) with a constant
+    per-mode precision, so the stationary variance is σ² everywhere. strips all
+    structure but keeps the overall noise energy, so the comparison against the
+    kronecker prior isolates the effect of structure."""
     R, mask = _load_residuals_train(dataset, seed, backbone, norm)
-    # iso has no structure, so winsor would only shrink the scale — keep the FULL variance
-    # (the kronecker arm winsorizes for structure but rescales back to this same full var).
-    sigma2 = float(R[mask].var())
+    sigma2 = float((R[mask] ** 2).mean())        # the masked second moment: the SAME scale the kron arm is matched to
     _, N, H = R.shape
     theta, sigma2_scale = _normalize_scale(np.full((N, H), 1.0 / sigma2))
     return KroneckerPrior(
         dataset=dataset,
-        gamma=0.0,                              # not meaningful for white noise
-        V_S=np.eye(N),                          # identity basis -> no spatial structure
+        gamma=0.0,
+        V_S=np.eye(N),
         lam_S=np.zeros(N),
-        V_T=np.eye(H),                          # identity basis -> no temporal structure
+        V_T=np.eye(H),
         mu_T=np.full(H, sigma2),
-        theta=theta,                            # normalized; Σ_stat = σ²·scale/θ = σ²
+        theta=theta,
         delta_h=np.full(H, sigma2),
         R_H=np.eye(H),
         sigma2_scale=sigma2_scale,
     )
+
+
+def _spatial_factor(dataset: str, repair: bool, global_edge: float, gamma: float,
+                    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """(mu_S, V_S, lam) : eigenvalues/vectors of the UNIT-DIAGONAL Σ_S ∝ (L+γI)^{-1}, and the
+    laplacian eigenvalues the kernel was built from."""
+    lam, V = _load_laplacian_eig(dataset, repaired=repair, global_edge=global_edge)
+    Sig = (V * (1.0 / (lam + gamma))) @ V.T
+    d = np.sqrt(np.diag(Sig))
+    Sig = Sig / np.outer(d, d)                     # unit diagonal: γ controls correlation only
+    mu_S, V_S = np.linalg.eigh(Sig)
+    mu_S = np.clip(mu_S, 1e-12, None)
+    return mu_S, V_S, lam
+
+
+def _implied_total_sd(V_S: np.ndarray, sigma2: np.ndarray, sig: np.ndarray) -> np.ndarray:
+    """sd the prior implies for the NETWORK TOTAL error at each horizon, in raw units:
+    Var(Σ_i σ_i r_ih) = σᵀ C_h σ with C_h = V_S diag(sigma2[:,h]) V_Sᵀ."""
+    return np.array([np.sqrt(sig @ (V_S * sigma2[:, h]) @ V_S.T @ sig) for h in range(sigma2.shape[1])])
+
+
+def match_global_edge(dataset: str, seed: int, backbone: str, norm: str,
+                      repair: bool, mu_T: np.ndarray, var_data: float,
+                      betas=(0.003, 0.01, 0.03, 0.1, 0.3),
+                      gammas=None) -> tuple[float, float, float]:
+    """choose (β, γ) so the prior puts the RIGHT spread on the network total.
+
+    a road graph alone puts 0.5-1.1% of the prior's variance on the 'all sensors
+    together' direction where the residual has 3-21%, and no γ fixes that; a global
+    edge does. likelihood over-shoots here (it is nearly blind to one mode out of N),
+    so the pair is chosen by MATCHING, on the TRAIN residuals only: the ratio of the
+    prior-implied sd of the total to the measured one, closest to 1. returns
+    (β, γ, ratio)."""
+    from src.data.residual_dataset import train_residual_sigma
+    gammas = np.geomspace(1e-3, 3.0, 40) if gammas is None else gammas
+    d = np.load(paths.residual_npz(dataset, "train", seed, backbone))
+    R = d["residuals"].astype(np.float64)
+    M = d["mask"].astype(bool)
+    sig = np.asarray(train_residual_sigma(dataset, seed, backbone, norm=norm))
+    sig = np.broadcast_to(sig.reshape(-1), (R.shape[1],)).astype(np.float64)
+    tot = np.where(M, R, 0.0).sum(axis=1)                    # raw total per (window, horizon)
+    ok = M.reshape(len(M), -1).mean(1) > 0.5
+    truth = tot[ok].std(axis=0)
+    N, H = R.shape[1], R.shape[2]
+    best = None
+    for beta in betas:
+        for g in gammas:
+            mu_S, V_S, _ = _spatial_factor(dataset, repair, beta, float(g))
+            theta = (1.0 / mu_S)[:, None] / mu_T[None, :]
+            theta, s2 = _normalize_scale(theta)
+            s2 *= var_data / float((s2 / theta).mean())
+            r = float((_implied_total_sd(V_S, s2 / theta, sig) / truth).mean())
+            if best is None or abs(r - 1.0) < abs(best[2] - 1.0):
+                best = (float(beta), float(g), r)
+    return best
 
 
 @lru_cache(maxsize=32)
@@ -327,313 +256,70 @@ def load_prior(
     dataset: str,
     prior: str = "kronecker",
     seed: int = 0,
-    spatial: str = DEFAULT_SPATIAL,
-    stiffness_cap: float | None = None,
     gamma: float | None = None,
     shrink_t: float | None = None,
-    shrink_s: float | None = None,
-    temporal: str = "empirical",
-    gamma_t: float = 0.6,
-    spatial_graph: str = "road",
-    knn_k: int = 15,
-    winsor: float | None = None,
     backbone: str = "gwn",
     repair: bool | None = None,
     norm: str = "global",
+    global_edge: float | str | None = None,
 ) -> KroneckerPrior:
-    """Fit and cache the diffusion noise prior for a dataset.
+    """fit and cache the noise prior for one (dataset, backbone, seed) cell.
 
-    prior="kronecker": structured Σ = Σ_T ⊗ Σ_S, fit from training residuals.
-      spatial="structured" -> Σ_S = (L + γI)^{-1} (spatio-temporal, the contribution).
-      spatial="flat"       -> Σ_S = I (temporal-only ablation).
-    prior="isotropic": scale-matched white noise Σ = σ²·I (the baseline).
-    stiffness_cap: if set, floor θ_min so θ_max/θ_min <= cap (a joint-spectrum
-      twin of the ridge shift; the trainability fallback for stiff structured priors).
-    gamma: override the fixed spatial shift γ (structured only). None = use
-      GAMMA_DEFAULT (0.8, GAD). exposed for the conditioning trade-off sweep (a larger
-      γ tames κ(Q_S) at the cost of a less smoothness-committed prior).
-    shrink_t: override the temporal ridge fraction ρ (μ_T ← (1-ρ)μ_T + ρ·μ̄, the
-      temporal twin of γ). None = use SHRINK_T (0.1). 0 = faithful empirical Σ_T.
-    repair: use the component-repaired (single connected) graph for the laplacian.
-      None = follow adjacency.REPAIR_GRAPH (the global default, True).
-    norm: residual scaler the prior is fit under — "global" (one scalar std) or
-      "pernode" (per-sensor std; must match the dataset's normalization).
+    prior="kronecker": Σ = Σ_T ⊗ Σ_S, Σ_T fit from the residuals, Σ_S the road-graph
+      heat kernel (L+γI)^{-1}.
+    prior="isotropic": scale-matched white noise Σ = σ²·I (the control).
+    gamma:    spatial shift γ. None = GAMMA_DEFAULT (ignored when global_edge="match").
+    shrink_t: temporal ridge ρ. None = SHRINK_T. 0 = faithful empirical Σ_T.
+    global_edge: β for the all-to-all edge (adjacency.add_global_edge); None/0 = road
+              graph only; "match" = choose (β, γ) on the train residuals so the prior's
+              spread on the network total is right (match_global_edge).
+    repair:   use the component-repaired (single connected) graph. None = follow
+              adjacency.REPAIR_GRAPH.
+    norm:     residual scaler the prior is fit under — "global" or "pernode"; must
+              match the dataset's normalisation.
     """
     if prior == "isotropic":
-        return _build_isotropic_prior(dataset, seed, backbone, norm, winsor=winsor)
-    if prior in ("vp", "ve"):
-        # literal standard-diffusion baselines (GAD's paper adversaries), expressed in our
-        # per-mode OU machinery. vp: theta=1, sigma^2=1 (DDPM; unit terminal variance —
-        # our standardized targets have var~1 so this is also scale-appropriate).
-        # ve: theta->0 (no drift), sigma^2=1 -> marginal var = 2*c̄; terminal draws are
-        # N(0, sigma_max^2) supplied EXPLICITLY at sampling time (R_T), never the
-        # theta->0 stationary (which is unbounded by construction).
-        R, mask = _load_residuals_train(dataset, seed, backbone, norm)
-        _, N, H = R.shape
-        theta_val = 1.0 if prior == "vp" else 1e-6
-        Rf = R.reshape(-1, H); keep = mask.reshape(-1, H).all(1)
-        return KroneckerPrior(
-            dataset=dataset, gamma=0.0, V_S=np.eye(N), lam_S=np.zeros(N),
-            V_T=np.eye(H), mu_T=np.full(H, 1.0),
-            theta=np.full((N, H), theta_val),
-            delta_h=(Rf[keep] ** 2).mean(0), R_H=np.corrcoef(Rf[keep].T),
-            sigma2_scale=1.0,
-        )
+        return _build_isotropic_prior(dataset, seed, backbone, norm)
     if prior != "kronecker":
-        raise ValueError(f"unknown prior {prior!r}; use 'kronecker', 'isotropic', 'vp' or 've'")
-    if spatial not in ("structured", "flat"):
-        raise ValueError(f"unknown spatial {spatial!r}; use 'structured' or 'flat'")
+        raise ValueError(f"unknown prior {prior!r}; use 'kronecker' or 'isotropic'")
 
     R, mask = _load_residuals_train(dataset, seed, backbone, norm)
-    var_full = float(R[mask].var())          # full-data variance (pre-winsor) — the target scale
-    # winsorize before fitting: heavy tails (kurtosis 24-38) mask the graph structure in the
-    # covariance; clipping at the `winsor` percentile of |r| reveals it (metrla spatial share
-    # 10%->31%). used ONLY for the CORRELATION structure (R_H + the correlation graph); the
-    # VARIANCE profile D_H is refit from the full data below (clipping flattens the horizon
-    # growth), and the overall variance is rescaled to var_full at the end. None = no clip.
-    R_full = R
-    if winsor is not None:
-        thr = float(np.percentile(np.abs(R[mask]), winsor))
-        R = np.clip(R, -thr, thr)
     _, N, H = R.shape
+    var_data = float((R[mask] ** 2).mean())      # the scale both arms are matched to
 
-    if temporal in PRODUCT_FORMS:
-        # GTCNN product-graph heat prior. Q = L_◇ + γI on the product of the sensor graph
-        # and the horizon path graph, with L_◇ built from the FACTOR GSOs exactly as
-        # GTCNN Sec. 2.1 defines it (so eigvecs are V_S ⊗ V_T, Prop. 3) and rescaled to
-        # [0,2]. one γ for every form and dataset: θ = λ_◇ + γ ∈ [γ, 2+γ], so θ_min = γ,
-        # stiffness (2+γ)/γ and the mixing number 2·c₀·γ are IDENTICAL across arms — the
-        # only thing that varies is the SHAPE of θ over modes, which is the whole point.
-        # NO θ_min→0.8 renormalization (that inflation crushes the heat cascade; see the
-        # GAD-faithful note in the legacy "cartesian" branch below).
-        gamma = 0.1 if gamma is None else gamma
-        if repair is None:
-            from src.data.adjacency import REPAIR_GRAPH
-            repair = REPAIR_GRAPH
-        lam_S, V_S = _spatial_graph_eig(dataset, R, spatial_graph, knn_k, repair)
-        from src.data.adjacency import compute_normalized_laplacian
-        A_T = np.zeros((H, H)); idx = np.arange(H - 1)
-        A_T[idx, idx + 1] = 1.0; A_T[idx + 1, idx] = 1.0
-        omega, V_T = np.linalg.eigh(compute_normalized_laplacian(A_T))
-        omega = np.clip(omega, 0.0, None)
-        s_ij = _load_s_ij(dataset, backbone, seed) if temporal == "prod_param" else None
-        lam_prod = _product_spectrum(temporal, lam_S, omega, s_ij)     # (N,H) in [0,2]
-        theta = lam_prod + gamma
-        if stiffness_cap is not None:
-            theta = np.maximum(theta, theta.max() / stiffness_cap)
-        # single-scalar variance match (GAD's σ): mean stationary variance = data variance.
-        sigma2_scale = 1.0
-        sigma2_scale *= var_full / max(float((sigma2_scale / theta).mean()), 1e-12)
-        Rf = R_full.reshape(-1, H); keep = mask.reshape(-1, H).all(1)
-        return KroneckerPrior(
-            dataset=dataset, gamma=gamma, V_S=V_S, lam_S=lam_S,
-            V_T=V_T, mu_T=1.0 / (omega + gamma),
-            theta=theta, delta_h=(Rf[keep] ** 2).mean(0),
-            R_H=np.corrcoef(Rf[keep].T), sigma2_scale=sigma2_scale,
-        )
-    if temporal == "cartesian":
-        # GAD-LITERAL SPATIO-TEMPORAL EXTENSION: the graph is the normalized CARTESIAN
-        # product of the sensor graph and the horizon path-graph. its Laplacian spectrum is
-        #     λ_ST[k,h] = (λ_S[k] + λ_T[h]) / 2  ∈ [0, 2]   (eigvecs V_S ⊗ V_T),
-        # and the prior is exactly GAD's:  Q = L_ST + γ I,  one FIXED small γ (0.04),
-        # Σ_stat = σ²(L_ST+γI)^{-1} with σ² a single scalar matched to the data variance.
-        # NO data-fit covariance, no winsor, no per-dataset γ — pure GAD, one more axis.
-        # γ sets the spectrum: θ = λ_ST + γ ∈ [γ, 2+γ], stiffness (2+γ)/γ. GAD Fig.1 uses
-        # θ∈[0.1,1.79] (γ=0.1) — a graded cascade where modes die across the whole timeline.
-        # γ=0.1 reproduces that on the graph-smooth traffic SIGNAL (low-freq-dominant, since
-        # Σ_stat[mode]=σ²/θ puts ~20× more variance on the smoothest mode than the roughest).
-        gamma = 0.1 if gamma is None else gamma
-        if repair is None:
-            from src.data.adjacency import REPAIR_GRAPH
-            repair = REPAIR_GRAPH
-        lam_S, V_S = _spatial_graph_eig(dataset, R, spatial_graph, knn_k, repair)
-        from src.data.adjacency import compute_normalized_laplacian
-        A_T = np.zeros((H, H)); idx = np.arange(H - 1)
-        A_T[idx, idx + 1] = 1.0; A_T[idx + 1, idx] = 1.0
-        omega, V_T = np.linalg.eigh(compute_normalized_laplacian(A_T))
-        omega = np.clip(omega, 0.0, None)
-        lam_ST = 0.5 * (lam_S[:, None] + omega[None, :])          # (N, H) ∈ [0, 2]
-        theta = lam_ST + gamma                                     # GAD precision λ + γ ∈ [γ, 2+γ]
-        if stiffness_cap is not None:
-            theta = np.maximum(theta, theta.max() / stiffness_cap)
-        # GAD-FAITHFUL: θ = λ_ST+γ is ALREADY the canonical bounded heat spectrum — do NOT
-        # rescale θ_min→0.8. That ×~20 inflation (the residual arm's _normalize_scale) crushes
-        # the cascade: median θ→20, every mode dies by c̄≈0.15, only the smoothest survives
-        # (see scripts/analysis/gad_forward.py, top row). Keeping θ∈[γ,2+γ] gives GAD Fig.1's
-        # graded forward. The schedule must mix the slow mode: 2·c_0·γ ≳ 5 (γ=0.1 → c_0=25).
-        sigma2_scale = 1.0
-        # single-scalar variance match (GAD's σ): Σ_stat mean = data variance.
-        cur = float((sigma2_scale / theta).mean())
-        sigma2_scale *= var_full / max(cur, 1e-12)
-        Rf = R_full.reshape(-1, H); keep = mask.reshape(-1, H).all(1)
-        return KroneckerPrior(
-            dataset=dataset, gamma=gamma, V_S=V_S, lam_S=lam_S,
-            V_T=V_T, mu_T=1.0 / (0.5 * omega + gamma),
-            theta=theta, delta_h=(Rf[keep] ** 2).mean(0),
-            R_H=np.corrcoef(Rf[keep].T), sigma2_scale=sigma2_scale,
-        )
-    if temporal == "reshaped":
-        # RESHAPED prior (the contribution): keep the graph Laplacian spatial eigvecs V_S
-        # and the empirical temporal eigvecs V_T as the BASIS, but set each mode's variance
-        # to the residual's MEASURED per-mode variance v_emp — not the heat-kernel 1/(λ+γ).
-        # this is GAD's Remark-1 ("adapt c̄ per eigenvalue") made data-driven: the prior is
-        # the DIAGONAL of the empirical covariance in the graph×temporal basis. σ² absorbs the
-        # scale so Σ_stat = σ²/θ = v_emp exactly.
-        gamma = GAMMA_DEFAULT if gamma is None else gamma
-        if repair is None:
-            from src.data.adjacency import REPAIR_GRAPH
-            repair = REPAIR_GRAPH
-        lam_S, V_S = _spatial_graph_eig(dataset, R, spatial_graph, knn_k, repair)
-        delta_h, R_H, Sigma_T = _fit_sigma_T(R_full, mask)
-        mu_T, V_T = np.linalg.eigh(Sigma_T)
-        mu_T = np.clip(mu_T, a_min=1e-12, a_max=None)
-        # measured per-mode variance in the (V_S ⊗ V_T) basis, from masked full data
-        Rz = np.where(mask, R_full, 0.0)
-        C = np.matmul(V_S.T, Rz); C = np.matmul(C, V_T)          # (B,N,H) graph×temporal coeffs
-        v_emp = np.clip((C ** 2).mean(0), 1e-8, None)            # (N,H)
-        # joint-spectrum ridge (Ledoit-Wolf-style shrinkage toward flat): the same
-        # regularizer the other components already have (γ for space, ρ=SHRINK_T for
-        # time). the raw per-mode fit is brittle under train→test spectrum drift —
-        # the loud modes grow at test (energy-weighted ratio 1.3–3.8×) and a tightly
-        # matched prior under-disperses exactly there. λ=0 = faithful v_emp (old
-        # behaviour); λ=1 = flat = iso. trace-preserving.
-        if shrink_s:
-            v_emp = (1.0 - shrink_s) * v_emp + shrink_s * v_emp.mean()
-        theta = 1.0 / v_emp
-        if stiffness_cap is not None:
-            theta = np.maximum(theta, theta.max() / stiffness_cap)
-        theta, sigma2_scale = _normalize_scale(theta)
-        cur = float((sigma2_scale / theta).mean())
-        sigma2_scale *= var_full / max(cur, 1e-12)               # match overall variance
-        return KroneckerPrior(
-            dataset=dataset, gamma=gamma, V_S=V_S, lam_S=lam_S,
-            V_T=V_T, mu_T=mu_T, theta=theta, delta_h=delta_h,
-            R_H=R_H, sigma2_scale=sigma2_scale,
-        )
-    if temporal == "laplacian":
-        # temporal path-graph Laplacian (γ_t) in place of the empirical Σ_T, MULTIPLICATIVE
-        # composition (Σ_T ⊗ Σ_S). superseded by "cartesian" for the raw arm (multiplicative
-        # squares the spread → stiff); kept for ablation.
-        mu_T, V_T = _temporal_laplacian_eig(H, gamma_t)
-        Rf = R.reshape(-1, H); keep = mask.reshape(-1, H).all(1)
-        delta_h = (Rf[keep] ** 2).mean(0)
-        R_H = np.corrcoef(Rf[keep].T)
-    elif temporal == "empirical":
-        delta_h, R_H, Sigma_T = _fit_sigma_T(R, mask)
-        if winsor is not None:
-            # keep the winsorized (robust) horizon CORRELATION R_H, but restore the horizon
-            # VARIANCE profile from the FULL data: Σ_T = D_full^{1/2} R_H(winsor) D_full^{1/2}.
-            delta_h = _fit_sigma_T(R_full, mask)[0]
-            D_sqrt = np.sqrt(delta_h)
-            Sigma_T = (D_sqrt[:, None] * R_H) * D_sqrt[None, :]
-        mu_T, V_T = np.linalg.eigh(Sigma_T)
-        mu_T = np.clip(mu_T, a_min=1e-12, a_max=None)
-        # ridge shift toward scaled-identity (temporal twin of γ): μ ← (1-ρ)μ + ρ·μ̄.
-        # additive + trace-preserving, not a hard clamp; ρ=0 leaves Σ_T faithful.
-        rho = SHRINK_T if shrink_t is None else shrink_t
-        if rho:
-            mu_T = (1.0 - rho) * mu_T + rho * mu_T.mean()
+    # temporal factor: horizon variance profile and horizon correlation, then ridge
+    delta_h, R_H, Sigma_T = _fit_sigma_T(R, mask)
+    mu_T, V_T = np.linalg.eigh(Sigma_T)
+    mu_T = np.clip(mu_T, a_min=1e-12, a_max=None)
+    rho = SHRINK_T if shrink_t is None else shrink_t
+    if rho:
+        mu_T = (1.0 - rho) * mu_T + rho * mu_T.mean()
+
+    # spatial factor: unit-diagonal heat kernel of the road graph (+ global edge)
+    if repair is None:
+        from src.data.adjacency import REPAIR_GRAPH
+        repair = REPAIR_GRAPH
+    if global_edge == "match":
+        beta, gamma, _ = match_global_edge(dataset, seed, backbone, norm, repair, mu_T, var_data)
     else:
-        raise ValueError(f"unknown temporal {temporal!r}; use 'empirical' or 'laplacian'")
-
-    # spatial factor: structured (L + γI)^{-1}, or flat (Σ_S = I)
-    if spatial == "flat":
-        gamma = 0.0
-        V_S = np.eye(N)
-        lam_S = np.zeros(N)
-        q_S = np.ones(N)                          # spatial precision = 1 (Σ_S = I)
-    else:
+        beta = float(global_edge or 0.0)
         gamma = GAMMA_DEFAULT if gamma is None else gamma
-        if repair is None:
-            from src.data.adjacency import REPAIR_GRAPH
-            repair = REPAIR_GRAPH
-        # spatial graph: road (given adjacency, right for speed), correlation (kNN on the
-        # residual, right for flow), or hybrid. built from the (winsorized) residual R.
-        lam_S, V_S = _spatial_graph_eig(dataset, R, spatial_graph, knn_k, repair)
-        q_S = lam_S + gamma                       # spatial precision = L + γI
+    mu_S, V_S, _ = _spatial_factor(dataset, repair, beta, gamma)
+    q_S = 1.0 / mu_S                          # spatial precision eigenvalues
+    theta = q_S[:, None] / mu_T[None, :]      # (unit diagonal => τ² = 1 exactly)
 
-    # τ²: trace-calibrate so Σ_S's average eigenvalue doesn't shift the variance
-    # (= 1 exactly when flat; the true-variance D_H already carries the scale).
-    tau2 = N / (1.0 / q_S).sum()
-    theta = q_S[:, None] / (tau2 * mu_T[None, :])
-
-    # optional joint-stiffness cap: floor θ so θ_max/θ_min <= stiffness_cap. off by
-    # default (faithful prior); enabled only if the pilot shows training instability.
-    if stiffness_cap is not None:
-        theta = np.maximum(theta, theta.max() / stiffness_cap)
-
-    # GAD-scale normalization: θ_min → γ so c_0 ≈ 5/γ ≈ 6 (σ² preserves Σ_stat).
     theta, sigma2_scale = _normalize_scale(theta)
-    if temporal == "laplacian" or winsor is not None:
-        # the path-graph μ_T carries no data scale, and winsorizing shrinks it — either way,
-        # match the overall stationary variance to the FULL data variance so draws are
-        # representative and the forward reaches the data distribution (not under-dispersed).
-        cur = float((sigma2_scale / theta).mean())
-        sigma2_scale *= var_full / max(cur, 1e-12)
-
+    sigma2_scale *= var_data / float((sigma2_scale / theta).mean())   # exact variance match
     return KroneckerPrior(
         dataset=dataset,
         gamma=gamma,
         V_S=V_S,
-        lam_S=lam_S,
+        lam_S=q_S - gamma,
         V_T=V_T,
         mu_T=mu_T,
         theta=theta,
         delta_h=delta_h,
         R_H=R_H,
         sigma2_scale=sigma2_scale,
+        global_edge=beta,
     )
-
-
-def build_prior_from_R(
-    dataset: str,
-    R_raw: np.ndarray,
-    mask: np.ndarray,
-    spatial: str = "structured",
-    gamma: float = 0.8,
-    stiffness_cap: float | None = None,
-    repair: bool | None = None,
-) -> tuple["KroneckerPrior", float]:
-    """Build a prior directly from a RAW residual field (B,N,H) + mask, in unit-variance
-    space. Used by the Tier-3/4 analysis so it works for ANY rung (incl. the climatology
-    'signal') and ANY of the 6 datasets with an explicit γ (e.g. GAD's 0.8).
-
-    spatial: 'structured' Σ_S=(L+γI)^-1 · 'flat' Σ_S=I · 'iso' white Σ=σ²I.
-    Returns (prior, sigma_r) where sigma_r is the masked train residual std used to
-    normalise into unit space.
-    """
-    sigma_r = float(R_raw[mask].std())
-    R = R_raw.astype(np.float64) / sigma_r
-    _, N, H = R.shape
-
-    if spatial == "iso":
-        sigma2 = float(R[mask].var())
-        theta, sigma2_scale = _normalize_scale(np.full((N, H), 1.0 / sigma2))
-        return KroneckerPrior(
-            dataset=dataset, gamma=0.0, V_S=np.eye(N), lam_S=np.zeros(N),
-            V_T=np.eye(H), mu_T=np.full(H, sigma2), theta=theta,
-            delta_h=np.full(H, sigma2), R_H=np.eye(H), sigma2_scale=sigma2_scale,
-        ), sigma_r
-
-    delta_h, R_H, Sigma_T = _fit_sigma_T(R, mask)
-    mu_T, V_T = np.linalg.eigh(Sigma_T)
-    mu_T = np.clip(mu_T, a_min=1e-12, a_max=None)
-    if SHRINK_T:                              # ridge shift toward scaled-identity (see load_prior)
-        mu_T = (1.0 - SHRINK_T) * mu_T + SHRINK_T * mu_T.mean()
-
-    if spatial == "flat":
-        gamma, V_S, lam_S, q_S = 0.0, np.eye(N), np.zeros(N), np.ones(N)
-    else:
-        if repair is None:
-            from src.data.adjacency import REPAIR_GRAPH
-            repair = REPAIR_GRAPH
-        lam_S, V_S = _load_laplacian_eig(dataset, repaired=repair)
-        q_S = lam_S + gamma
-    tau2 = N / (1.0 / q_S).sum()
-    theta = q_S[:, None] / (tau2 * mu_T[None, :])
-    if stiffness_cap is not None:
-        theta = np.maximum(theta, theta.max() / stiffness_cap)
-    theta, sigma2_scale = _normalize_scale(theta)
-    return KroneckerPrior(dataset=dataset, gamma=gamma, V_S=V_S, lam_S=lam_S,
-                          V_T=V_T, mu_T=mu_T, theta=theta, delta_h=delta_h, R_H=R_H,
-                          sigma2_scale=sigma2_scale), sigma_r

@@ -10,10 +10,9 @@ in the joint eigenbasis (θ_k = (λ_k + γ)/μ_h) the marginal is closed-form,
     c_k(t) | c_k(0) ~ N( exp(-c̄(t) θ_k) c_k(0),  (1 - exp(-2 c̄(t) θ_k)) / θ_k ),
 where c̄(t) = ∫_0^t c(s) ds. the slowest mode mixes once 2 c̄(T) θ_min ≳ 5.
 
-two schedules:
+the schedule:
   FCPSSchedule: c(t) = c_min + k u^α, c̄(t) = c_min t + (c_0 - c_min T) u^(α+1),
                 c̄(T) = c_0   (u = t/T)
-  ULSchedule:   c(t) = slope t/T, c̄(t) = slope t² / (2T)   (linear baseline)
 """
 from __future__ import annotations
 
@@ -56,11 +55,15 @@ class FCPSSchedule:
                 f"c_0 ({self.c_0}) must exceed c_min·T ({self.c_min * self.T})"
             )
 
+    # terminal noise floor of the training draws AND the reverse grid. None = the
+    # historical constant 0.04²/2 = 8e-4. it should be DERIVED per prior with
+    # derived_floor(): the fastest mode must still be clean there, 2·c_lo·θ_max <= 0.1,
+    # and that depends on the θ spread, which is the whole difference between the arms.
+    c_lo_override: Optional[float] = None
+
     @property
     def c_lo(self) -> float:
-        """noise-floor lower bound for log-uniform training draws (fixed, prior-independent;
-        matches noise_level_bounds' floor = NOISE_FLOOR²/2 ≈ 8e-4)."""
-        return 0.04 ** 2 / 2.0
+        return self.c_lo_override if self.c_lo_override is not None else 0.04 ** 2 / 2.0
 
     def _k(self) -> float:
         return (self.c_0 - self.c_min * self.T) * (self.alpha + 1) / self.T
@@ -117,110 +120,6 @@ class FCPSSchedule:
             fp = self.c_min + k * (self.alpha + 1) / self.T * u ** self.alpha
             t = np.clip(t - f / fp, 1e-8, self.T)
         return t
-
-
-@dataclass(frozen=True)
-class ULSchedule:
-    """linear rate schedule: c(t) = slope t/T, c̄(t) = slope t²/(2T).
-
-    the reverse/training schedule for the ISOTROPIC arm: with a uniform θ there
-    are no slow graph modes to protect, so FCPS's floor-constrained polynomial is
-    unnecessary — a plain linear rate does the job. for heat parity with an fcps
-    schedule at the same total heat c̄(T)=c_0, set slope = 2·c_0 (c_0=7 → slope 14).
-    duck-types FCPSSchedule (c_0 / c / c_bar / t_of_c_bar), so the trainer and the
-    EM reverse sampler work unchanged.
-    """
-
-    slope: float = 14.0
-    T: float = 1.0
-
-    @property
-    def c_0(self) -> float:
-        """total heat c̄(T) = slope·T/2 — the same role as FCPSSchedule.c_0."""
-        return self.slope * self.T / 2.0
-
-    def c(self, t):  # noqa: A003 — match FCPSSchedule
-        return self.slope * np.asarray(t) / self.T
-
-    def c_bar(self, t):
-        return self.slope * np.asarray(t) ** 2 / (2.0 * self.T)
-
-    def t_of_c_bar(self, c_bar):
-        """invert c̄(t) → t ∈ [0, T]: t = T·sqrt(c̄/c_0), closed form. np or torch."""
-        if isinstance(c_bar, torch.Tensor):
-            return self.T * torch.clamp(c_bar / self.c_0, min=0.0).sqrt()
-        return self.T * np.sqrt(np.clip(np.asarray(c_bar, dtype=float) / self.c_0, 0.0, None))
-
-
-@dataclass(frozen=True)
-class VPSchedule:
-    """standard VP-SDE / DDPM forward: dx = -beta(t)/2 x dt + sqrt(beta(t)) dw with
-    LINEAR beta in [beta_min, beta_max] (Song et al. / DDPM defaults 0.1 -> 20).
-    in our per-mode OU machinery this is exactly theta=1, sigma=1, c(t) = beta(t)/2.
-    duck-types FCPSSchedule (c_0 / c / c_bar / t_of_c_bar)."""
-
-    beta_min: float = 0.1
-    beta_max: float = 20.0
-    T: float = 1.0
-
-    @property
-    def c_0(self) -> float:
-        return (self.beta_min * self.T + (self.beta_max - self.beta_min) * self.T / 2.0) / 2.0
-
-    def c(self, t):  # noqa: A003
-        u = np.asarray(t) / self.T
-        return (self.beta_min + (self.beta_max - self.beta_min) * u) / 2.0
-
-    def c_bar(self, t):
-        u = np.asarray(t) / self.T
-        return (self.beta_min * np.asarray(t) + (self.beta_max - self.beta_min) * self.T * u ** 2 / 2.0) / 2.0
-
-    def t_of_c_bar(self, c_bar):
-        """invert the quadratic c̄(t); closed form. np or torch."""
-        a = (self.beta_max - self.beta_min) / (4.0 * self.T)
-        b = self.beta_min / 2.0
-        if isinstance(c_bar, torch.Tensor):
-            disc = (b * b + 4.0 * a * torch.clamp(c_bar, min=0.0)).sqrt()
-            return torch.clamp((disc - b) / (2.0 * a), 1e-8, self.T)
-        disc = np.sqrt(b * b + 4.0 * a * np.clip(np.asarray(c_bar, dtype=float), 0.0, None))
-        return np.clip((disc - b) / (2.0 * a), 1e-8, self.T)
-
-
-@dataclass(frozen=True)
-class VESchedule:
-    """VE-SDE (Song et al.): no drift, exploding variance sigma^2(t) with geometric
-    sigma(t) = sigma_min (sigma_max/sigma_min)^t. in the theta->0 limit of our OU
-    machinery the marginal variance is 2*c̄(t), so c̄(t) = sigma^2(t)/2. terminal draws
-    must come from N(0, sigma_max^2) explicitly (NOT the theta->0 stationary)."""
-
-    sigma_min: float = 0.01
-    sigma_max: float = 50.0
-    T: float = 1.0
-
-    @property
-    def c_0(self) -> float:
-        return self.sigma_max ** 2 / 2.0
-
-    @property
-    def c_lo(self) -> float:
-        return self.sigma_min ** 2 / 2.0
-
-    def _lr(self) -> float:
-        return math.log(self.sigma_max / self.sigma_min)
-
-    def c(self, t):  # noqa: A003
-        return 2.0 * self._lr() * np.asarray(self.c_bar(t))
-
-    def c_bar(self, t):
-        u = np.asarray(t) / self.T
-        return (self.sigma_min ** 2 / 2.0) * np.exp(2.0 * self._lr() * u)
-
-    def t_of_c_bar(self, c_bar):
-        if isinstance(c_bar, torch.Tensor):
-            return torch.clamp(torch.log(torch.clamp(2.0 * c_bar, min=1e-20) / self.sigma_min ** 2)
-                               / (2.0 * self._lr()) * self.T, 1e-8, self.T)
-        v = np.log(np.clip(2.0 * np.asarray(c_bar, dtype=float), 1e-20, None) / self.sigma_min ** 2)
-        return np.clip(v / (2.0 * self._lr()) * self.T, 1e-8, self.T)
 
 
 # ─── Forward sampler ─────────────────────────────────────────────────────────
@@ -323,6 +222,36 @@ _NOISE_FLOOR = 0.04    # target std of the noise left in the final sample (unit 
                        # and c̄_lo stays below the stiffest mode's transition start.
 
 
+def undenoised_fraction(prior: KroneckerPrior, c_bar: float) -> float:
+    """variance-weighted fraction of the prior's variance the forward process has
+    injected by c̄ -- what a sampler stopping there leaves un-erased:
+    f(c̄) = Σ_m var_m (1 − e^{−2 θ_m c̄}) / Σ_m var_m."""
+    th, v = prior.theta.ravel(), prior.sigma2.ravel()
+    return float((v * (1.0 - np.exp(-2.0 * th * c_bar))).sum() / v.sum())
+
+
+def derived_floor(prior: KroneckerPrior, target: float = 1.3e-3) -> float:
+    """the terminal floor c_lo at which only `target` of the prior's variance is still
+    un-erased. 1.3e-3 is what the isotropic control gets at the historical 8e-4, so
+    every arm is trained and sampled to the SAME fidelity. the top of the range is
+    already prior-adaptive (θ_min → γ makes 2·c₀·θ_min ≈ 11); this makes the bottom
+    adaptive too. with c_lo ∝ 1/θ_max the range spans log10(50·κ) decades."""
+    from scipy.optimize import brentq
+    try:
+        return float(brentq(lambda c: undenoised_fraction(prior, c) - target, 1e-14, 1.0))
+    except ValueError:
+        return 0.04 ** 2 / 2.0
+
+
+def derived_steps(prior: KroneckerPrior, schedule, steps_per_decade: float = 16.0,
+                  minimum: int = 32) -> int:
+    """reverse steps that keep the resolution per decade of noise constant across
+    arms: steps_per_decade × log10(c_0 / c_lo). 16/decade is where the corrected
+    ancestral sampler reaches its ceiling in the oracle test."""
+    decades = math.log10(schedule.c_0 / schedule.c_lo)
+    return max(minimum, int(math.ceil(steps_per_decade * decades)))
+
+
 def noise_level_bounds(prior: KroneckerPrior) -> tuple[float, float]:
     """(c̄_lo, c̄_hi): the noise-level range training samples and sampling steps span.
     c̄_hi mixes the slowest mode (5/θ_min); c̄_lo gives a clean ~4% final noise floor."""
@@ -346,25 +275,10 @@ def sample_log_c_bar_torch(
     c_lo: float, c_hi: float, B: int, device, dtype,
     generator: Optional[torch.Generator] = None,
 ) -> torch.Tensor:
-    """draw B noise levels log-uniformly in [c̄_lo, c̄_hi]. EDM-style alternative to
-    GAD's power-law sampler; covers stiff modes evenly but deviates from GAD."""
+    """draw B noise levels log-uniformly in [c̄_lo, c̄_hi]: even coverage across the
+    noise decades, so the stiff modes are trained as often as the slow ones."""
     u = torch.rand(B, device=device, dtype=dtype, generator=generator)
     return c_lo * (c_hi / c_lo) ** u
-
-
-# GAD's training noise sampler: s = S·u^power (u uniform), the default we use.
-_GAD_SAMPLE_POWER = 0.65    # exp_gasde.py: u.pow(0.65) — biases toward higher noise
-
-
-def sample_c_bar_powerlaw_torch(
-    c_0: float, B: int, device, dtype,
-    power: float = _GAD_SAMPLE_POWER,
-    generator: Optional[torch.Generator] = None,
-) -> torch.Tensor:
-    """draw B noise levels c̄ = c_0·u^power, u ~ U[0,1] — GAD's scheme (exp_gasde.py).
-    spans [0, c_0]; power<1 biases toward higher noise. c_0 is the schedule's c̄(T)."""
-    u = torch.rand(B, device=device, dtype=dtype, generator=generator)
-    return c_0 * u.pow(power)
 
 
 def reverse_c_bar_grid(c_lo: float, c_hi: float, n_steps: int) -> np.ndarray:

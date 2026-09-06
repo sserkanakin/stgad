@@ -93,7 +93,6 @@ RES=(--partition="${DAIC_PARTITION}" --gres="${GRES}")
 [ -n "${DAIC_GPU_EXCLUDE:-}" ] && RES+=(--exclude="${DAIC_GPU_EXCLUDE}")
 
 EXPORTS="ALL,EXP=${EXP},SEED=${SEED},BACKBONE=${BACKBONE},GRID_FILE=${GRID_FILE}"
-EXPORTS="${EXPORTS},EPOCHS=${EPOCHS},LR=${LR},LOSS=${LOSS}"
 EXPORTS="${EXPORTS},DATA_ROOT=${DATA_ROOT},RESULTS_ROOT=${RESULTS_ROOT},OUTPUT_ROOT=${OUTPUT_ROOT}"
 # optional light final-val: single EM/anc step values instead of the full sweep.
 [ -n "${FINAL_STEPS_LIST:-}" ] && EXPORTS="${EXPORTS},FINAL_STEPS_LIST=${FINAL_STEPS_LIST}"
@@ -103,15 +102,8 @@ EXPORTS="${EXPORTS},DATA_ROOT=${DATA_ROOT},RESULTS_ROOT=${RESULTS_ROOT},OUTPUT_R
 # temporal ridge ρ for the raw arm (tames stiff empirical Σ_T); unset -> default (0.1).
 [ -n "${SHRINK_T:-}" ] && EXPORTS="${EXPORTS},SHRINK_T=${SHRINK_T}"
 # temporal factor 'laplacian' (product graph) + its γ_t for the raw arm.
-[ -n "${TEMPORAL:-}" ] && EXPORTS="${EXPORTS},TEMPORAL=${TEMPORAL}"
-[ -n "${GAMMA_T:-}" ]  && EXPORTS="${EXPORTS},GAMMA_T=${GAMMA_T}"
-# spatial graph (road/correlation/hybrid) + winsor for the predict-refine robust-prior arm.
-[ -n "${SPATIAL_GRAPH:-}" ] && EXPORTS="${EXPORTS},SPATIAL_GRAPH=${SPATIAL_GRAPH}"
-[ -n "${WINSOR:-}" ]        && EXPORTS="${EXPORTS},WINSOR=${WINSOR}"
 [ -n "${DENOISER:-}" ]      && EXPORTS="${EXPORTS},DENOISER=${DENOISER}"
-[ -n "${UNCOND:-}" ]        && EXPORTS="${EXPORTS},UNCOND=${UNCOND}"
 # GAD's graph-TV regularizer on the prediction (their tv_pred, 5e-3·xᵀLx); unset -> 0.
-[ -n "${TV_WEIGHT:-}" ]     && EXPORTS="${EXPORTS},TV_WEIGHT=${TV_WEIGHT}"
 
 JOBID="$(sbatch --parsable \
        --array="0-$((N - 1))%${THROTTLE}" \

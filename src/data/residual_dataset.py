@@ -165,44 +165,10 @@ class ResidualDataset(Dataset):
         }
 
 
-class SignalDataset(Dataset):
-    """pure-signal arm (backbone='raw'): diffuse the FUTURE signal conditioned on the
-    HISTORY window (DiffSTG-style), no trained backbone. the future signal is stored
-    under the "residuals" key (so the prior + sigma_r reuse the residual path), and the
-    conditioning is the z-scored history (NOT a forecast). y_pred is zeros, so the
-    reconstructed forecast = denoiser output and y_true = the signal.
-
-    sigma_r is the train-signal std (same role as in ResidualDataset). R0 = signal/σ;
-    Y_hat = z-scored history (B, N, T_h); y_true_raw = signal (raw)."""
-
-    def __init__(self, npz_path: str | Path, sigma_r: float) -> None:
-        d = np.load(npz_path)
-        self.sigma_r = float(sigma_r)
-        mean = float(d["mean"])
-        std = float(d["std"])
-        centered = d["residuals"].astype(np.float32)                     # signal - mean (zero-mean target)
-        history = d["history"].astype(np.float32)                        # history, raw
-        y_pred = d["y_pred"].astype(np.float32)                          # climatology mean (trivial backbone)
-        self.R0 = torch.from_numpy(centered / np.float32(self.sigma_r))  # (B, N, H) z-scored, zero-mean
-        self.Y_hat = torch.from_numpy((history - mean) / std)            # (B, N, T_h) z-scored cond
-        self.mask = torch.from_numpy(d["mask"].astype(bool))             # (B, N, H)
-        self.y_pred_raw = torch.from_numpy(y_pred)                       # mean field (y_pred + σ·sample recon)
-        self.y_true_raw = torch.from_numpy(centered + y_pred)            # (B, N, H) raw signal GT
-
-    def __len__(self) -> int:
-        return self.R0.shape[0]
-
-    def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:
-        return {"R0": self.R0[idx], "Y_hat": self.Y_hat[idx], "mask": self.mask[idx]}
-
-
 def make_dataset(dataset: str, split: str, seed: int, backbone: str, sigma_r,
                  *, cond_past: bool = False, zero_masked: bool = True):
-    """ResidualDataset for a trained backbone, or SignalDataset for backbone='raw'
-    (the signal arm has no backbone residual to condition on or zero)."""
+    """the ResidualDataset for one (dataset, split, backbone) cell."""
     path = residual_path(dataset, split, seed, backbone)
-    if backbone == "raw":
-        return SignalDataset(path, sigma_r)
     return ResidualDataset(path, sigma_r, cond_past=cond_past, zero_masked=zero_masked,
                            dataset=dataset, split=split)
 

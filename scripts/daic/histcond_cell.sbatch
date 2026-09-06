@@ -10,20 +10,19 @@
 #   cond=fo    (no flag)    -> C = Yhat_z           (B,N,H),   forecast only
 #
 # Each cell is:
-#   1. train  200 epochs, patience 40, 17,305-param GCNN denoiser
-#   2. locked-protocol TEST eval: best_crps.pt, ancestral@50, k=100, y==0 masked
+#   1. train  200 epochs, patience 40, 17,305-param GCNN denoiser. the kron arm uses
+#      --global-edge match: (beta, gamma) chosen on the train residuals so the prior's
+#      spread on the NETWORK TOTAL is right. the noise floor and the ancestral step
+#      count are derived from the prior's spectrum and recorded in config.json.
+#   2. TEST eval: best_crps.pt, corrected ancestral at the derived floor and step
+#      count, fair CRPS, k=100, y==0 masked, per-point AND joint (total/cumulative).
 #
 # EVERY hyperparameter below is pinned to the 20260721_ladder values so the new
 # history arm is directly comparable to that campaign's forecast-only cells.
 # Flags that differ from the script defaults and so MUST be passed explicitly:
 #   --patience 40         (default 15)
-#   --noise-sampler loguniform (default powerlaw)
 #   --denoiser gcnn       (default ugnet -- the ~1M UGnet is a different rung)
 #   --norm pernode        (default global)
-#   --schedule fcps       (default 'auto', which would silently put the ISOTROPIC arm
-#                          on ULS while the kronecker arm gets FCPS -- that would
-#                          confound the prior comparison with a schedule change, and
-#                          the ladder's iso cells are all fcps)
 #   --val-windows 512     (default 64) NOT a diagnostic knob: _fast_val scores this
 #                          same clean-window subset, and that signal drives
 #                          best_crps.pt, early stopping and the LR plateau. At 64 the
@@ -45,31 +44,32 @@ EXP="${EXP:?set EXP}"
 EPOCHS="${EPOCHS:-200}"
 PATIENCE="${PATIENCE:-40}"
 C0="${C0:-7.0}"
-SCHEDULE="${SCHEDULE:-fcps}"
 NORM="${NORM:-pernode}"
-LOSS="${LOSS:-snr}"
-NOISE_SAMPLER="${NOISE_SAMPLER:-loguniform}"
 RESIDUAL_SEED="${RESIDUAL_SEED:-42}"     # backbone pinned; only the diffusion seed varies
 VAL_WINDOWS="${VAL_WINDOWS:-512}"        # sizes the checkpoint-SELECTION signal, see above
 VAL_EVERY="${VAL_EVERY:-0}"              # EM step-sweep diagnostic off, as the ladder had
 HEAD_K="${HEAD_K:-100}"
-HEAD_STEPS="${HEAD_STEPS:-50}"
+HEAD_STEPS="${HEAD_STEPS:-}"             # empty = the derived count in config.json
+GLOBAL_EDGE="${GLOBAL_EDGE:-match}"      # kron arm only
+# 17,305-param GCNN by default. DENOISER=ugnet gives the ~996k UGnet of DiffSTG --
+# the capacity axis. It is a different rung, so it must be given its own EXP tag
+# (e.g. EXP=20260812_histcond_ugnet) or it will collide with the 17k cells.
+DENOISER="${DENOISER:-gcnn}"
 
 fail=0
 IFS=';' read -r -a CELL_ARR <<< "${CELLS:?set CELLS}"
 for cell in "${CELL_ARR[@]}"; do
   IFS='|' read -r arm ds bb seed cond <<< "${cell}"
 
-  # arm -> prior flags. emp = Sigma_T(empirical) (x) Sigma_S=(L_road + gamma I)^-1,
-  # gamma left unset so prior.py uses GAMMA_DEFAULT=0.8 (GAD's fixed shift), which is
-  # what every 20260721_ladder emp cell resolved to.
-  if [ "${arm}" = "iso" ]; then
-    prior_args=(--prior isotropic)
-    prior_name="isotropic"
-  else
-    prior_args=(--prior kronecker --temporal empirical --spatial structured --spatial-graph road)
-    prior_name="kronecker"
-  fi
+  # arm -> prior. iso = white noise sigma^2 I. kron = Sigma_T (x) Sigma_S, Sigma_T fit
+  # from the residuals, Sigma_S = (L_road + gamma I)^-1; gamma left unset so prior.py
+  # uses GAMMA_DEFAULT.
+  prior_extra=()
+  case "${arm}" in
+    iso)  prior_name="isotropic" ;;
+    kron) prior_name="kronecker"; prior_extra=(--global-edge "${GLOBAL_EDGE}") ;;
+    *) echo "unknown arm '${arm}' (use iso|kron)"; fail=$((fail+1)); continue ;;
+  esac
   cond_args=()
   [ "${cond}" = "hist" ] && cond_args=(--cond-past)
 
@@ -78,10 +78,9 @@ for cell in "${CELL_ARR[@]}"; do
 
   "${DAIC_PYTHON}" scripts/train_diffusion.py \
       --dataset "${ds}" --backbone "${bb}" \
-      "${prior_args[@]}" "${cond_args[@]}" \
-      --denoiser gcnn \
-      --c-0 "${C0}" --schedule "${SCHEDULE}" --noise-sampler "${NOISE_SAMPLER}" \
-      --loss "${LOSS}" --norm "${NORM}" \
+      --prior "${prior_name}" "${prior_extra[@]}" "${cond_args[@]}" \
+      --denoiser "${DENOISER}" \
+      --c-0 "${C0}" --norm "${NORM}" \
       --epochs "${EPOCHS}" --patience "${PATIENCE}" \
       --val-windows "${VAL_WINDOWS}" --val-every "${VAL_EVERY}" \
       --exp "${exp}" --seed "${seed}" --residual-seed "${RESIDUAL_SEED}" \
@@ -91,7 +90,7 @@ for cell in "${CELL_ARR[@]}"; do
   "${DAIC_PYTHON}" scripts/eval_diffusion.py \
       --dataset "${ds}" --backbone "${bb}" --prior "${prior_name}" \
       --exp "${exp}" --seed "${seed}" --split test \
-      --sampler ancestral --n-steps "${HEAD_STEPS}" --k "${HEAD_K}" \
+      --sampler ancestral ${HEAD_STEPS:+--n-steps "${HEAD_STEPS}"} --k "${HEAD_K}" \
       --ckpt best_crps.pt \
     || { echo "EVAL FAILED ${cell}"; fail=$((fail+1)); }
 done

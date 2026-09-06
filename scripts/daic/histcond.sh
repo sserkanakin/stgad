@@ -15,10 +15,10 @@
 #
 #   Two prior arms:
 #     iso   scale-matched white noise (the matched control)
-#     emp   Sigma = Sigma_T (x) Sigma_S,  Sigma_S = (L_road + gamma I)^-1 with the
-#           GAD-fixed gamma = 0.8, Sigma_T = the empirical horizon covariance
-#           (ridge rho = 0.1). This is the "laplacian spatial, computed covariance
-#           temporal" arm.
+#     kron  Sigma = Sigma_T (x) Sigma_S: Sigma_T fit from the residuals (per-horizon
+#           variance on the diagonal, pearson correlation off it, ridge rho),
+#           Sigma_S = unit-diagonal (L_road + beta*all-to-all + gamma I)^-1 with
+#           (beta, gamma) matched on the train residuals (--global-edge match).
 #
 #   IMPORTANT (2026-07-28): the 20260721_ladder "-past" arm is NOT this experiment.
 #   --cond-past used to fall back silently to the previous window's RESIDUAL field
@@ -48,7 +48,7 @@ export OUTPUT_ROOT="${OUTPUT_ROOT:-${DAIC_OUT_DIR:-$HOME/windowshome/research-tu
 export WANDB_MODE=disabled
 
 EXP="${EXP:-20260728_histcond}"
-ARMS="${ARMS:-iso emp}"
+ARMS="${ARMS:-iso kron}"
 CONDS="${CONDS:-hist}"
 DATASETS="${DATASETS:-metrla pemsbay pems04f pems04s pems08f pems08s}"
 BACKBONES="${BACKBONES:-mlp gcn gwn}"

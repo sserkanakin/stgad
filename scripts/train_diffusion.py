@@ -35,6 +35,7 @@ usage:
 from __future__ import annotations
 
 import argparse
+import math
 import csv
 import json
 import os
@@ -58,26 +59,21 @@ from src.data.adjacency import REPAIR_GRAPH, load_adjacency
 from src.data.residual_dataset import (
     make_dataset, residual_path, sigma_to_torch, train_residual_sigma,
 )
-from src.diffusion.denoiser import GCNNDenoiser, R0Denoiser, SignalDenoiser, num_parameters
-from src.diffusion.losses import gad_snr_weighted_mse, graph_tv, masked_mse, whitened_mse
+from src.diffusion.denoiser import GCNNDenoiser, R0Denoiser, num_parameters
+from src.diffusion.losses import snr_weighted_mse
 from src.diffusion.forward_fcps import (
-    VESchedule,
-    VPSchedule,
     FCPSSchedule,
-    ULSchedule,
+    derived_floor,
+    derived_steps,
     fcps_rate_torch,
     prior_to_torch,
-    sample_c_bar_powerlaw_torch,
     sample_log_c_bar_torch,
     sample_R_t_from_c_bar_torch,
 )
-from src.diffusion.prior import PRODUCT_FORMS, load_prior
+from src.diffusion.prior import load_prior
 from src.diffusion.reverse import min_em_steps, reverse_sample_ancestral, reverse_sample_em
 from src.eval.crps import empirical_crps, quantile_crps_num
 
-# training noise-level sampler: "powerlaw" = GAD's c̄=c_0·u^0.65 (high-noise biased),
-# "loguniform" = even coverage across noise decades (safer for stiff priors). set in main().
-_NOISE_SAMPLER = "powerlaw"
 from src.eval.distribution import energy_distance, sliced_wasserstein1
 from src.utils import paths
 from src.utils.checkpoint import (
@@ -106,7 +102,7 @@ _CFG_HASH_EXCLUDE = {"seed", "epochs", "batch_size", "lr", "weight_decay", "pati
 # ─── Loss / metrics ──────────────────────────────────────────────────────────
 
 
-def lr_range_test(loader, *, denoiser, prior_t, schedule, loss_name, tv_weight, A_t,
+def lr_range_test(loader, *, denoiser, prior_t, schedule,
                   optim, device, n_steps, lr_min, lr_max, out_path) -> None:
     """Smith lr range test: sweep lr exponentially lr_min->lr_max over n_steps
     training batches, recording the loss. the good lr band is where the loss falls
@@ -130,7 +126,6 @@ def lr_range_test(loader, *, denoiser, prior_t, schedule, loss_name, tv_weight, 
             g["lr"] = lr
         optim.zero_grad()
         loss = train_step(batch, denoiser=denoiser, prior_t=prior_t, schedule=schedule,
-                          loss_name=loss_name, tv_weight=tv_weight, A_t=A_t,
                           device=device, generator=None)
         loss.backward()
         torch.nn.utils.clip_grad_norm_(denoiser.parameters(), 1.0)
@@ -163,31 +158,9 @@ def lr_range_test(loader, *, denoiser, prior_t, schedule, loss_name, tv_weight, 
 # ─── Training step ───────────────────────────────────────────────────────────
 
 
-def _rate_torch(t: torch.Tensor, schedule) -> torch.Tensor:
-    """rate c(t) for either schedule (torch). only needed for the snr loss."""
-    if isinstance(schedule, FCPSSchedule):
-        return fcps_rate_torch(t, schedule)
-    if isinstance(schedule, VPSchedule):
-        return (schedule.beta_min + (schedule.beta_max - schedule.beta_min) * t / schedule.T) / 2.0
-    if isinstance(schedule, VESchedule):
-        import math as _m
-        lr = _m.log(schedule.sigma_max / schedule.sigma_min)
-        return 2.0 * lr * (schedule.sigma_min ** 2 / 2.0) * torch.exp(2.0 * lr * t / schedule.T)
-    return schedule.slope * t / schedule.T                  # ULSchedule
-
-
-def _loss(name, R0_hat, R0, mask, t, schedule, *, prior_t, tv_weight, A_t):
-    """training loss: masked mse, GAD's rate-weighted mse, or PriorGrad whitened mse
-    (per-mode precision-weighted — the loss a structured/reshaped prior needs)."""
-    if name == "mse":
-        loss = masked_mse(R0_hat, R0, mask)
-    elif name == "whitened":
-        loss = whitened_mse(R0_hat, R0, mask, prior_t, _rate_torch(t, schedule))
-    else:                                                   # 'snr' (GAD default)
-        loss = gad_snr_weighted_mse(R0_hat, R0, mask, _rate_torch(t, schedule))
-    if tv_weight and A_t is not None:
-        loss = loss + tv_weight * graph_tv(R0_hat, A_t)
-    return loss
+def _loss(R0_hat, R0, mask, t, schedule):
+    """the training loss: GAD's rate-weighted masked mse, w = 1/(1 + 2·c(t))."""
+    return snr_weighted_mse(R0_hat, R0, mask, fcps_rate_torch(t, schedule))
 
 
 def train_step(
@@ -196,9 +169,6 @@ def train_step(
     denoiser: R0Denoiser,
     prior_t,
     schedule,
-    loss_name: str,
-    tv_weight: float,
-    A_t: Optional[torch.Tensor],
     device: torch.device,
     generator: Optional[torch.Generator],
 ) -> torch.Tensor:
@@ -207,19 +177,15 @@ def train_step(
     mask = batch["mask"].to(device, non_blocking=True)
     B = R0.shape[0]
 
-    # draw the training noise level c̄. GAD (exp_gasde.py): c̄ = c_0·u^0.65 (power-law,
-    # high-noise biased). "loguniform" spreads evenly across noise decades — safer for our
-    # stiff reshaped/empirical priors (trains the rough modes too). VE always log-uniform.
-    if _NOISE_SAMPLER == "loguniform" or isinstance(schedule, VESchedule):
-        c_bar = sample_log_c_bar_torch(schedule.c_lo, schedule.c_0, B, device, R0.dtype,
-                                       generator=generator)
-    else:
-        c_bar = sample_c_bar_powerlaw_torch(schedule.c_0, B, device, R0.dtype, generator=generator)
+    # draw the training noise level c̄ log-uniformly over [c̄_lo, c_0]: even coverage
+    # across the noise decades, so the stiff modes are trained as often as the slow ones.
+    c_bar = sample_log_c_bar_torch(schedule.c_lo, schedule.c_0, B, device, R0.dtype,
+                                   generator=generator)
     R_t = sample_R_t_from_c_bar_torch(R0, c_bar, prior_t, generator=generator)
     t = schedule.t_of_c_bar(c_bar)
 
     R0_hat = denoiser(R_t, t, Y_hat)
-    return _loss(loss_name, R0_hat, R0, mask, t, schedule, prior_t=prior_t, tv_weight=tv_weight, A_t=A_t)
+    return _loss(R0_hat, R0, mask, t, schedule)
 
 
 # fixed seed for the val-loss noise draws: every epoch scores the SAME (c̄, Z)
@@ -246,9 +212,6 @@ def validate(
     denoiser: R0Denoiser,
     prior_t,
     schedule,
-    loss_name: str,
-    tv_weight: float,
-    A_t: Optional[torch.Tensor],
     device: torch.device,
     n_t_samples: int = 4,
 ) -> float:
@@ -269,16 +232,12 @@ def validate(
         B = R0.shape[0]
         batch_loss = 0.0
         for _ in range(n_t_samples):
-            if _NOISE_SAMPLER == "loguniform" or isinstance(schedule, VESchedule):
-                c_bar = sample_log_c_bar_torch(schedule.c_lo, schedule.c_0, B, device,
-                                               R0.dtype, generator=gen)
-            else:
-                c_bar = sample_c_bar_powerlaw_torch(schedule.c_0, B, device, R0.dtype, generator=gen)
+            c_bar = sample_log_c_bar_torch(schedule.c_lo, schedule.c_0, B, device,
+                                           R0.dtype, generator=gen)
             R_t = sample_R_t_from_c_bar_torch(R0, c_bar, prior_t, generator=gen)
             t = schedule.t_of_c_bar(c_bar)
             R0_hat = denoiser(R_t, t, Y_hat)
-            batch_loss += float(_loss(loss_name, R0_hat, R0, mask, t, schedule,
-                                      prior_t=prior_t, tv_weight=tv_weight, A_t=A_t))
+            batch_loss += float(_loss(R0_hat, R0, mask, t, schedule))
         total += batch_loss / n_t_samples
         n += 1
     denoiser.train()
@@ -655,51 +614,20 @@ def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--dataset", choices=("metrla", "pemsbay", "pems04f", "pems04s",
                                           "pems08f", "pems08s"), required=True)
-    p.add_argument("--backbone", choices=("gwn", "gcn", "mlp", "raw"), default="gwn",
-                   help="which backbone's residuals to model, or 'raw' = pure-signal "
-                        "diffusion conditioned on history (DiffSTG-style). namespaces results")
-    p.add_argument("--spatial", choices=("structured", "flat"), default="structured",
-                   help="kronecker spatial factor: structured Σ_S=(L+γI)^-1 (spatio-temporal) "
-                        "or flat Σ_S=I (temporal-only). recorded in config.json.")
-    p.add_argument("--stiffness-cap", type=float, default=0.0,
-                   help="if >0, floor θ so θ_max/θ_min <= this (joint-spectrum twin of κ-cap; "
-                        "trainability fallback for stiff structured priors). 0 = off.")
+    p.add_argument("--backbone", choices=("gwn", "gcn", "mlp"), default="gwn",
+                   help="which backbone's residuals to model. namespaces results")
+    p.add_argument("--prior", choices=("kronecker", "isotropic"), default="kronecker",
+                   help="noise prior: kronecker Σ_T⊗Σ_S, or the isotropic σ²I control")
     p.add_argument("--gamma", type=float, default=None,
-                   help="Laplacian shift γ in Σ_S=(L+γI)^-1 (structured only). None = GAMMA_DEFAULT "
-                        "(0.8, tuned for near-white GWN residuals). the raw-signal arm (backbone=raw) "
-                        "should pass a small GAD-style γ≈0.04 so the prior's spatial smoothness "
-                        "matches the graph-smooth raw signal (its low-λ energy is ~0.7).")
+                   help="Laplacian shift γ in Σ_S=(L+γI)^-1 (kronecker only). None = GAMMA_DEFAULT")
     p.add_argument("--shrink-t", type=float, default=None,
-                   help="temporal ridge ρ: μ_T ← (1-ρ)μ_T + ρ·μ̄ (shrinks empirical Σ_T toward "
-                        "isotropic). None = SHRINK_T (0.1). only used when --temporal empirical.")
-    p.add_argument("--shrink-s", type=float, default=None,
-                   help="joint-spectrum ridge λ for --temporal reshaped: v_emp ← (1-λ)v_emp + "
-                        "λ·mean(v_emp) (Ledoit-Wolf-style shrink toward flat; λ=1 ≈ iso). "
-                        "robustifies the per-mode fit against train→test spectrum drift.")
-    p.add_argument("--temporal",
-                   choices=("empirical", "laplacian", "cartesian", "reshaped") + PRODUCT_FORMS,
-                   default="empirical",
-                   help="temporal factor: 'empirical' Σ_T fit from data; 'laplacian' = path-graph "
-                        "Laplacian, multiplicative product (ablation); 'cartesian' = GAD-literal "
-                        "spatio-temporal extension — normalized Cartesian product graph, "
-                        "λ_ST=(λ_S+λ_T)/2 ∈ [0,2], θ=λ_ST+γ, one fixed γ. raw arm uses 'cartesian'. "
-                        "prod_* = the GTCNN product-graph family (cartesian/strong/tensor/param), "
-                        "spectrum rescaled to [0,2] so one γ fixes θ_min, stiffness and the mixing "
-                        "number identically across every form and dataset.")
-    p.add_argument("--gamma-t", type=float, default=0.6,
-                   help="temporal Laplacian shift γ_t (only for --temporal laplacian). mild γ_t≈0.6 "
-                        "keeps the temporal spread bounded (ratio (2+γ_t)/γ_t) so the prior isn't stiff.")
-    p.add_argument("--spatial-graph", choices=("road", "correlation", "hybrid"), default="road",
-                   help="graph for the spatial factor: 'road' = given adjacency (right for SPEED, "
-                        "congestion propagates along roads); 'correlation' = kNN on the residual "
-                        "(right for FLOW, volume correlates by function not distance); 'hybrid' = both.")
-    p.add_argument("--knn-k", type=int, default=15, help="k for the correlation/hybrid graph")
-    p.add_argument("--winsor", type=float, default=None,
-                   help="winsorize residuals at this percentile of |r| before fitting the prior "
-                        "STRUCTURE (heavy tails mask the graph structure; e.g. 90). scale rescaled "
-                        "back to the full-data variance. None = no clipping.")
-    p.add_argument("--prior", choices=("kronecker", "isotropic", "vp", "ve"), default="kronecker",
-                   help="noise prior: structured kronecker, or the isotropic σ²I baseline")
+                   help="temporal ridge ρ: μ_T ← (1-ρ)μ_T + ρ·μ̄ (kronecker only). None = SHRINK_T")
+    p.add_argument("--global-edge", default=None,
+                   help="kronecker only. weak all-to-all edge added to the road graph, as a "
+                        "fraction of the mean road-edge weight; 'match' = choose (β, γ) on the "
+                        "train residuals so the prior's spread on the NETWORK TOTAL is right "
+                        "(the road graph alone puts 0.5-1%% of the variance on the all-sensors-"
+                        "together direction where the residual has 3-21%%). None = road graph only.")
     p.add_argument("--exp", default="dev",
                    help="experiment tag; namespaces checkpoints + wandb group "
                         "(results/diffusion/<exp>/..., wandb group <exp>-<dataset>)")
@@ -720,9 +648,6 @@ def main() -> None:
     p.add_argument("--weight-decay", type=float, default=1e-4)
     p.add_argument("--patience", type=int, default=15)
     p.add_argument("--d-h", type=int, default=32)
-    p.add_argument("--noise-sampler", choices=("powerlaw", "loguniform"), default="powerlaw",
-                   help="training noise-level draw: powerlaw = GAD c̄=c_0·u^0.65 (high-noise "
-                        "biased); loguniform = even across noise decades (better for stiff priors).")
     p.add_argument("--denoiser", choices=("ugnet", "gcnn"), default="ugnet",
                    help="ugnet (expressive, ~1M params) or gcnn = GAD's low-capacity graph-"
                         "filter cascade (~60k params). with gcnn the network cannot absorb the "
@@ -731,22 +656,14 @@ def main() -> None:
     p.add_argument("--gcnn-hops", type=int, default=5, help="K-hop order (GAD models.py: Ks=[5,5,5])")
     p.add_argument("--gcnn-layers", type=int, default=3)
     p.add_argument("--gcnn-hidden", type=int, default=24)
-    p.add_argument("--uncond", action="store_true",
-                   help="UNCONDITIONAL generation: zero the conditioning everywhere (GAD's "
-                        "setting, one axis up). the prior cannot be bypassed by conditioning; "
-                        "use with --denoiser gcnn for the capacity-isolated GAD-ST demonstration.")
     p.add_argument("--channel-multipliers", type=int, nargs="+", default=[1, 2])
     p.add_argument("--n-blocks", type=int, default=2)
-    # FCPS schedule = GAD-literal (exp_gasde.py): S=c_0=7, alpha=4, c_min=0.1, sigma=1.
-    # the θ→GAD-scale reparam in load_prior puts θ_min=γ=0.8, so 2·S·θ_min=11.2 mixes
-    # the slowest mode exactly as GAD does — S is a fixed number, NOT auto-derived.
+    # FCPS schedule (GAD's form): S=c_0, alpha, c_min. load_prior puts θ_min=γ, so
+    # 2·S·θ_min sets how completely the slowest mode mixes.
     p.add_argument("--c-min", type=float, default=0.1, help="GAD c_min (0.1)")
     p.add_argument("--c-0", type=float, default=7.0, help="GAD S = c̄(T), the total heat (7.0)")
     p.add_argument("--alpha", type=float, default=4.0, help="GAD schedule exponent α (4.0)")
     p.add_argument("--t-eps", type=float, default=1e-3, help="lower bound on t to avoid σ²=0")
-    # schedule: FCPS protects the slow graph modes of the STRUCTURED prior; the
-    # isotropic prior has uniform θ (no slow modes), so a plain linear rate (UL)
-    # with the same total heat (slope = 2·c_0 = 14) is the right baseline.
     p.add_argument("--cond-past", action="store_true",
                    help="prepend the previous window's residuals to the conditioning "
                         "(recent backbone-error volatility; HySRD-Net conditions on this)")
@@ -755,14 +672,6 @@ def main() -> None:
                         "spatial heteroscedasticity); or per-horizon std (absorbs the 1.7-2.9x "
                         "error growth so the stationary GAD-ST prior matches — growth re-enters "
                         "samples at de-normalization). prior refit to match either way.")
-    p.add_argument("--schedule", choices=("auto", "fcps", "uls"), default="auto",
-                   help="auto = fcps for kronecker, uls for isotropic (same c̄(T)=c_0)")
-    p.add_argument("--loss", choices=("mse", "snr", "whitened"), default="snr",
-                   help="training loss: plain masked mse (default) or GAD's "
-                        "rate-weighted mse (ablation)")
-    p.add_argument("--tv-weight", type=float, default=0.0,
-                   help="GAD's graph-TV penalty weight on predictions (GAD uses 5e-3). "
-                        "off by default: residuals are rough, so TV may be misspecified")
     # ── best.pt is selected by the val LOSS (deterministic noise draws), checked every
     # epoch. EM is the only reverse process (GAD parity) and too costly to sample every
     # epoch, so EM sampling is reserved for the periodic step-sweep diagnostic + the
@@ -811,7 +720,7 @@ def main() -> None:
     #    cost per eval = windows·k·Σsteps forwards.
     p.add_argument("--val-every", type=int, default=10,
                    help="run the EM reverse step-sweep diagnostic every N epochs (0 = off)")
-    p.add_argument("--val-k", type=int, default=4,
+    p.add_argument("--val-k", type=int, default=16,
                    help="samples/window for the diagnostic AND the final full-val eval "
                         "(k=4 keeps the EM budget sane; test runs can use 8+)")
     p.add_argument("--val-steps-list", default="1000,2000,3000",
@@ -823,7 +732,7 @@ def main() -> None:
     p.add_argument("--fast-val-every", type=int, default=1,
                    help="run the cheap sampled validation (ancestral, --fast-val-steps) "
                         "every N epochs; it drives selection, early stop and the LR plateau")
-    p.add_argument("--fast-val-steps", type=int, default=50,
+    p.add_argument("--fast-val-steps", type=int, default=0,
                    help="ancestral step count for the per-epoch sampled validation")
     p.add_argument("--val-anc-steps", default="100",
                    help="ancestral step counts for the periodic diagnostic (cheap trend "
@@ -843,8 +752,6 @@ def main() -> None:
     p.add_argument("--max-train-batches", type=int, default=0,
                    help="if > 0, cap training batches per epoch (for smoke runs)")
     args = p.parse_args()
-    global _NOISE_SAMPLER
-    _NOISE_SAMPLER = args.noise_sampler
 
     if args.smoke:
         args.epochs = 2
@@ -868,33 +775,19 @@ def main() -> None:
         args.eval_max_windows = 16        # caps the full-val point AND W1 phases
         os.environ.setdefault("WANDB_MODE", "disabled")
 
-    # resolve the schedule per prior (auto): FCPS protects the structured prior's
-    # slow modes; the isotropic arm has uniform θ → linear UL rate, same total heat.
-    sched_kind = args.schedule if args.schedule != "auto" else (
-        "uls" if args.prior == "isotropic" else
-        "vp" if args.prior == "vp" else
-        "ve" if args.prior == "ve" else "fcps")
-
     cfg = vars(args).copy()
     cfg["backbone"] = args.backbone
     cfg["prior"] = args.prior
-    cfg["gamma"] = args.gamma            # None -> load_prior uses GAMMA_DEFAULT (0.8); raw arm sets ~0.04
+    cfg["gamma"] = args.gamma            # None -> load_prior uses GAMMA_DEFAULT
     # record the RESOLVED stage-1 seed, not None, so config.json always states which
     # residuals this run was trained on (it enters the cfg hash: different residuals =>
     # different run identity, while --seed alone does not).
     cfg["residual_seed"] = args.seed if args.residual_seed is None else args.residual_seed
-    cfg["shrink_t"] = args.shrink_t      # None -> SHRINK_T (0.1); empirical-temporal only
-    cfg["temporal"] = args.temporal      # 'empirical' or 'laplacian' (product graph)
-    cfg["gamma_t"] = args.gamma_t        # temporal Laplacian shift (temporal=laplacian)
-    cfg["spatial_graph"] = args.spatial_graph   # road / correlation / hybrid
-    cfg["knn_k"] = args.knn_k
-    cfg["winsor"] = args.winsor          # residual winsor percentile for the prior fit
+    cfg["shrink_t"] = args.shrink_t      # None -> SHRINK_T
     cfg["denoiser"] = args.denoiser      # ugnet or gcnn (low-capacity, prior-isolating)
     cfg["gcnn_hops"] = args.gcnn_hops
     cfg["gcnn_layers"] = args.gcnn_layers
     cfg["gcnn_hidden"] = args.gcnn_hidden
-    cfg["uncond"] = args.uncond
-    cfg["schedule_resolved"] = sched_kind          # what the run actually used
     cfg["repair_graph"] = REPAIR_GRAPH             # single-component graph surgery
     cfg["zero_masked_input"] = True                # masked coords zeroed at the net INPUT
     cfg_hash = hash_config({k: v for k, v in cfg.items() if k not in _CFG_HASH_EXCLUDE})
@@ -922,10 +815,8 @@ def main() -> None:
     set_seed(args.seed)
 
     # ── Preflight: fail fast (not hours in) if an input is missing.
-    _ex = (f"run scripts/build_signal_cache.py --dataset {args.dataset} first"
-           if args.backbone == "raw" else
-           f"run scripts/gwn_extract_residuals.py --variant {args.dataset} "
-           f"--seed {args.seed} --backbone {args.backbone} --checkpoint <ckpt> first")
+    _ex = (f"run scripts/extract_residuals.py --variant {args.dataset} "
+           f"--seed {args.seed} --backbone {args.backbone} first")
     # stage-1 (backbone/residual) seed vs stage-2 (diffusion) seed. --residual-seed pins the
     # former so error bars over --seed isolate diffusion-training stochasticity; every arm
     # then reads byte-identical residuals and backbone variance cancels in the paired
@@ -937,16 +828,12 @@ def main() -> None:
         (paths.adj_npz(args.dataset), "run python scripts/build_datasets.py --all"),
     ])
 
-    # ── Data (modeled in unit space; sigma_r from train, reused for val). backbone='raw'
-    # → SignalDataset (future signal target + history conditioning); else ResidualDataset.
+    # ── Data (modeled in unit space; sigma_r from train, reused for val).
     sigma_r = train_residual_sigma(args.dataset, res_seed, args.backbone, norm=args.norm)
     train_ds = make_dataset(args.dataset, "train", res_seed, args.backbone, sigma_r,
                             cond_past=args.cond_past, zero_masked=True)
     val_ds = make_dataset(args.dataset, "val", res_seed, args.backbone, sigma_r,
                           cond_past=args.cond_past, zero_masked=True)
-    if args.uncond:
-        train_ds.Y_hat.zero_(); val_ds.Y_hat.zero_()
-        log.info("UNCONDITIONAL mode: conditioning zeroed (train+val) — pure generation")
     _sig_desc = (f"{sigma_r:.4f}" if np.ndim(sigma_r) == 0
                  else f"{args.norm} [{np.min(sigma_r):.2f}..{np.max(sigma_r):.2f}]")
     log.info(f"train={len(train_ds)}  val={len(val_ds)}  sigma_r={_sig_desc} "
@@ -966,45 +853,39 @@ def main() -> None:
     # ── Prior + schedule. NB res_seed, not args.seed: the prior is FIT FROM the stage-1
     # residuals, so it must follow the backbone seed. otherwise varying --seed would refit
     # the prior on different data and the arms would stop being comparable across seeds.
+    ge = args.global_edge
+    if ge is not None and ge != "match":
+        ge = float(ge)
     prior = load_prior(args.dataset, args.prior, res_seed,
-                       spatial=args.spatial, stiffness_cap=(args.stiffness_cap or None),
-                       gamma=args.gamma, shrink_t=args.shrink_t, shrink_s=args.shrink_s,
-                       temporal=args.temporal, gamma_t=args.gamma_t,
-                       spatial_graph=args.spatial_graph, knn_k=args.knn_k, winsor=args.winsor,
-                       backbone=args.backbone, norm=args.norm)
+                       gamma=args.gamma, shrink_t=args.shrink_t,
+                       backbone=args.backbone, norm=args.norm, global_edge=ge)
     prior_t = prior_to_torch(prior, device=device, dtype=torch.float32)
-    if sched_kind == "uls":
-        # linear rate, slope = 2·c_0 → identical total heat c̄(T) = c_0 as the FCPS arm.
-        schedule = ULSchedule(slope=2.0 * args.c_0, T=1.0)
-        log.info(f"schedule: ULS linear rate slope={schedule.slope:.1f} "
-                 f"(c̄(T)={schedule.c_0:.2f}, heat parity with FCPS S={args.c_0:g})")
-    elif sched_kind == "vp":
-        # standard VP-SDE / DDPM baseline (GAD's VPD adversary): linear β 0.1→20.
-        schedule = VPSchedule()
-        log.info(f"schedule: VP-SDE linear β∈[{schedule.beta_min:g},{schedule.beta_max:g}] "
-                 f"(c̄(T)={schedule.c_0:.2f})")
-    elif sched_kind == "ve":
-        # VE-SDE baseline (GAD's VED adversary): geometric σ 0.01→50, θ→0 limit.
-        schedule = VESchedule()
-        log.info(f"schedule: VE-SDE geometric σ∈[{schedule.sigma_min:g},{schedule.sigma_max:g}] "
-                 f"(c̄(T)={schedule.c_0:.1f}; log-uniform c̄ training draws)")
-    else:
-        # GAD-literal FCPS: fixed S=c_0, α, c_min (no per-dataset auto-derivation).
-        # the θ→GAD-scale reparam already set θ_min=γ=0.8, so a fixed S=7 reproduces
-        # GAD's mixing (2·S·θ_min≈11.2) on every dataset.
-        schedule = FCPSSchedule(c_min=args.c_min, c_0=args.c_0, alpha=args.alpha, T=1.0)
-        log.info(f"schedule (GAD-literal FCPS): S=c_0={schedule.c_0:.2f} "
-                 f"α={schedule.alpha:.1f} c_min={schedule.c_min:.2f}")
+    # both ends of the noise range from the prior's own spectrum: the top is already
+    # prior-adaptive (θ_min → γ), the bottom is derived here so the fastest mode is
+    # still clean where training and sampling stop. the step count keeps the
+    # resolution per decade constant across arms.
+    c_lo = derived_floor(prior)
+    schedule = FCPSSchedule(c_min=args.c_min, c_0=args.c_0, alpha=args.alpha, T=1.0,
+                            c_lo_override=c_lo)
+    n_anc = derived_steps(prior, schedule)
+    if args.fast_val_steps <= 0:
+        args.fast_val_steps = n_anc
+    # record the RESOLVED prior + schedule so eval rebuilds exactly this run
+    cfg.update({"global_edge_beta": float(prior.global_edge), "gamma_resolved": float(prior.gamma),
+                "c_lo": float(c_lo), "anc_steps_derived": int(n_anc),
+                "fast_val_steps": int(args.fast_val_steps), "val_k": int(args.val_k)})
+    (ckpt_dir / "config.json").write_text(json.dumps(cfg, indent=2, default=str))
+    log.info(f"schedule (FCPS): S=c_0={schedule.c_0:.2f} α={schedule.alpha:.1f} "
+             f"c_min={schedule.c_min:.2f} c_lo={c_lo:.3g} (derived) -> "
+             f"{math.log10(schedule.c_0 / c_lo):.2f} decades, {n_anc} ancestral steps")
+    if args.prior == "kronecker":
+        log.info(f"spatial factor: global edge β={prior.global_edge:.4g}  γ={prior.gamma:.4g}"
+                 f"{'  (matched on the train residuals)' if args.global_edge == 'match' else ''}")
     log.info(
         f"prior N={prior.N} H={prior.H} γ={prior.gamma:.4f}  "
         f"θ_min={float(prior.theta.min()):.4f}  θ_max={float(prior.theta.max()):.2f}  "
-        f"2·S·θ_min={2*schedule.c_0*float(prior.theta.min()):.2f} (GAD target ≈11.2)  "
-        # report the sampler ACTUALLY in use — this line used to hardcode the power-law form
-        # and so claimed "c_0·u^0.65" on every run, including log-uniform ones.
-        + (f"train noise c̄ ~ logU[{getattr(schedule, 'c_lo', 0.0):.3g}, {schedule.c_0:.3g}]  "
-           if _NOISE_SAMPLER == "loguniform" or isinstance(schedule, VESchedule)
-           else f"train noise c̄ = c_0·u^0.65 ∈ [0, {schedule.c_0:.3g}]  ")
-        + f"loss={args.loss}  "
+        f"2·S·θ_min={2*schedule.c_0*float(prior.theta.min()):.2f}  "
+        f"train noise c̄ ~ logU[{schedule.c_lo:.3g}, {schedule.c_0:.3g}]  "
         f"repair_graph={REPAIR_GRAPH}"
     )
     # EM stability floor: explicit EM diverges to NaN when the step count is too low
@@ -1017,8 +898,7 @@ def main() -> None:
         log.info(f"EM stability floor (θ_max·S={em_floor}): "
                  f"step sweep {requested} → {steps_list}")
 
-    # ── Model. backbone='raw' → history-conditioned SignalDenoiser (T_h from the
-    # conditioning width); else the forecast-conditioned R0Denoiser.
+    # ── Model.
     A = load_adjacency(args.dataset)
     if args.denoiser == "gcnn":
         # conditioning is n_cond H-wide fields concatenated along time (1 = Ŷ only,
@@ -1031,13 +911,6 @@ def main() -> None:
             n_layers=args.gcnn_layers, hidden=args.gcnn_hidden,
             n_cond=cond_w // prior.H,
         ).to(device)
-    elif args.backbone == "raw":
-        T_h = train_ds.Y_hat.shape[-1]
-        denoiser = SignalDenoiser(
-            N=prior.N, H=prior.H, T_h=T_h, adjacency=A,
-            d_h=args.d_h, channel_multipliers=tuple(args.channel_multipliers),
-            n_blocks=args.n_blocks, device=str(device),
-        ).to(device)
     else:
         denoiser = R0Denoiser(
             N=prior.N, H=prior.H, adjacency=A,
@@ -1046,9 +919,6 @@ def main() -> None:
             T_h=(prior.H if args.cond_past else 0),
         ).to(device)
     log.info(f"denoiser params: {num_parameters(denoiser):,}")
-
-    # GAD's TV penalty (off by default; residuals are rough, may be misspecified).
-    A_t = torch.as_tensor(A, device=device, dtype=torch.float32) if args.tv_weight else None
 
     # AdamW + grad-clip 1.0, matching GAD (exp_gasde.py). lr stays at our scale-
     # appropriate default (batch/epochs differ from GAD's 128/5000).
@@ -1066,7 +936,7 @@ def main() -> None:
     if args.lr_find:
         lr_range_test(
             train_loader, denoiser=denoiser, prior_t=prior_t, schedule=schedule,
-            loss_name=args.loss, tv_weight=args.tv_weight, A_t=A_t, optim=optim,
+            optim=optim,
             device=device, n_steps=args.lr_find,
             lr_min=args.lr_find_min, lr_max=args.lr_find_max,
             out_path=ckpt_dir / "lr_find.json",
@@ -1122,7 +992,7 @@ def main() -> None:
     sel = valid_idx[::stride][:n_val]
     val_R0, val_Yhat = val_ds.R0[sel], val_ds.Y_hat[sel]
     val_ypred, val_ytrue = val_ds.y_pred_raw[sel], val_ds.y_true_raw[sel]
-    log.info(f"per-epoch val_loss ({args.loss}, deterministic draws) selects best.pt "
+    log.info(f"per-epoch val_loss (snr, deterministic draws) selects best.pt "
              f"+ drives the LR plateau; EM step-sweep diagnostic every {args.val_every} "
              f"epochs on {n_val} clean windows (k={args.val_k}, steps={steps_list}); "
              f"{float(full_valid.float().mean()):.2f} of val fully observed")
@@ -1185,8 +1055,8 @@ def main() -> None:
     log.info(f"# {run_id} | {args.dataset} prior={args.prior} backbone={args.backbone} "
              f"seed={args.seed} | select=sampled CRPS on EMA({args.ema}) every "
              f"{args.fast_val_every} ep (anc {args.fast_val_steps} steps) → best_crps.pt; "
-             f"val_loss = dashboard (best.pt) | schedule={sched_kind} "
-             f"c̄(T)={schedule.c_0:.1f} | loss={args.loss} | "
+             f"val_loss = dashboard (best.pt) | schedule=fcps "
+             f"c̄(T)={schedule.c_0:.1f} | loss=snr | "
              f"cond_past={args.cond_past} norm={args.norm}")
     log.info(f"epoch | train | val_loss | lr | time | win/s | gpu   "
              f"(+ EM step-sweep MAE/RMSE/MAPE/CRPS every {args.val_every} ep)")
@@ -1204,7 +1074,6 @@ def main() -> None:
             optim.zero_grad()
             loss = train_step(
                 batch, denoiser=denoiser, prior_t=prior_t, schedule=schedule,
-                loss_name=args.loss, tv_weight=args.tv_weight, A_t=A_t,
                 device=device, generator=None,
             )
             loss.backward()
@@ -1220,7 +1089,7 @@ def main() -> None:
         # DASHBOARD ONLY — ~93% of it is the irreducible high-noise floor, so no
         # decision (selection / early stop / LR) keys off it.
         vloss = validate(val_loader, denoiser=denoiser, prior_t=prior_t, schedule=schedule,
-                         loss_name=args.loss, tv_weight=args.tv_weight, A_t=A_t, device=device)
+                         device=device)
         # the DiffSTG-style decision signal: sampled forecast CRPS (EMA weights,
         # fixed windows, fixed noise) — drives the LR plateau below and selection.
         fast = _fast_val(epoch)

@@ -19,7 +19,6 @@ from scipy import stats
 
 from src.diffusion.forward_fcps import (
     FCPSSchedule,
-    ULSchedule,
     prior_to_torch,
     sample_R_t_given_R0,
     sample_R_t_given_R0_torch,
@@ -128,8 +127,7 @@ def test_real_data_per_coord_variance(dataset):
     samples = sample_prior((n,), prior=prior, rng=rng)  # (n, N, H)
 
     # Analytic per-coord variance = diagonal of the stationary covariance
-    # V_S (1/θ) V_Tᵀ, read straight off the prior so it holds for any spatial
-    # form (flat Σ_S=I, structured (L+γI)⁻¹, or isotropic).
+    # V_S (1/θ) V_Tᵀ, read straight off the prior so it holds for either arm.
     sigma2_modes = 1.0 / prior.theta                              # (N, H) per-mode var
     var_true = (prior.V_S ** 2) @ sigma2_modes @ (prior.V_T ** 2).T   # (N, H)
 
@@ -192,11 +190,3 @@ def test_torch_and_numpy_samplers_agree_in_distribution():
     var_t = Rt_t.var(axis=0)
     rel = np.abs(var_t - var_np) / np.clip(var_np, 1e-8, None)
     assert rel.max() < 0.1, f"torch/numpy per-cell variance disagree, max rel {rel.max():.3f}"
-
-
-def test_uls_schedule_basic_shape():
-    """ULSchedule.c_bar(T) = slope/2 and c_bar(0) = 0."""
-    sched = ULSchedule(slope=200.0, T=1.0)
-    assert float(sched.c_bar(0.0)) == 0.0
-    assert abs(float(sched.c_bar(1.0)) - 100.0) < 1e-12
-    assert abs(float(sched.c(0.5)) - 100.0) < 1e-12

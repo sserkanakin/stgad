@@ -108,8 +108,6 @@ def init_wandb(
     if exp:
         tags.append(exp_tag)
     # make the arms distinguishable at a glance in the dashboard
-    if cfg.get("schedule_resolved"):
-        tags.append(f"sched:{cfg['schedule_resolved']}")
     if cfg.get("repair_graph") is not None:
         tags.append(f"repair:{'on' if cfg['repair_graph'] else 'off'}")
     if cfg.get("loss"):

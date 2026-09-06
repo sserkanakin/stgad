@@ -64,6 +64,10 @@ def test_variant_shapes_and_keys(v):
 def test_gwn_native_view(v):
     if not BUILT[v]:
         pytest.skip(f"{v} not built")
+    # the native view is a separate artifact of the vendored Graph-WaveNet path; the
+    # unified split can exist without it (it does on a fresh checkout)
+    if not (paths.gwn_native_dir(v) / "train.npz").exists():
+        pytest.skip(f"{v} gwn_native view not built")
     n = _NUM_NODES[v]
     for s in ("train", "val", "test"):
         nat = np.load(paths.gwn_native_dir(v) / f"{s}.npz")

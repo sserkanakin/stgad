@@ -26,7 +26,6 @@ source "${PROJECT_DIR}/scripts/daic/_common.sh"
 BACKBONE="${BACKBONE:-gwn}"
 EPOCHS="${EPOCHS:-200}"
 LR="${LR:-1e-4}"
-LOSS="${LOSS:-snr}"
 # final-val step sweep. empty = train_diffusion's full default sweep (EM
 # 1000..3500 x anc 25/50/100/200, per-checkpoint) as used in round 2. set a SINGLE
 # value each for a light final-val (no sweep) — e.g. FINAL_STEPS_LIST=1000
@@ -59,18 +58,11 @@ ARM_FLAGS=(--norm "${NORM}")
 # temporal ridge ρ for the raw arm (tames the stiff empirical Σ_T); unset -> default 0.1.
 [ -n "${SHRINK_T:-}" ] && ARM_FLAGS+=(--shrink-t "${SHRINK_T}")
 # temporal factor: 'laplacian' -> clean product graph (raw arm); unset -> empirical Σ_T.
-[ -n "${TEMPORAL:-}" ] && ARM_FLAGS+=(--temporal "${TEMPORAL}")
-[ -n "${GAMMA_T:-}" ]  && ARM_FLAGS+=(--gamma-t "${GAMMA_T}")
-# spatial graph (road/correlation/hybrid) + winsor for the predict-refine robust-prior arm.
-[ -n "${SPATIAL_GRAPH:-}" ] && ARM_FLAGS+=(--spatial-graph "${SPATIAL_GRAPH}")
-[ -n "${WINSOR:-}" ]        && ARM_FLAGS+=(--winsor "${WINSOR}")
 # low-capacity gcnn denoiser (prior-isolation arm); unset -> ugnet.
 [ -n "${DENOISER:-}" ]      && ARM_FLAGS+=(--denoiser "${DENOISER}")
 # GAD's graph-TV regularizer (their tv_pred, 5e-3·xᵀLx on the prediction); unset -> 0.
-[ -n "${TV_WEIGHT:-}" ]     && ARM_FLAGS+=(--tv-weight "${TV_WEIGHT}")
 # UNCOND=1: unconditional generation (zero conditioning; select by val_loss — sampled
 # CRPS is a forecasting metric and meaningless without conditioning).
-[ -n "${UNCOND:-}" ]        && ARM_FLAGS+=(--uncond --fast-val-every 0 --val-every 1000 --patience 999)
 # uncond: skip final-val (forecast metrics are meaningless without conditioning, and a
 # failed final-val would break afterok dependencies); checkpoints are saved during training.
 FV_FLAG="--final-val"; [ -n "${UNCOND:-}" ] && FV_FLAG=""
@@ -115,7 +107,7 @@ trap copy_logs EXIT
 
 log_run_header "${DAIC_PYTHON} scripts/train_diffusion.py --dataset ${DATASET} --prior ${PRIOR} \
 --backbone ${BACKBONE} --exp ${ARM_EXP} --seed ${SEED} --epochs ${EPOCHS} --lr ${LR} \
---loss ${LOSS} ${ARM_FLAGS[*]} --final-val"
+${ARM_FLAGS[*]} --final-val"
 
 srun --unbuffered --export=ALL "${DAIC_PYTHON}" -u scripts/train_diffusion.py \
     --dataset "${DATASET}" \
@@ -125,7 +117,6 @@ srun --unbuffered --export=ALL "${DAIC_PYTHON}" -u scripts/train_diffusion.py \
     --seed "${SEED}" \
     --epochs "${EPOCHS}" \
     --lr "${LR}" \
-    --loss "${LOSS}" \
     "${ARM_FLAGS[@]}" \
     "${FINAL_FLAGS[@]}" \
     ${FV_FLAG}

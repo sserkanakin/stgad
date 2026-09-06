@@ -147,58 +147,6 @@ class R0Denoiser(nn.Module):
         return out[..., -self.H:] if self.T_h else out              # (B, N, H)
 
 
-class SignalDenoiser(nn.Module):
-    """history-conditioned denoiser for the pure-signal arm (DiffSTG-style).
-
-    diffuses only the FUTURE signal Y (H steps) but conditions on the HISTORY window
-    (T_h steps), exactly as DiffSTG conditions on x_masked = [history, zeros]:
-
-        x        = [history, Y_t]      (history clean, future noised)
-        x_masked = [history, zeros]    (history known, future masked)
-        out      = ugnet(x, t, x_masked)[..., -H:]   -> Y0_hat for the future
-
-    signature matches R0Denoiser — denoiser(Y_t, t, history) — so the reverse sampler
-    and training loop reuse it unchanged; only the conditioning tensor differs
-    (history (B, N, T_h) instead of a forecast (B, N, H))."""
-
-    def __init__(
-        self,
-        N: int,
-        H: int,
-        T_h: int,
-        adjacency: np.ndarray,
-        d_h: int = 32,
-        channel_multipliers: tuple[int, ...] = (1, 2),
-        n_blocks: int = 2,
-        device: str = "cpu",
-    ) -> None:
-        super().__init__()
-        if adjacency.shape != (N, N):
-            raise ValueError(f"adjacency must be ({N}, {N}); got {adjacency.shape}")
-        self.N, self.H, self.T_h = N, H, T_h
-        cfg = make_ugnet_config(
-            N=N, H=H, A=adjacency, d_h=d_h,
-            channel_multipliers=channel_multipliers, n_blocks=n_blocks, device=device,
-        )
-        cfg.T_h = T_h
-        cfg.T_p = H                         # ugnet builds for T = T_h + H (the cat axis)
-        self.ugnet = _UGnet(cfg)
-
-    def forward(self, Y_t: torch.Tensor, t: torch.Tensor, history: torch.Tensor) -> torch.Tensor:
-        """predict the clean future signal Y0 from the noised future Y_t (B, N, H),
-        conditioned on the history (B, N, T_h). t is (B,)."""
-        if Y_t.shape[-2:] != (self.N, self.H):
-            raise ValueError(f"Y_t last two dims must be ({self.N}, {self.H}); got {Y_t.shape}")
-        if history.shape[-2:] != (self.N, self.T_h):
-            raise ValueError(f"history last two dims must be ({self.N}, {self.T_h}); got {history.shape}")
-        x = torch.cat([history, Y_t], dim=-1).unsqueeze(1)              # (B,1,N,T_h+H)
-        zeros_future = torch.zeros_like(Y_t)
-        x_masked = torch.cat([history, zeros_future], dim=-1).unsqueeze(1)  # (B,1,N,T_h+H)
-        c = (x_masked, torch.zeros(1, device=Y_t.device), torch.zeros(1, device=Y_t.device))
-        out = self.ugnet(x, t * T_EMBED_SCALE, c)                       # (B,1,N,T_h+H)
-        return out.squeeze(1)[..., -self.H:]                            # (B,N,H) future only
-
-
 def num_parameters(module: nn.Module) -> int:
     """Convenience helper for logging param count."""
     return sum(p.numel() for p in module.parameters() if p.requires_grad)

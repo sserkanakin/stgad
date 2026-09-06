@@ -161,7 +161,8 @@ def reverse_sample_ancestral(
     Y_hat: torch.Tensor,
     n_steps: int = 100,
     *,
-    c_lo: float = 0.02,
+    c_lo: Optional[float] = None,
+    corrected: bool = True,
     R_T: Optional[torch.Tensor] = None,
     generator: Optional[torch.Generator] = None,
     step_callback: Optional[Callable[[int, float, torch.Tensor], None]] = None,
@@ -177,12 +178,27 @@ def reverse_sample_ancestral(
         a'  = e^{-θc'}              s'   = σ²(1-e^{-2θc'})/θ        (marginal at c')
         v   = s_d·s' / (a_d²·s' + s_d)
         mean= v·(a_d·x_c/s_d + a'·x0_hat/s')
-        x_{c'} = mean + sqrt(v)·z
+        x_{c'} = mean + sqrt(var)·z
 
-    the final output is the denoiser's R0_hat at c_lo (the c'→0 posterior collapses
-    onto x0_hat, exactly like DDPM's last step). returns (sample, None) to match
+    var: with corrected=False, var = v -- the variance of q(x_{c'}|x_c, x0) as if x0
+    were KNOWN. that is DDPM's β̃ (lower-bound) choice; it is benign for isotropic
+    noise and wrong by up to 2x per step for the slow modes of a stiff prior, and the
+    deficit compounds over the chain (the sampler then needs ~800 steps to reach what
+    it should reach at 50). given x_c the posterior over x0 has variance
+    σ_p² = 1/(a_c²/s_c + 1/v_stat), and propagating it through the mean gives the
+    exact reverse transition N(a_d x_c, v_stat(1 − a_d²)) under the model:
+
+        var = v + (v·a'/s')² · σ_p²                       (corrected=True, default)
+
+    verified to 6 decimals against the closed form for θ ∈ [0.8, 5000].
+
+    c_lo: terminal floor of the grid. None = schedule.c_lo, i.e. the SAME floor the
+    denoiser was trained down to (a hardcoded 0.02 used to sit 25x above it). the
+    final output is the denoiser's R0_hat there. returns (sample, None) to match
     reverse_sample_em's signature.
     """
+    if c_lo is None:
+        c_lo = float(schedule.c_lo)
     device, dtype, B = Y_hat.device, Y_hat.dtype, Y_hat.shape[0]
     V_S = torch.as_tensor(prior.V_S, device=device, dtype=dtype)
     V_T = torch.as_tensor(prior.V_T, device=device, dtype=dtype)
@@ -220,7 +236,14 @@ def reverse_sample_ancestral(
         v = s_d * s_p / (a_d * a_d * s_p + s_d)
         C0_hat = _rotate_to_eig_torch(R0_hat, V_S, V_T)
         mean = v * (a_d * C / s_d + a_p * C0_hat / s_p)
+        var = v
+        if corrected:
+            # posterior variance of x0 given x_c under the prior, pushed through the mean
+            a_c = torch.exp(-theta * c_cur)
+            s_c = torch.clamp(s2 * (1.0 - torch.exp(-2.0 * theta * c_cur)) / theta, min=1e-20)
+            sig_p2 = 1.0 / (a_c * a_c / s_c + 1.0 / sigma2_stat)
+            var = v + (v * a_p / s_p) ** 2 * sig_p2
         z = torch.randn(C.shape, generator=generator, device=device, dtype=dtype)
-        C = mean + v.sqrt() * z
+        C = mean + var.sqrt() * z
 
     return R0_hat, None

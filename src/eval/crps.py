@@ -5,18 +5,21 @@ import torch
 
 
 def empirical_crps(samples: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
-    """fair (energy-form) ensemble CRPS per point, in the same units as samples/y.
+    """fair (unbiased) ensemble CRPS per point, in the same units as samples/y.
 
     CRPS = E|X - y| - 0.5 E|X - X'|, estimated from the K samples. the pairwise
     term uses the O(K log K) sorted identity ΣΣ|x_i-x_j| = 2 Σ_i (2i-K-1) x_(i),
-    so we never form the KxK matrix. translation-equivariant, so CRPS on residuals
-    equals CRPS on the reconstructed forecast (the backbone Y_hat cancels per point).
-    samples (K, B, N, H), y (B, N, H) -> (B, N, H)."""
+    so we never form the KxK matrix, and is normalised by K(K-1) -- the FAIR
+    estimator. the naive 1/K^2 form has expectation CRPS + E|X-X'|/(2K): a
+    positive bias proportional to ensemble SPREAD, +25% at K=4, so under it the
+    narrower of two equally skilled ensembles scores better. translation-equivariant,
+    so CRPS on residuals equals CRPS on the reconstructed forecast.
+    samples (K, B, N, H), y (B, N, H) -> (B, N, H). needs K >= 2."""
     K = samples.shape[0]
     term1 = (samples - y.unsqueeze(0)).abs().mean(dim=0)            # E|X - y|
     xs, _ = torch.sort(samples, dim=0)                             # ascending
     idx = torch.arange(1, K + 1, device=samples.device, dtype=samples.dtype)
-    w = (2 * idx - K - 1) / (K * K)                                # 0.5 E|X - X'| weights
+    w = (2 * idx - K - 1) / (K * (K - 1))                          # 0.5 E|X - X'|, fair
     term2 = (w.view(K, 1, 1, 1) * xs).sum(dim=0)
     return term1 - term2
 

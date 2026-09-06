@@ -41,10 +41,10 @@ torch.backends.cudnn.allow_tf32 = True
 
 from src.data.adjacency import load_adjacency
 from src.data.residual_dataset import (
-    make_dataset, residual_path, sigma_to_torch, train_residual_sigma,
+    make_dataset, sigma_to_torch, train_residual_sigma,
 )
-from src.diffusion.denoiser import GCNNDenoiser, R0Denoiser, SignalDenoiser
-from src.diffusion.forward_fcps import FCPSSchedule, ULSchedule, VESchedule, VPSchedule, prior_to_torch
+from src.diffusion.denoiser import GCNNDenoiser, R0Denoiser
+from src.diffusion.forward_fcps import FCPSSchedule, prior_to_torch
 from src.diffusion.prior import load_prior
 from src.diffusion.reverse import min_em_steps, reverse_sample_ancestral, reverse_sample_em
 from src.eval.distribution import energy_distance, sliced_wasserstein1
@@ -86,62 +86,38 @@ def load_run(dataset, prior, seed, exp, device, backbone="gwn", ckpt_name="best.
     # configs predate the split -> fall back to the diffusion seed.
     res_seed = cfg.get("residual_seed", seed)
 
-    # rebuild the SAME prior the run trained with (spatial + stiffness cap + graph
-    # repair + residual norm from config; defaults keep back-compat with configs
-    # written before those flags existed).
+    # rebuild the SAME prior the run trained with (γ, ρ, graph repair and residual
+    # norm from config; defaults keep back-compat with older configs).
+    # the RESOLVED values training recorded (a matched β/γ must not be re-fitted here)
+    beta = float(cfg.get("global_edge_beta", 0.0) or 0.0)
     prior_obj = load_prior(dataset, prior, res_seed,
-                           spatial=cfg.get("spatial", "structured"),
-                           stiffness_cap=(cfg.get("stiffness_cap") or None),
-                           gamma=cfg.get("gamma"),
+                           gamma=cfg.get("gamma_resolved", cfg.get("gamma")),
                            shrink_t=cfg.get("shrink_t"),
-                           shrink_s=cfg.get("shrink_s"),
-                           temporal=cfg.get("temporal", "empirical"),
-                           gamma_t=cfg.get("gamma_t", 0.6),
-                           spatial_graph=cfg.get("spatial_graph", "road"),
-                           knn_k=cfg.get("knn_k", 15),
-                           winsor=cfg.get("winsor"),
                            backbone=backbone,
                            repair=cfg.get("repair_graph"),
-                           norm=cfg.get("norm", "global"))
-    # rebuild the schedule exactly as training used it: uls (isotropic arm, linear
-    # rate at the same total heat) or the GAD-literal fcps. old configs have no
-    # schedule_resolved field → fcps with the recorded/default S, α, c_min.
-    if cfg.get("schedule_resolved") == "vp":
-        schedule = VPSchedule()
-        log.info("[eval] schedule: VP-SDE linear β (DDPM baseline)")
-    elif cfg.get("schedule_resolved") == "ve":
-        schedule = VESchedule()
-        log.info("[eval] schedule: VE-SDE geometric σ (baseline)")
-    elif cfg.get("schedule_resolved") == "uls":
-        schedule = ULSchedule(slope=2.0 * cfg.get("c_0", 7.0), T=1.0)
-        log.info(f"[eval] schedule: ULS slope={schedule.slope:.1f} "
-                 f"(c̄(T)={schedule.c_0:.2f})  θ_min={float(prior_obj.theta.min()):.4f}")
-    else:
-        schedule = FCPSSchedule(c_min=cfg.get("c_min", 0.1), c_0=cfg.get("c_0", 7.0),
-                                alpha=cfg.get("alpha", 4.0), T=1.0)
-        log.info(f"[eval] schedule (GAD-literal FCPS): S=c_0={schedule.c_0:.2f} "
-                 f"α={schedule.alpha:.1f} c_min={schedule.c_min:.2f} "
-                 f"θ_min={float(prior_obj.theta.min()):.4f}")
+                           norm=cfg.get("norm", "global"),
+                           global_edge=(beta or None))
+    # rebuild the schedule exactly as training used it, INCLUDING the floor the
+    # denoiser was trained down to (old configs have no c_lo -> the historical 8e-4).
+    schedule = FCPSSchedule(c_min=cfg.get("c_min", 0.1), c_0=cfg.get("c_0", 7.0),
+                            alpha=cfg.get("alpha", 4.0), T=1.0,
+                            c_lo_override=cfg.get("c_lo"))
+    log.info(f"[eval] schedule (FCPS): S=c_0={schedule.c_0:.2f} α={schedule.alpha:.1f} "
+             f"c_min={schedule.c_min:.2f} c_lo={schedule.c_lo:.3g} "
+             f"θ_min={float(prior_obj.theta.min()):.4f} θ_max={float(prior_obj.theta.max()):.1f} "
+             f"β={beta:.4g} γ={prior_obj.gamma:.4g}")
     if cfg.get("denoiser") == "gcnn":
         denoiser = GCNNDenoiser(
-            N=prior_obj.N, H=prior_obj.H, adjacency=load_adjacency(dataset),
+            N=prior_obj.N, H=prior_obj.H, adjacency=load_adjacency(dataset, global_edge=beta),
             K=cfg.get("gcnn_hops", 5), n_layers=cfg.get("gcnn_layers", 3),
             hidden=cfg.get("gcnn_hidden", 24),
             # cond-past runs train with n_cond=2 ([R_past | Yhat]); without this the
             # state_dict load fails on the first conv (3 vs 2 input channels).
             n_cond=(2 if cfg.get("cond_past") else 1),
         ).to(device)
-    elif backbone == "raw":
-        import numpy as _np
-        T_h = int(_np.load(residual_path(dataset, "test", res_seed, backbone))["history"].shape[-1])
-        denoiser = SignalDenoiser(
-            N=prior_obj.N, H=prior_obj.H, T_h=T_h, adjacency=load_adjacency(dataset),
-            d_h=cfg["d_h"], channel_multipliers=tuple(cfg["channel_multipliers"]),
-            n_blocks=cfg["n_blocks"], device=str(device),
-        ).to(device)
     else:
         denoiser = R0Denoiser(
-            N=prior_obj.N, H=prior_obj.H, adjacency=load_adjacency(dataset),
+            N=prior_obj.N, H=prior_obj.H, adjacency=load_adjacency(dataset, global_edge=beta),
             d_h=cfg["d_h"], channel_multipliers=tuple(cfg["channel_multipliers"]),
             n_blocks=cfg["n_blocks"], device=str(device),
             T_h=(prior_obj.H if cfg.get("cond_past") else 0),
@@ -160,7 +136,7 @@ def evaluate(dataset, prior, seed, *, exp, device, k, n_steps, alpha,
              backbone="gwn", mask_zero=True, split="test", sampler="em",
              ckpt_name="best.pt", save_diagnostics=False,
              pit_bins=20, n_examples=6, n_example_sensors=4,
-             spread_scale=1.0, fit_spread_grid=None):
+             spread_scale=1.0, fit_spread_grid=None, anc_c_lo=None):
     denoiser, prior_obj, schedule, cfg, ckpt_epoch = load_run(
         dataset, prior, seed, exp, device, backbone, ckpt_name=ckpt_name)
     N, H = prior_obj.N, prior_obj.H
@@ -168,6 +144,11 @@ def evaluate(dataset, prior, seed, *, exp, device, k, n_steps, alpha,
     # seed still names the checkpoint dir, the eval output dir and the sampling RNG.
     res_seed = cfg.get("residual_seed", seed)
 
+    if n_steps is None:
+        # ancestral: the count training derived for this prior (constant resolution per
+        # decade of noise); em: its historical 1000
+        n_steps = int(cfg.get("anc_steps_derived", 50)) if sampler == "ancestral" else 1000
+        log.info(f"[eval] n_steps not given -> {n_steps} ({'derived' if sampler == 'ancestral' else 'default'})")
     if sampler == "em":
         # EM stability floor: explicit EM NaNs when the step count is too low for this
         # prior's stiffness (θ_max·S). the ancestral sampler has no such floor.
@@ -191,9 +172,10 @@ def evaluate(dataset, prior, seed, *, exp, device, k, n_steps, alpha,
                 log.info(f"  [eval {dataset}/{prior}] {tag} · {sampler} step "
                          f"{i + 1}/{n_steps}")
         fn = reverse_sample_em if sampler == "em" else reverse_sample_ancestral
+        kw = {} if (sampler == "em" or anc_c_lo is None) else {"c_lo": anc_c_lo}
         s, _ = fn(prior_obj, schedule, denoiser, Y_cond,
                   n_steps=n_steps, R_T=None, generator=generator,
-                  step_callback=_cb)
+                  step_callback=_cb, **kw)
         return s
 
     # same residual scale + dataset flags the run trained with (from config.json)
@@ -223,6 +205,19 @@ def evaluate(dataset, prior, seed, *, exp, device, k, n_steps, alpha,
     # ── point accuracy + Winkler: K samples per window, chunked over windows ──
     mae_n = torch.zeros(H); mse_n = torch.zeros(H); cnt = torch.zeros(H)
     mape_n = torch.zeros(H); wink_n = torch.zeros(H); cov_n = torch.zeros(H); crps_n = torch.zeros(H)
+    # JOINT metrics -- where a covariance prior is the only lever. per-point scores are
+    # blind to correlation; anything that SUMS errors is not: the network total per
+    # horizon and the hour-ahead cumulative per sensor. for each: fair CRPS, 90%
+    # coverage, and predictive spread / actual error (1 = the sum's uncertainty is right;
+    # white noise sits near 1/sqrt(N) by construction).
+    jt = {"tot": dict(crps=0.0, cov=0.0, sp2=0.0, er2=0.0, n=0),
+          "cum": dict(crps=0.0, cov=0.0, sp2=0.0, er2=0.0, n=0)}
+    def _joint(key, S, T):                                   # S (k, ...) samples, T (...) truth
+        a = jt[key]
+        a["crps"] += float(empirical_crps(S, T).sum()); a["n"] += T.numel()
+        lo_, hi_ = torch.quantile(S, alpha / 2, dim=0), torch.quantile(S, 1 - alpha / 2, dim=0)
+        a["cov"] += float(((T >= lo_) & (T <= hi_)).float().sum())
+        a["sp2"] += float(S.var(dim=0, unbiased=True).sum()); a["er2"] += float((T - S.mean(0)).pow(2).sum())
     qnum_n = torch.zeros(H); qden_n = torch.zeros(H)
     if fit_spread_grid is not None:
         fit_qnum = [torch.zeros(H) for _ in fit_spread_grid]
@@ -283,6 +278,8 @@ def evaluate(dataset, prior, seed, *, exp, device, k, n_steps, alpha,
         sn, _ = _masked_sums(winkler_score(yt, lo, hi, alpha), Mk);  wink_n += sn.cpu()
         sn, _ = _masked_sums(((yt >= lo) & (yt <= hi)).float(), Mk);  cov_n += sn.cpu()
         sn, _ = _masked_sums(empirical_crps(fc, yt), Mk);  crps_n += sn.cpu()   # raw-unit energy CRPS
+        _joint("tot", (fc * Mk.unsqueeze(0)).sum(2), (yt * Mk).sum(1))         # network total (k,b,H) / (b,H)
+        _joint("cum", (fc * Mk.unsqueeze(0)).sum(3), (yt * Mk).sum(2))         # cumulative     (k,b,N) / (b,N)
         qnum_n += quantile_crps_num(fc, yt, Mk).cpu()                           # normalized-CRPS num
         sn, _ = _masked_sums(yt.abs(), Mk);  qden_n += sn.cpu()                 # normalized-CRPS denom
 
@@ -366,10 +363,18 @@ def evaluate(dataset, prior, seed, *, exp, device, k, n_steps, alpha,
         "exp": exp, "ckpt_epoch": ckpt_epoch, "split": split, "ckpt": ckpt_name,
         "n_test_windows": int(n_total), "k_samples": k, "n_steps": n_steps,
         "sampler": sampler, "alpha": alpha, "mask_zero": bool(mask_zero),
+        # terminal noise floor of the ancestral grid. None = the sampler default
+        # (0.02); an explicit value is recorded so a re-sampled run is never
+        # confused with the locked-protocol one (it also renames the output).
+        "anc_c_lo": (None if sampler == "em" else anc_c_lo),
         "mae": overall(mae_n), "mse": overall(mse_n), "rmse": float((mse_n.sum()/cnt.sum())**0.5),
         "mape": overall(mape_n),
         "winkler": overall(wink_n), "coverage": overall(cov_n),
         "crps_energy": overall(crps_n),                              # raw-unit fair/energy CRPS
+        # joint: network total per horizon / hour-ahead cumulative per sensor
+        **{f"joint_{k}_{m}": v for k, a in jt.items() for m, v in (
+            ("crps", a["crps"] / max(a["n"], 1)), ("coverage", a["cov"] / max(a["n"], 1)),
+            ("spread_ratio", float(np.sqrt(a["sp2"] / max(a["er2"], 1e-12)))))},
         "crps": float(qnum_n.sum() / (qden_n.sum().clamp(min=1e-8) * 19.0)),  # normalized (papers/Vimal)
         "mae_h": mae_h.tolist(), "mse_h": mse_h.tolist(), "mape_h": mape_h.tolist(),
         "winkler_h": wink_h.tolist(), "coverage_h": cov_h.tolist(),
@@ -421,6 +426,10 @@ def _save(res):
     # per-(split, ckpt, sampler, steps) filename so parallel evals never clobber
     ck = "bestcrps" if res.get("ckpt") == "best_crps.pt" else "best"
     stem = f"{res.get('split', 'test')}_metrics_{ck}_{res.get('sampler', 'em')}{res['n_steps']}"
+    # a non-default ancestral floor is a DIFFERENT protocol, so it gets its own
+    # name; the locked-protocol filenames must stay byte-identical.
+    if res.get("anc_c_lo") is not None:
+        stem += f"_clo{res['anc_c_lo']:g}"
     # recalibrated / fit runs get their own names so they NEVER clobber the raw eval.
     if res.get("spread_fit") is not None:
         stem += "_sfit"
@@ -477,7 +486,7 @@ def main():
     p.add_argument("--dataset", choices=("metrla", "pemsbay", "pems04f", "pems04s",
                                           "pems08f", "pems08s"))
     p.add_argument("--prior", choices=("kronecker", "isotropic"))
-    p.add_argument("--backbone", choices=("gwn", "gcn", "mlp", "raw"), default="gwn",
+    p.add_argument("--backbone", choices=("gwn", "gcn", "mlp"), default="gwn",
                    help="which backbone's diffusion runs to eval (namespaces results)")
     p.add_argument("--exp", default="dev", help="experiment tag (matches training --exp)")
     p.add_argument("--seed", type=int, default=0)
@@ -485,8 +494,10 @@ def main():
                    help="which split to evaluate (val = the pre-test protocol)")
     p.add_argument("--all", action="store_true", help="eval all datasets x both priors")
     p.add_argument("--k", type=int, default=8, help="samples per window (Vimal uses 8)")
-    p.add_argument("--n-steps", type=int, default=1000,
-                   help="GAD Euler–Maruyama reverse steps (stiff prior needs many; GAD uses ~5000)")
+    p.add_argument("--n-steps", type=int, default=None,
+                   help="reverse steps. default: ancestral -> the count training derived for this "
+                        "prior (config anc_steps_derived, constant resolution per noise decade); "
+                        "em -> 1000 (stiff priors need many; GAD uses ~5000)")
     p.add_argument("--alpha", type=float, default=0.1, help="0.1 -> central 90%% interval")
     p.add_argument("--w1-windows", type=int, default=512)
     p.add_argument("--w1-samples", type=int, default=4)
@@ -501,6 +512,17 @@ def main():
                         "closed-form OU posterior, exact for the linear SDE, ~100 steps")
     p.add_argument("--ckpt", choices=("best.pt", "best_crps.pt"), default="best.pt",
                    help="which checkpoint to evaluate (val-loss or sweep-CRPS selection)")
+    p.add_argument("--anc-c-lo", type=float, default=None,
+                   help="terminal noise floor of the ancestral grid (default 0.02). the "
+                        "grid is geometric from c_0 down to this value and the sampler "
+                        "returns R0_hat there, discarding the noise still present. the "
+                        "variance-weighted fraction still un-denoised, "
+                        "sum_m var_m (1-e^{-2 theta_m c_lo}) / sum_m var_m, is 3.15%% for "
+                        "the isotropic prior in every cell (theta=0.8 flat) but 19-28%% for "
+                        "the structured one, so the default floor resolves the two arms to "
+                        "fidelities differing by 6-9x. training draws go down to 8e-4, so "
+                        "that is the matched value. non-default values write their own "
+                        "_clo<value> filename and never clobber the locked protocol.")
     p.add_argument("--spread-scale", type=float, default=1.0,
                    help="ensemble spread recalibration: fc <- mean + s*(fc-mean). 1.0 = off.")
     p.add_argument("--auto-spread", default=None,
@@ -537,7 +559,8 @@ def main():
         ed = paths.eval_dir(ds, pr, args.seed, exp=args.exp, backbone=args.backbone)
         ed.mkdir(parents=True, exist_ok=True)
         ck = "bestcrps" if args.ckpt == "best_crps.pt" else "best"
-        logf = ed / f"{args.split}_eval_{ck}_{args.sampler}{args.n_steps}.log"
+        clo_tag = "" if args.anc_c_lo is None else f"_clo{args.anc_c_lo:g}"
+        logf = ed / f"{args.split}_eval_{ck}_{args.sampler}{args.n_steps}{clo_tag}.log"
         setup_logging(logf)     # stdout (slurm .out) AND this run's eval.log
         log.info(f"=== eval {ds}/{pr} · exp={args.exp} · {args.split} · sampler={args.sampler} "
                  f"n_steps={args.n_steps} · ckpt={args.ckpt} · k={args.k} · device={device} ===")
@@ -547,7 +570,7 @@ def main():
                       w1_proj=args.w1_proj, gen_batch=args.gen_batch,
                       max_windows=args.max_windows, generator=g, backbone=args.backbone,
                       mask_zero=args.mask_zero, sampler=args.sampler,
-                      ckpt_name=args.ckpt)
+                      ckpt_name=args.ckpt, anc_c_lo=args.anc_c_lo)
         spread = args.spread_scale
         if args.auto_spread:
             # phase 1: fit the spread scalar on VAL (grid scored from one sample set),
@@ -565,7 +588,10 @@ def main():
         # record the headline numbers in eval.log too (_print_one only hits stdout)
         log.info(f"[done] {ds}/{pr} MAE={res['mae']:.4f} RMSE={res['rmse']:.4f} "
                  f"CRPS={res['crps']:.4f} Winkler={res['winkler']:.4f} cov={res['coverage']:.3f} "
-                 f"W1={res['w1']:.4f} energy={res['energy']:.4f}")
+                 f"W1={res['w1']:.4f} energy={res['energy']:.4f} | JOINT total: CRPS={res['joint_tot_crps']:.2f} "
+                 f"cov={res['joint_tot_coverage']:.3f} spread/err={res['joint_tot_spread_ratio']:.2f} | "
+                 f"cumulative: CRPS={res['joint_cum_crps']:.2f} cov={res['joint_cum_coverage']:.3f} "
+                 f"spread/err={res['joint_cum_spread_ratio']:.2f}")
         saved = _save(res)
         log.info(f"[saved] {saved}")
         print(f"  wrote {saved}")

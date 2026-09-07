@@ -22,6 +22,15 @@ REMOTE="${DAIC_NETID}@${DAIC_LOGIN_HOST}"
 DRY="${DRY:-0}"
 run() { if [ "$DRY" = 1 ]; then echo "[dry] $*"; else "$@"; fi; }
 
+echo "== 0. preflight: the /tudelft.net shares need a live kerberos ticket =="
+# an expired ticket makes the project dir 'Permission denied' and every later step
+# fails in ways that are easy to miss. check it first and say what to do.
+if ! ssh "$REMOTE" "test -r '${DAIC_PROJECT_DIR}/.git/HEAD' && test -w '${DAIC_DATA_DIR}'" 2>/dev/null; then
+  echo "cannot read ${DAIC_PROJECT_DIR} / write ${DAIC_DATA_DIR} on ${DAIC_LOGIN_HOST}." >&2
+  echo "the kerberos ticket is probably expired: run   ssh -t ${REMOTE} kinit   and retry." >&2
+  exit 3
+fi
+
 echo "== 1. cluster checkout pulls =="
 run ssh "$REMOTE" "cd '${DAIC_PROJECT_DIR}' && rm -f .git/index.lock && git pull --ff-only && git log --oneline -1"
 

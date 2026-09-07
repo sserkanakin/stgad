@@ -14,13 +14,17 @@ def empirical_crps(samples: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
     positive bias proportional to ensemble SPREAD, +25% at K=4, so under it the
     narrower of two equally skilled ensembles scores better. translation-equivariant,
     so CRPS on residuals equals CRPS on the reconstructed forecast.
-    samples (K, B, N, H), y (B, N, H) -> (B, N, H). needs K >= 2."""
+    samples (K, *shape), y (*shape) -> (*shape); any trailing shape. needs K >= 2."""
     K = samples.shape[0]
     term1 = (samples - y.unsqueeze(0)).abs().mean(dim=0)            # E|X - y|
     xs, _ = torch.sort(samples, dim=0)                             # ascending
     idx = torch.arange(1, K + 1, device=samples.device, dtype=samples.dtype)
     w = (2 * idx - K - 1) / (K * (K - 1))                          # 0.5 E|X - X'|, fair
-    term2 = (w.view(K, 1, 1, 1) * xs).sum(dim=0)
+    # w broadcasts along the sample axis whatever the trailing shape is: the joint
+    # metrics pass (K, B, H) network totals and (K, B, N) cumulative sums, not (K, B, N, H).
+    # a fixed view(K, 1, 1, 1) against a 3-d tensor broadcast to (K, K, B, H) and summed
+    # the weights to zero -> term2 vanished and the sum came out K times too large.
+    term2 = (w.view(K, *([1] * (samples.ndim - 1))) * xs).sum(dim=0)
     return term1 - term2
 
 

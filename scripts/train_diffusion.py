@@ -872,6 +872,7 @@ def main() -> None:
         args.fast_val_steps = n_anc
     # record the RESOLVED prior + schedule so eval rebuilds exactly this run
     cfg.update({"global_edge_beta": float(prior.global_edge), "gamma_resolved": float(prior.gamma),
+                "global_edge_match_ratio": float(prior.match_ratio),
                 "c_lo": float(c_lo), "anc_steps_derived": int(n_anc),
                 "fast_val_steps": int(args.fast_val_steps), "val_k": int(args.val_k)})
     (ckpt_dir / "config.json").write_text(json.dumps(cfg, indent=2, default=str))

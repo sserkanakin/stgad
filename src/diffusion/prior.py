@@ -68,6 +68,7 @@ class KroneckerPrior:
     delta_h: np.ndarray
     R_H: np.ndarray
     sigma2_scale: float = 1.0     # σ²: scales the noise so Σ_stat = σ²/θ (see _normalize_scale)
+    match_ratio: float = float("nan")   # prior-implied / measured sd of the network total (train), kron+match only
     global_edge: float = 0.0      # β: all-to-all edge weight relative to the mean road edge
 
     @property
@@ -299,8 +300,9 @@ def load_prior(
     if repair is None:
         from src.data.adjacency import REPAIR_GRAPH
         repair = REPAIR_GRAPH
+    match_ratio = float("nan")
     if global_edge == "match":
-        beta, gamma, _ = match_global_edge(dataset, seed, backbone, norm, repair, mu_T, var_data)
+        beta, gamma, match_ratio = match_global_edge(dataset, seed, backbone, norm, repair, mu_T, var_data)
     else:
         beta = float(global_edge or 0.0)
         gamma = GAMMA_DEFAULT if gamma is None else gamma
@@ -322,4 +324,5 @@ def load_prior(
         R_H=R_H,
         sigma2_scale=sigma2_scale,
         global_edge=beta,
+        match_ratio=match_ratio,
     )

@@ -53,7 +53,8 @@ echo
 # browsable ./out symlink to the output tree (same as submit_experiment.sh)
 ln -sfn "${OUTPUT_ROOT}" "$(cd "${HERE}/../.." && pwd)/out" 2>/dev/null || true
 
-GRES="$(gpu_blackwell_gres || true)"; GRES="${GRES:-${DAIC_GRES_GPU}}"
+source "${HERE}/_gpu.sh" 2>/dev/null || true      # defines gpu_blackwell_gres
+GRES="$(gpu_blackwell_gres 2>/dev/null || true)"; GRES="${GRES:-${DAIC_GRES_GPU}}"
 RES=(--partition="${DAIC_PARTITION}" --gres="${GRES}")
 [ -n "${DAIC_QOS_MEDIUM:-}" ] && RES+=(--qos="${DAIC_QOS_MEDIUM}")
 

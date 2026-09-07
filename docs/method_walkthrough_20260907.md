@@ -268,7 +268,7 @@ is closest to 1. Fresh residuals, today:
 | pems04s | 0.01 | 0.169 | 1.020 | [0.80, 219] | 2.1e-5 | 89 |
 | metr-la | 0.01 | 0.138 | 1.015 | [0.80, 117] | 2.3e-5 | 88 |
 | pems08f | 0.003 | 0.112 | 0.999 | [0.80, 94] | 2.9e-5 | 87 |
-| pems-bay | *from the run log when its cell starts* | | | | | |
+| pems-bay | 0.03 | 0.0607 | 1.004 | [0.80, 629] | 7.4e-6 | 96 |
 | iso (all) | — | — | 0.31–0.46 (cannot be matched) | [0.8, 0.8] | 8.1e-4 | 63 |
 
 The last row is the point: white noise gives the total a spread of $\sqrt{N}\,\bar\sigma$
@@ -305,7 +305,7 @@ noise energy as the isotropic arm**. So the arms differ in *shape only*.
 A mode is one pattern "sensor-eigenvector $k$ × horizon-eigenvector $h$"; e.g. mode
 $(1, 1)$ = "every sensor, every horizon, the same sign" (the network-wide common drift), mode
 $(N, H)$ = "checkerboard across roads that flips every 5 minutes" (pure noise). The former has
-$\theta = 0.8$ (large variance, slow), the latter $\theta \approx 94$–$219$ (tiny variance, fast).
+$\theta = 0.8$ (large variance, slow), the latter $\theta \approx 94$–$629$ (tiny variance, fast).
 For iso every mode has $\theta = 0.8$.
 
 ---
@@ -364,7 +364,7 @@ between the fastest and slowest mode.
 **The floor.** Training draws and the reverse grid run from $c_0$ down to a floor $c_{lo}$.
 The old fixed $c_{lo} = 0.02$ is fine for iso (3.1 % of the prior's variance still un-erased
 there) but *terrible* for the structured prior: on the fresh matched priors it would leave
-**43–59 %** un-denoised (every mode with $\theta \gtrsim 50$ is already pure noise at
+**43–62 %** un-denoised (every mode with $\theta \gtrsim 50$ is already pure noise at
 $\bar c = 0.02$). So the floor is **derived per prior**:
 
 $$
@@ -373,7 +373,7 @@ c_{lo} : \; f(c_{lo}) = 1.3\times10^{-3}
 $$
 
 (the fidelity iso gets at its historical $8\times10^{-4}$) — iso: $8.1\times10^{-4}$, kron:
-$\approx 2\times10^{-5}$. Both arms are trained and sampled to the **same** fidelity.
+$0.7$–$3\times10^{-5}$. Both arms are trained and sampled to the **same** fidelity.
 
 ---
 
@@ -421,7 +421,7 @@ selection used $k = 4$ with a biased estimator that rewarded the narrower ensemb
 
 Start from a draw of the prior, $r \sim \mathcal N(0,\Sigma)$, and walk a geometric grid of
 noise levels $c_0 = 7 \to c_{lo}$ with **16 steps per decade** (iso: 3.9 decades → 63 steps;
-kron: 5.5 decades → 88–89 steps; same resolution per decade of noise, so neither arm is
+kron: 5.4–6.0 decades → 87–96 steps; same resolution per decade of noise, so neither arm is
 under-resolved). At each node the denoiser gives $\hat r_0$; the next state is drawn per mode
 from the exact posterior of the linear OU process. With $c$ the current and $c'$ the next
 (lower) level,

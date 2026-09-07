@@ -180,11 +180,27 @@ def adjacency_flow(source: str, n: int):
 
 
 def load_speed_series(source: str):
-    """DCRNN .h5 -> (T,N) speed, (T,) time-of-day, DatetimeIndex."""
+    """DCRNN .h5 -> (T,N) speed, (T,) time-of-day.
+
+    read with h5py, not pd.read_hdf: the file is a pandas fixed-format frame written
+    years ago, and pandas 3's HDFStore reader fails on its byte-encoded attributes.
+    the layout is plain -- <group>/axis0 = sensor ids (the column labels; bytes or
+    ints), axis1 = int64 ns timestamps (the DatetimeIndex), block0_values = (T,N)
+    floats in block0_items order; the group is 'df' for metr-la and 'speed' for pems-bay -- so we rebuild the same (T,N) array in axis0 order and
+    the same index directly. verified byte-identical to the pandas path on the
+    archived processed tree (archive/20260902/manifest_data.tsv).
+    """
+    import h5py
     fn = "metr-la.h5" if source == "metrla" else "pems-bay.h5"
-    df = pd.read_hdf(RAW / source / fn)
-    speed = df.values.astype(np.float32)                       # (T,N)
-    idx = df.index
+    with h5py.File(RAW / source / fn, "r") as f:
+        g = f[list(f.keys())[0]]                               # 'df' (metr-la) / 'speed' (pems-bay)
+        axis0 = [c.decode() if isinstance(c, bytes) else str(c) for c in g["axis0"][()]]
+        items = [c.decode() if isinstance(c, bytes) else str(c) for c in g["block0_items"][()]]
+        values = np.asarray(g["block0_values"][()])            # (T, N) in block0_items order
+        ts = np.asarray(g["axis1"][()]).astype("int64")        # ns since epoch
+    order = [items.index(c) for c in axis0]                    # back to axis0 (column) order
+    speed = values[:, order].astype(np.float32)                # (T,N)
+    idx = pd.DatetimeIndex(ts.astype("datetime64[ns]"))
     tod = ((idx - idx.normalize()).total_seconds().values / 86400.0).astype(np.float32)
     return speed, tod
 

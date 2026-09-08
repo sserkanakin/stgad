@@ -63,7 +63,10 @@ if prior:
         a.plot(xc, binned(B["data_test"]), "k.", ms=5, label="residual (test)")
         for key, lab, col, ls in PRIORS:
             if key in B: a.plot(xc, binned(B[key]), ls=ls, color=col, label=lab)
-        a.plot([0], [B["data_test"][0]], "k*", ms=9); a.set_yscale("log"); a.set_title(NAME[ds]); a.set_xlabel("graph frequency λ")
+        a.plot([0], [B["data_test"][0]], "k*", ms=9)                       # exact λ=0 (constant pattern): data ...
+        for key, lab, col, ls in PRIORS:                                    # ... and each prior, unbinned
+            if key in B: a.plot([0], [B[key][0]], marker="*", ms=7, color=col, ls="none")
+        a.set_yscale("log"); a.set_title(NAME[ds]); a.set_xlabel("graph frequency λ")
     np.atleast_1d(axs)[0].set_ylabel("variance per graph frequency"); np.atleast_1d(axs)[0].legend(fontsize=7)
     fig.suptitle("where the error variance sits on the graph spectrum — data vs each prior (★ = the constant pattern, λ=0)", y=1.04)
     save(fig, "prior_spectrum")

@@ -163,11 +163,22 @@ def reverse_sample_ancestral(
     *,
     c_lo: Optional[float] = None,
     corrected: bool = True,
+    common_mode: str = "learned",
     R_T: Optional[torch.Tensor] = None,
     generator: Optional[torch.Generator] = None,
     step_callback: Optional[Callable[[int, float, torch.Tensor], None]] = None,
 ) -> tuple[torch.Tensor, None]:
     """DDPM-ancestral sampling, exact for the linear per-mode OU forward.
+
+    common_mode: "learned" (default) takes x0_hat from the denoiser for every mode.
+    "gauss" replaces the coefficient of the NETWORK-WIDE spatial mode (the V_S column
+    closest to the constant vector, every horizon) by the prior's own posterior mean
+    E[x0 | x_c] = σ_p²·(a_c/s_c)·x_c -- GAD's optimal graph filter (Prop. 1) for that one
+    mode. the chain diagnostic showed the learned net's estimate of this mode is worse
+    than the prior's (its ensemble-mean total is worse than predicting zero and its
+    spread on the total is 0.58x); with the prior's filter for that mode the total is
+    calibrated (1.00x). for the isotropic prior the mode carries 1/N of the variance and
+    the swap changes nothing, so the rule is the same for both arms.
 
     grid: geometric in the heat c̄ from c_0 down to c_lo (log-spacing covers every
     mode's transition c̄·θ ~ O(1) evenly across the stiff θ spread). at each node
@@ -217,6 +228,9 @@ def reverse_sample_ancestral(
     c_grid = np.geomspace(schedule.c_0, c_lo, n_steps + 1)                  # (n_steps+1,)
     t_grid = schedule.t_of_c_bar(c_grid)
     C = _rotate_to_eig_torch(R_t, V_S, V_T)
+    if common_mode not in ("learned", "gauss"):
+        raise ValueError(f"common_mode must be 'learned' or 'gauss'; got {common_mode!r}")
+    k_common = int(torch.argmax(V_S.sum(dim=0).abs())) if common_mode == "gauss" else -1   # column ∝ closest to 1/√N
 
     R0_hat = R_t
     for i in range(n_steps + 1):
@@ -224,6 +238,12 @@ def reverse_sample_ancestral(
         R_t = _rotate_from_eig_torch(C, V_S, V_T)
         t_batch = torch.full((B,), float(t_grid[i]), device=device, dtype=dtype)
         R0_hat = denoiser(R_t, t_batch, Y_hat)
+        if k_common >= 0 and i == n_steps:                                  # same rule for the returned x0_hat
+            a_c = torch.exp(-theta * c_cur)
+            s_c = torch.clamp(s2 * (1.0 - torch.exp(-2.0 * theta * c_cur)) / theta, min=1e-20)
+            C0_hat = _rotate_to_eig_torch(R0_hat, V_S, V_T).clone()
+            C0_hat[:, k_common, :] = ((1.0 / (a_c * a_c / s_c + 1.0 / sigma2_stat)) * a_c / s_c * C)[:, k_common, :]
+            R0_hat = _rotate_from_eig_torch(C0_hat, V_S, V_T)
         if step_callback is not None:
             step_callback(i, c_cur, R0_hat)
         if i == n_steps:                                                    # last node → return x0_hat
@@ -235,13 +255,16 @@ def reverse_sample_ancestral(
         s_p = torch.clamp(s2 * (1.0 - torch.exp(-2.0 * theta * c_nxt)) / theta, min=1e-20)
         v = s_d * s_p / (a_d * a_d * s_p + s_d)
         C0_hat = _rotate_to_eig_torch(R0_hat, V_S, V_T)
+        a_c = torch.exp(-theta * c_cur)
+        s_c = torch.clamp(s2 * (1.0 - torch.exp(-2.0 * theta * c_cur)) / theta, min=1e-20)
+        sig_p2 = 1.0 / (a_c * a_c / s_c + 1.0 / sigma2_stat)                # posterior var of x0 | x_c under the prior
+        if k_common >= 0:
+            C0_hat = C0_hat.clone()
+            C0_hat[:, k_common, :] = (sig_p2 * a_c / s_c * C)[:, k_common, :]   # prior's E[x0 | x_c] for that mode
         mean = v * (a_d * C / s_d + a_p * C0_hat / s_p)
         var = v
         if corrected:
             # posterior variance of x0 given x_c under the prior, pushed through the mean
-            a_c = torch.exp(-theta * c_cur)
-            s_c = torch.clamp(s2 * (1.0 - torch.exp(-2.0 * theta * c_cur)) / theta, min=1e-20)
-            sig_p2 = 1.0 / (a_c * a_c / s_c + 1.0 / sigma2_stat)
             var = v + (v * a_p / s_p) ** 2 * sig_p2
         z = torch.randn(C.shape, generator=generator, device=device, dtype=dtype)
         C = mean + var.sqrt() * z

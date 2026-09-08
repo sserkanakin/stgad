@@ -18,6 +18,7 @@ export RESULTS_ROOT="${RESULTS_ROOT:-${DAIC_DATA_DIR}}"
 export OUTPUT_ROOT="${OUTPUT_ROOT:-${DAIC_OUT_DIR:-$HOME/windowshome/research-tud-out}}"
 export WANDB_MODE=disabled
 K="${K:-100}"
+EVAL_EXTRA="${EVAL_EXTRA:-}"          # e.g. "--common-mode gauss"; written to its own metrics file
 fail=0
 IFS=';' read -r -a CELL_ARR <<< "${CELLS:?set CELLS}"
 for cell in "${CELL_ARR[@]}"; do
@@ -26,7 +27,7 @@ for cell in "${CELL_ARR[@]}"; do
   "${DAIC_PYTHON}" scripts/eval_diffusion.py \
       --dataset "${ds}" --backbone gwn --prior "${prior}" \
       --exp "${exp}" --seed "${seed}" --split test \
-      --sampler ancestral --k "${K}" --ckpt best_crps.pt \
+      --sampler ancestral --k "${K}" --ckpt best_crps.pt ${EVAL_EXTRA} \
     || { echo "EVAL FAILED ${cell}"; fail=$((fail+1)); }
 done
 echo "done, ${fail} failed"; [ "${fail}" -eq 0 ]

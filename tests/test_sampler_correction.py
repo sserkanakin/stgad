@@ -76,3 +76,38 @@ def test_derived_floor_equalises_fidelity_across_arms():
     assert abs(undenoised_fraction(stiff, f_stiff) - 1.3e-3) < 1e-4
     sch_s = FCPSSchedule(c_lo_override=f_stiff); sch_i = FCPSSchedule(c_lo_override=f_iso)
     assert derived_steps(stiff, sch_s) > derived_steps(iso, sch_i)
+
+
+def test_common_mode_gauss_matches_oracle_and_changes_only_that_mode():
+    """with the prior's own Bayes denoiser, common_mode='gauss' must reproduce the learned
+    path exactly (the override equals what the denoiser returns); with a denoiser that is
+    wrong on the common mode only, the two paths differ."""
+    import numpy as np, torch
+    from src.diffusion.reverse import reverse_sample_ancestral, _rotate_to_eig_torch, _rotate_from_eig_torch
+    from src.diffusion.forward_fcps import FCPSSchedule
+    from src.diffusion.prior import KroneckerPrior
+    N, H = 6, 3
+    lam = np.array([0.0, 0.3, 0.8, 1.2, 1.6, 1.9]); V_S = np.linalg.qr(np.random.default_rng(0).standard_normal((N, N)))[0]
+    V_S[:, 0] = 1 / np.sqrt(N); V_S = np.linalg.qr(V_S)[0] * np.sign(V_S[0, 0])     # first column = constant mode
+    mu_T = np.array([2.0, 1.0, 0.5]); V_T = np.eye(H)
+    theta = ((lam + 0.2)[:, None] / mu_T[None, :]); theta = theta * (0.8 / theta.min())
+    prior = KroneckerPrior(dataset="toy", gamma=0.2, V_S=V_S, lam_S=lam, V_T=V_T, mu_T=mu_T, theta=theta,
+                           delta_h=mu_T, R_H=np.eye(H), sigma2_scale=1.0)
+    sch = FCPSSchedule(c_0=7.0, c_lo_override=1e-3)
+    th = torch.as_tensor(theta, dtype=torch.float32); VS = torch.as_tensor(V_S, dtype=torch.float32); VT = torch.as_tensor(V_T, dtype=torch.float32)
+    def bayes(R_t, t, Y):                                   # E[x0 | x_c] under the prior, per mode
+        c = torch.as_tensor(sch.c_bar(t.numpy()), dtype=torch.float32).view(-1, 1, 1)
+        a = torch.exp(-th * c); s = (1 - torch.exp(-2 * th * c)) / th; v = 1 / th
+        C = _rotate_to_eig_torch(R_t, VS, VT)
+        return _rotate_from_eig_torch((1 / (a * a / s + 1 / v)) * a / s * C, VS, VT)
+    def bad_common(R_t, t, Y):                              # bayes, but the constant mode is zeroed out
+        C = _rotate_to_eig_torch(bayes(R_t, t, Y), VS, VT).clone(); C[:, 0, :] = 0
+        return _rotate_from_eig_torch(C, VS, VT)
+    Y = torch.zeros(64, N, H)
+    a, _ = reverse_sample_ancestral(prior, sch, bayes, Y, n_steps=40, generator=torch.Generator().manual_seed(1))
+    b, _ = reverse_sample_ancestral(prior, sch, bayes, Y, n_steps=40, generator=torch.Generator().manual_seed(1), common_mode="gauss")
+    assert torch.allclose(a, b, atol=1e-5)
+    c, _ = reverse_sample_ancestral(prior, sch, bad_common, Y, n_steps=40, generator=torch.Generator().manual_seed(1))
+    d, _ = reverse_sample_ancestral(prior, sch, bad_common, Y, n_steps=40, generator=torch.Generator().manual_seed(1), common_mode="gauss")
+    assert torch.allclose(d, b, atol=1e-5)                  # the gauss rule repairs the broken mode exactly
+    assert not torch.allclose(c, b, atol=1e-3)              # and the broken denoiser alone does not

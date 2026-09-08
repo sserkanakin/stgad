@@ -136,7 +136,7 @@ def evaluate(dataset, prior, seed, *, exp, device, k, n_steps, alpha,
              backbone="gwn", mask_zero=True, split="test", sampler="em",
              ckpt_name="best.pt", save_diagnostics=False,
              pit_bins=20, n_examples=6, n_example_sensors=4,
-             spread_scale=1.0, fit_spread_grid=None, anc_c_lo=None):
+             spread_scale=1.0, fit_spread_grid=None, anc_c_lo=None, common_mode="learned"):
     denoiser, prior_obj, schedule, cfg, ckpt_epoch = load_run(
         dataset, prior, seed, exp, device, backbone, ckpt_name=ckpt_name)
     N, H = prior_obj.N, prior_obj.H
@@ -173,6 +173,8 @@ def evaluate(dataset, prior, seed, *, exp, device, k, n_steps, alpha,
                          f"{i + 1}/{n_steps}")
         fn = reverse_sample_em if sampler == "em" else reverse_sample_ancestral
         kw = {} if (sampler == "em" or anc_c_lo is None) else {"c_lo": anc_c_lo}
+        if sampler != "em" and common_mode != "learned":
+            kw["common_mode"] = common_mode
         s, _ = fn(prior_obj, schedule, denoiser, Y_cond,
                   n_steps=n_steps, R_T=None, generator=generator,
                   step_callback=_cb, **kw)
@@ -363,6 +365,7 @@ def evaluate(dataset, prior, seed, *, exp, device, k, n_steps, alpha,
         "exp": exp, "ckpt_epoch": ckpt_epoch, "split": split, "ckpt": ckpt_name,
         "n_test_windows": int(n_total), "k_samples": k, "n_steps": n_steps,
         "sampler": sampler, "alpha": alpha, "mask_zero": bool(mask_zero),
+        "common_mode": common_mode,
         # terminal noise floor of the ancestral grid. None = the sampler default
         # (0.02); an explicit value is recorded so a re-sampled run is never
         # confused with the locked-protocol one (it also renames the output).
@@ -430,6 +433,8 @@ def _save(res):
     # name; the locked-protocol filenames must stay byte-identical.
     if res.get("anc_c_lo") is not None:
         stem += f"_clo{res['anc_c_lo']:g}"
+    if res.get("common_mode", "learned") != "learned":                     # common-mode rule = its own protocol
+        stem += f"_cm{res['common_mode']}"
     # recalibrated / fit runs get their own names so they NEVER clobber the raw eval.
     if res.get("spread_fit") is not None:
         stem += "_sfit"
@@ -512,6 +517,9 @@ def main():
                         "closed-form OU posterior, exact for the linear SDE, ~100 steps")
     p.add_argument("--ckpt", choices=("best.pt", "best_crps.pt"), default="best.pt",
                    help="which checkpoint to evaluate (val-loss or sweep-CRPS selection)")
+    p.add_argument("--common-mode", choices=("learned", "gauss"), default="learned",
+                   help="ancestral only: x0_hat source for the network-wide spatial mode -- the "
+                        "denoiser (learned) or the prior's optimal filter (gauss). see reverse.py")
     p.add_argument("--anc-c-lo", type=float, default=None,
                    help="terminal noise floor of the ancestral grid (default 0.02). the "
                         "grid is geometric from c_0 down to this value and the sampler "
@@ -570,7 +578,7 @@ def main():
                       w1_proj=args.w1_proj, gen_batch=args.gen_batch,
                       max_windows=args.max_windows, generator=g, backbone=args.backbone,
                       mask_zero=args.mask_zero, sampler=args.sampler,
-                      ckpt_name=args.ckpt, anc_c_lo=args.anc_c_lo)
+                      ckpt_name=args.ckpt, anc_c_lo=args.anc_c_lo, common_mode=args.common_mode)
         spread = args.spread_scale
         if args.auto_spread:
             # phase 1: fit the spread scalar on VAL (grid scored from one sample set),

@@ -10,7 +10,7 @@ on test (where it is not). five priors are compared at the prior level, no train
     matched      Sigma_T (x) Sigma_S(road + global edge, (beta, gamma) matched)   <- the arm in the campaign
 writes results/analysis/prior/<ds>.json and prints a summary.
 
-usage: python scripts/analysis/prior_fidelity.py pems08f [pems08s ...]
+usage: python scripts/analysis/prior_fidelity.py pems08f [pems08s ...]      (BACKBONE=mlp|gcn|gwn, default gwn)
 """
 import sys, os, json, math
 sys.path.insert(0, "."); os.environ.setdefault("RESULTS_ROOT", "results")
@@ -24,14 +24,15 @@ from src.data.residual_dataset import train_residual_sigma
 from src.data.adjacency import load_adjacency, compute_normalized_laplacian
 
 OUT = paths.ROOT / "results" / "analysis" / "prior"; OUT.mkdir(parents=True, exist_ok=True)
+BB = os.environ.get("BACKBONE", "gwn")             # the residual field depends on the backbone; the prior is fitted per backbone
 rng = np.random.default_rng(0)
 
 
 def unit_residuals(ds, split):
     """(r, mask, sigma_i): residual / per-sensor train scale, exactly the diffusion's space."""
-    d = np.load(paths.residual_npz(ds, split, 42, "gwn"))
+    d = np.load(paths.residual_npz(ds, split, 42, BB))
     R = d["residuals"].astype(np.float32); M = d["mask"].astype(bool)
-    sig = np.asarray(train_residual_sigma(ds, 42, "gwn", norm="pernode")).reshape(-1)
+    sig = np.asarray(train_residual_sigma(ds, 42, BB, norm="pernode")).reshape(-1)
     return (R / sig.reshape(1, -1, 1).astype(np.float32)), M, sig
 
 
@@ -41,7 +42,7 @@ def build_priors(ds, R, M):
     var_data = float((R[M] ** 2).mean()); N, H = R.shape[1], R.shape[2]
     delta, R_H, S_T = P._fit_sigma_T(R, M)
     mu_T, V_T = np.linalg.eigh(S_T); mu_T = np.clip(mu_T, 1e-12, None); mu_T = 0.9 * mu_T + 0.1 * mu_T.mean()
-    beta, gamma, ratio = P.match_global_edge(ds, 42, "gwn", "pernode", True, mu_T, var_data)
+    beta, gamma, ratio = P.match_global_edge(ds, 42, BB, "pernode", True, mu_T, var_data)
     mu_Sm, V_Sm, _ = P._spatial_factor(ds, True, beta, gamma)
     mu_S8, V_S8, _ = P._spatial_factor(ds, True, 0.0, 0.8)
     def scaled(mS, mT):
@@ -141,7 +142,9 @@ def main(ds):
         x = (d_te / v).ravel(); B6[name] = float(np.exp(np.mean(np.log(x))) / np.mean(x))   # 1 = perfectly white after whitening
     out["B2_modes"], out["B5_nll"], out["B6_whitening_flatness_test"] = B2, B5, B6
     # B3 separability of the empirical covariance (train, in unit space): nearest kronecker product
-    ok = oktr; X = np.where(Mtr, Rtr, 0.0)[ok].reshape(ok.sum(), -1).astype(np.float32)       # vec: (N,H) row-major -> index i*H+h
+    # cap the window count for the full NH x NH covariance (memory: pems-bay has 36k train windows)
+    idx_ok = np.where(oktr)[0]; idx_ok = idx_ok[np.linspace(0, len(idx_ok) - 1, min(len(idx_ok), 12000)).astype(int)]
+    X = np.where(Mtr[idx_ok], Rtr[idx_ok], 0.0).reshape(len(idx_ok), -1).astype(np.float32)      # vec: (N,H) row-major -> index i*H+h
     Cfull = np.zeros((N * H, N * H), np.float64)
     for s in range(0, len(X), 2048):
         xb = X[s:s + 2048].astype(np.float64); Cfull += xb.T @ xb
@@ -190,11 +193,11 @@ def main(ds):
         C2[name] = derived(draws(VS, VT, var, 800))
     out["C2_derived_quantities"] = C2
     th_m = 1.0 / (priors["matched"][2] / priors["matched"][2].mean())      # relative precision, matched
-    out["C3_theta"] = {"matched_theta_quantiles": np.quantile(P.load_prior(ds, "kronecker", 42, backbone="gwn", norm="pernode", global_edge="match").theta, [0, .1, .5, .9, 1]).tolist()}
+    out["C3_theta"] = {"matched_theta_quantiles": np.quantile(P.load_prior(ds, "kronecker", 42, backbone=BB, norm="pernode", global_edge="match").theta, [0, .1, .5, .9, 1]).tolist()}
 
-    (OUT / f"{ds}.json").write_text(json.dumps(out, indent=1))
+    (OUT / (f"{ds}.json" if BB == "gwn" else f"{ds}_{BB}.json")).write_text(json.dumps(out, indent=1))
     # ── summary ─────────────────────────────────────────────────────────────────
-    print(f"\n=== {ds}  N={N}  beta={b_m} gamma={g_m:.3f}  total-var ratio test/train {out['A6_test_train_var_ratio']['overall']:.2f}")
+    print(f"\n=== {ds} [{BB}]  N={N}  beta={b_m} gamma={g_m:.3f}  total-var ratio test/train {out['A6_test_train_var_ratio']['overall']:.2f}")
     print(f"  A2 corr by hops (train): {[round(x,3) for x in out['A2_corr_by_hops']['train']]}   A3 common share {100*out['A3_common_share']['train']:.1f}% (test {100*out['A3_common_share']['test']:.1f}%, indep {100/N:.1f}%)")
     print(f"  A4 total sd train h1..h12 {out['A4_total_sd']['train'][0]:.0f}..{out['A4_total_sd']['train'][-1]:.0f}  indep {out['A4_total_sd']['independent']:.0f}   A5 kurtosis median {out['A5_tails']['kurtosis_median']:.1f}")
     print(f"  B3 kronecker rank-1 fraction of the covariance: {100*out['B3_separability']['kron_rank1_fraction']:.1f}%")

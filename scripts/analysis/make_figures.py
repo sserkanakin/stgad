@@ -180,3 +180,43 @@ if hist:
     ax.set_xlabel("epoch"); ax.set_ylabel("validation CRPS (k=16, sampled)"); ax.set_title("PEMS08 flow: training curves, 4 seeds per arm"); ax.plot([], [], color="#888888", label="isotropic"); ax.plot([], [], color="#d62728", label="Kronecker"); ax.legend(fontsize=7)
     save(fig, "training_curves_pems08f")
 print("done ->", OUT)
+
+# ── 11. the ladder at the prior level: how much structure the residual has, and how much the prior buys, per backbone ─
+lad = {}
+for bb in ("mlp", "gcn", "gwn"):
+    for ds in DS:
+        f = Path(f"results/analysis/prior/{ds}.json" if bb == "gwn" else f"results/analysis/prior/{ds}_{bb}.json")
+        if f.exists(): lad[(ds, bb)] = json.load(open(f))
+if any(bb != "gwn" for _, bb in lad):
+    bbs = [b for b in ("mlp", "gcn", "gwn") if any(k[1] == b for k in lad)]
+    fig, ax = plt.subplots(1, 3, figsize=(12, 3.1))
+    x = np.arange(len(DS)); w = 0.8 / len(bbs); shade = {"mlp": 0.35, "gcn": 0.65, "gwn": 1.0}
+    for i, bb in enumerate(bbs):
+        ax[0].bar(x + (i - (len(bbs) - 1) / 2) * w, [100 * lad[(d, bb)]["A3_common_share"]["train"] if (d, bb) in lad else 0 for d in DS], w, color="#d62728", alpha=shade[bb], label=bb.upper())
+        ax[1].bar(x + (i - (len(bbs) - 1) / 2) * w, [lad[(d, bb)]["A2_corr_by_hops"]["train"][0] if (d, bb) in lad else 0 for d in DS], w, color="#1f77b4", alpha=shade[bb], label=bb.upper())
+        ax[2].bar(x + (i - (len(bbs) - 1) / 2) * w, [lad[(d, bb)]["B5_nll"]["iso"]["nll_test"] - lad[(d, bb)]["B5_nll"]["matched"]["nll_test"] if (d, bb) in lad else 0 for d in DS], w, color="#2ca02c", alpha=shade[bb], label=bb.upper())
+    for a, t, yl in zip(ax, ["share of error variance on 'all sensors together'", "error correlation between road neighbours", "held-out likelihood gain of the matched prior over white noise"], ["%", "correlation", "nats per point"]):
+        a.set_xticks(x); a.set_xticklabels([NAME[d] for d in DS], rotation=25, ha="right"); a.set_title(t, fontsize=9); a.set_ylabel(yl)
+    ax[0].legend(title="backbone", fontsize=7)
+    fig.suptitle("the weaker the backbone, the more structured its residual — and the more the prior is worth", y=1.03)
+    save(fig, "ladder_prior")
+
+# ── 12. the ladder at the result level (20260909_ladder + the GWN campaign) ──────────────────
+lr = collections.defaultdict(lambda: collections.defaultdict(list))
+for f in glob.glob("results/20260909_ladder/*/*/*/*/seed*/eval/test_metrics_bestcrps_ancestral[0-9]*.json") + glob.glob("results/20260907_matched/*/*/gwn/*/seed*/eval/test_metrics_bestcrps_ancestral[0-9]*.json"):
+    if "_cm" in f.split("/")[-1]: continue
+    m = json.load(open(f)); p = f.split("/"); ds, bb, arm = p[3], p[4], ("kron" if p[5] == "kronecker" else "iso")
+    for k in ("crps", "joint_tot_crps", "joint_tot_coverage", "joint_tot_spread_ratio"): lr[(ds, bb, arm)][k].append(m[k])
+if any(k[1] != "gwn" for k in lr):
+    bbs = [b for b in ("mlp", "gcn", "gwn") if any(k[1] == b for k in lr)]
+    fig, ax = plt.subplots(1, 3, figsize=(12, 3.1)); x = np.arange(len(DS)); w = 0.8 / len(bbs); shade = {"mlp": 0.35, "gcn": 0.65, "gwn": 1.0}
+    for i, bb in enumerate(bbs):
+        rel = lambda ds, k: (np.mean(lr[(ds, bb, "kron")][k]) / np.mean(lr[(ds, bb, "iso")][k]) - 1) * 100 if lr[(ds, bb, "kron")][k] and lr[(ds, bb, "iso")][k] else 0
+        ax[0].bar(x + (i - (len(bbs) - 1) / 2) * w, [rel(d, "crps") for d in DS], w, color="#d62728", alpha=shade[bb], label=bb.upper())
+        ax[1].bar(x + (i - (len(bbs) - 1) / 2) * w, [rel(d, "joint_tot_crps") for d in DS], w, color="#d62728", alpha=shade[bb], label=bb.upper())
+        ax[2].bar(x + (i - (len(bbs) - 1) / 2) * w, [(np.mean(lr[(d, bb, "kron")]["joint_tot_coverage"]) - np.mean(lr[(d, bb, "iso")]["joint_tot_coverage"])) if lr[(d, bb, "kron")]["joint_tot_coverage"] and lr[(d, bb, "iso")]["joint_tot_coverage"] else 0 for d in DS], w, color="#d62728", alpha=shade[bb], label=bb.upper())
+    for a, t, yl in zip(ax, ["per-point CRPS, Kronecker vs iso", "CRPS_sum (network total), Kronecker vs iso", "coverage of the total, Kronecker minus iso"], ["% (negative = better)", "% (negative = better)", "points"]):
+        a.set_xticks(x); a.set_xticklabels([NAME[d] for d in DS], rotation=25, ha="right"); a.set_title(t, fontsize=9); a.set_ylabel(yl); a.axhline(0, color="k", lw=0.5)
+    ax[0].legend(title="backbone", fontsize=7)
+    fig.suptitle("what the prior buys, by backbone strength (test, seed means)", y=1.03)
+    save(fig, "ladder_results")

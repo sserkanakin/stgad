@@ -132,6 +132,7 @@ if cells:
 # ── 8. per point: per-horizon CRPS and coverage, iso vs kron, all datasets ───────────────
 perh = collections.defaultdict(lambda: collections.defaultdict(list))
 for f in glob.glob("results/20260907_matched/*/*/gwn/*/seed*/eval/test_metrics_bestcrps_ancestral[0-9]*.json"):
+    if "_cm" in f.split("/")[-1]: continue
     m = json.load(open(f)); p = f.split("/"); ds, arm = p[3], "kron" if p[5] == "kronecker" else "iso"
     for k in ("crps_h", "coverage_h", "mae_h"): perh[(ds, arm)][k].append(m[k])
 if perh:

@@ -16,6 +16,7 @@ DS = ["pems08f", "pems08s", "pems04f", "pems04s", "metrla", "pemsbay"]
 
 cells = collections.defaultdict(dict); stale = []
 for f in sorted(glob.glob(str(ROOT / "*/*/gwn/*/seed*/eval/test_metrics_*.json"))):
+    if "_cm" in Path(f).name: continue                       # the DC-rule ablation has its own files; keep the campaign protocol pure
     m = json.load(open(f)); p = f.split("/"); ds, arm, seed = p[3], p[5], p[6]
     key = f"{ds}/{arm}/{seed}"
     from datetime import datetime

@@ -2,7 +2,7 @@
 #SBATCH --job-name=run-after
 #SBATCH --time=00:20:00
 #SBATCH --cpus-per-task=1
-#SBATCH --mem=2G
+#SBATCH --mem=16G
 # Tiny CPU job used with --dependency=afterok:<jobid> to submit the next stage of a campaign
 # once the previous one has finished (e.g. the diffusion cells after the backbone array),
 # without a watcher on the Mac. CMD = the command to run from the project root.

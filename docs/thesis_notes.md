@@ -281,3 +281,12 @@ structure. Proposed changes:
 3. §3.4: keep GAD/heat/SPDE; add one sentence on product-graph GMRFs as the alternative structure (cf. §2.3.1).
 4. Pooled eval pass running (jobs 286582–286593) → will feed the new subsection's "our protocol" sentence.
 5. Figures (structure-entry, gap map) redrawn in the shared style; citation audit as for Ch. 2.
+
+**User read 5 (2026-09-11) — product graphs + diffusion figure, final form:** product-graph figure now in
+the GTCNN style the user pointed to (G_S ◇ G_T = one product drawing with three edge colours: spatial red,
+temporal green arrows, diagonal grey; legend + the three adjacency formulas and edge counts). Diffusion
+figure now a two-row comparison in the GiffCF style the user pointed to, but with OUR content: the same
+residual field (7 road sensors × 8 lead times, a congestion wave) destroyed (a) by white noise → speckle and
+(b) by the graph-aware Kronecker OU process → smooth patches; both rows are REAL simulations on a path graph
+(`figures/generated/diffusion_rows_cells.tex`, generator inline in the session; seed 3). Arrows:
+perturb/denoise vs diffuse-on-the-graph/graph-filter.

@@ -263,3 +263,21 @@ PICP + spread/skill = that standard, applied where the field had not.
   can explain each one, BEFORE writing Ch. 4–5. The user said they currently do not follow the numbers.
 - Status snapshot: GWN campaign 48/48 + DC ablation 48/48; MLP wave 24/24; GCN wave ~10/24 running;
   prior analyses 18/18 (all backbones × datasets) + two-moment; figures 13; story page + dossier live.
+
+---
+
+## Step 3 — Literature review (proposal 2026-09-11, awaiting the user)
+
+Existing chapter: 5,061 words, 5 sections (ST graph forecasting · diffusion-based probabilistic forecasting ·
+predict-and-refine residual diffusion · structured forward processes · synthesis/gap/positioning), a
+"where structure enters" figure, a gap-map figure and a design-axes table, ~40 citations — solid, keep the
+structure. Proposed changes:
+1. **New subsection "How probabilistic spatio-temporal forecasts are evaluated"** (in §3.2): the evidence
+   table — DiffSTG/HySRD/USTD/TSGDiff per node only, SpecSTG's explicit refusal of CRPS_sum, TimeGrad/CSDI
+   CRPS_sum as the multivariate standard, SSTVM (TSIPN 2025) on PeMS08, GenCast's pooled CRPS + spread/skill.
+   Ends with: "the evaluation this thesis uses is that standard, applied where the traffic line skipped it".
+2. §3.5 positioning rewritten to the step-0 claims: the gap is (i) the corruption (isotropic) AND (ii) the
+   evaluation (per node); STGAD fills (i), the chapter-5 protocol fills (ii). No old-result claims.
+3. §3.4: keep GAD/heat/SPDE; add one sentence on product-graph GMRFs as the alternative structure (cf. §2.3.1).
+4. Pooled eval pass running (jobs 286582–286593) → will feed the new subsection's "our protocol" sentence.
+5. Figures (structure-entry, gap map) redrawn in the shared style; citation audit as for Ch. 2.

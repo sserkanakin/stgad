@@ -58,4 +58,20 @@ modelling; that the prior is right under distribution shift (PEMS08 speed / PEMS
 - RQ2 Does diffusing with that prior, instead of white noise, change what the forecaster gets right?
 - RQ3 Where does the remaining error come from — prior, sampler or network — and what fixes it?
 
-**Decisions:** *(none yet — waiting for the user)*
+**Decisions (2026-09-10, step 0 CLOSED):**
+- **Scope is general:** probabilistic forecasting of *graph signals over time* (any sensor network on a
+  graph whose point forecaster leaves structured errors). Traffic is the case study where everything is
+  measured (six datasets); claims stay within what is measured. No "traffic" in the title.
+- **Name / title:** method = **Spatio-Temporal Graph-Aware Diffusion (STGAD)**; title
+  *"Spatio-Temporal Graph-Aware Diffusion for Probabilistic Forecasting of Graph Signals"*.
+  The text says once that it builds on GAD (graph-aware diffusion, Rozada et al. 2025).
+- **"Uncertainty" means the forecast distribution, scored by CRPS** — per sensor (a tie between the
+  arms; both below published methods) and **CRPS_sum on the network total** (+ coverage, spread),
+  the standard multivariate score (TimeGrad/CSDI) and the one we defend; with the MLP backbone the
+  prior also wins per sensor.
+- **GSP is the language of the thesis:** the prior is a GMRF with Laplacian precision (a graph
+  filter); the forward process is graph heat diffusion with a time-warped rate; denoising is a
+  sequence of graph-filtering problems (GAD Prop. 1); the residual analysis is graph-spectral
+  (variance per graph frequency, the λ=0 mode, aggregation over graph clusters); the global edge is
+  a graph modification read off the spectrum; the one failure found sits at one graph frequency.
+- The sampler/floor material is step 5d (ablations), explained with an example there.

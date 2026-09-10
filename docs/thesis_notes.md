@@ -290,3 +290,12 @@ residual field (7 road sensors × 8 lead times, a congestion wave) destroyed (a)
 (b) by the graph-aware Kronecker OU process → smooth patches; both rows are REAL simulations on a path graph
 (`figures/generated/diffusion_rows_cells.tex`, generator inline in the session; seed 3). Arrows:
 perturb/denoise vs diffuse-on-the-graph/graph-filter.
+
+**User read 6 (2026-09-11) — final:** the two-row diffusion figure was too confusing → replaced by the
+single-row DDPM figure (top row of the GiffCF-style example): four simulated panels of one residual field
+(7 sensors × 8 lead times) under white-noise corruption, row-long arrows "forward process: perturb with
+q(z_n|z_{n−1}) — fixed and known" above and "reverse process: denoise with p_θ(z_{n−1}|z_n) — learned"
+below; caption states the DDPM forward marginal (Eq. bg_ddpm_marginal). Product-graph figure: larger nodes,
+the three products as an aligned equation block (adjacency + edge counts) with the colour legend at left.
+Both confirmed on rendered screenshots (pages 23, 25). The graph-aware two-row version is kept in git history
+for a possible Ch. 4 figure.

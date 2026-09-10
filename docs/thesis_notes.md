@@ -75,3 +75,30 @@ modelling; that the prior is right under distribution shift (PEMS08 speed / PEMS
   (variance per graph frequency, the λ=0 mode, aggregation over graph clusters); the global edge is
   a graph modification read off the spectrum; the one failure found sits at one graph frequency.
 - The sampler/floor material is step 5d (ablations), explained with an example there.
+
+---
+
+## Step 1 — Introduction (drafted 2026-09-10, awaiting the user's read)
+
+**Live draft:** `tudelft_thesis_only/` in the repo (gitignored, like the old draft). Preamble updated:
+`\method` = STGAD, `\title` = the step-0 title. The frontmatter Summary still tells the OLD story
+(prior degrades joint dependence, sharper mean only) — rewrite it LAST, from the final results.
+
+**Decisions:**
+- Five-paragraph story: graph signals and point forecasts → one number is not enough (intervals and
+  sums; the 5 %-correlation example) → diffusion on residuals and the unquestioned choice of white noise
+  (wrong on sums by construction) → GSP alternative in GAD's own words (heat equation, GMRF with the
+  inverse shifted Laplacian, "smooth with respect to the graph", coarse-first reverse), extended to
+  space–time as a Kronecker prior; **no global edge in the intro**, no "variance on frequencies"
+  wording (that language is for the analysis chapter where it is measured) → what we did and found.
+- RQ1 structure of the residual and whether the prior captures it; RQ2 does the prior change what the
+  distribution gets right, per node and on aggregates; RQ3 when does structure matter most and where
+  the remaining error comes from (prior / sampler / denoiser).
+- **Three contributions only:** the prior; the graph-spectral residual analysis; the controlled
+  comparison (six datasets, three backbones). Sampler and DC-mode diagnosis are NOT headline
+  contributions (methodology detail / ablation).
+- Kept from the old draft: the opening examples, the calibration/proper-scoring citations, the
+  chapter labels (`ch:background`, `ch:literature_review`, `chap:method`, `ch:experiments`,
+  `ch:discussion`, `chapter:conclusion`). Dropped: the old contribution 4 ("improves on all published
+  baselines on every metric") and the old RQ framing around capacity/conditioning.
+- Citations available in report.bib for later chapters: `timegrad`, `tashiro2021csdi` (CRPS_sum).

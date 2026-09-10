@@ -202,3 +202,26 @@ supports + what it does not show:
 - R8 prior-level ablations (five priors, NLL + network scale) + two-moment rule → §5.7.
 - R9 cost (steps, s/window) → §4.5 / App. B.
 - "Not in yet": GCN wave, Cartesian prior row, aMMD + steps curve, calibration curves, sampler ablation, DiffSTG.
+
+---
+
+## Evidence for Step 3 (literature) — who reports network-level scores (checked 2026-09-11 in the PDFs)
+
+| paper | metrics reported | network-level? |
+|---|---|---|
+| DiffSTG (SIGSPATIAL 2023) | MAE, RMSE, per-node CRPS ("CRPS is the primary metric") | no |
+| HySRD-Net (ESWA 2026) | RMSE, MAE, CRPS; "coverage" only qualitatively in a figure | no |
+| SpecSTG (2024) | RMSE, MAE, CRPS; **explicitly: "We do not adopt CRPSsum [TimeGrad; CSDI] as a metric because sensors are not regarded as features in our experiments"** | no, by choice |
+| USTD (2023) | MAE, RMSE, CRPS | no |
+| TSGDiff, Double-Diffusion | MAE, RMSE, (MAPE), CRPS | no |
+| GCRDD | MAE, MAPE, RMSE only | no |
+| TimeGrad (ICML 2021) | CRPS per dimension **and CRPS_sum** ("on the sum of all time series dimensions"; proper, de Bézenac et al.) | yes — the standard |
+| CSDI (NeurIPS 2021) | CRPS, **CRPS-sum** "CRPS for the distribution of the sum of all time series across K features and accounts for joint effect" | yes |
+| ProbTS benchmark (2023) | NMAE, CRPS; notes many methods "primarily reveal aggregated distributional metrics ... namely CRPS-sum" | acknowledges it |
+| SSTVM (IEEE TSIPN 2025, spatio-temporal, PeMS08/AIR-BJ) | MAE, RMSE, CRPS, **CRPS_sum** (Eq. 32: sum samples across dimensions) | yes — first ST-graph paper we have that does |
+| GenCast (Nature 2025) | CRPS, spread/skill, rank histograms, **spatially pooled CRPS** and **regional wind-power sums** "to evaluate how well a model captures spatial dependency structure" | yes — same idea, different field |
+
+Use in Ch. 3 positioning: the traffic-diffusion line (DiffSTG → SpecSTG → HySRD) evaluates per node only and
+SpecSTG says why; the general multivariate line (TimeGrad, CSDI) and the newest ST-graph work (SSTVM) and
+weather (GenCast pooled CRPS) treat the sum as the test of joint structure. Our CRPS_sum + cumulative +
+PICP + spread/skill = that standard, applied where the field had not.

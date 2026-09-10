@@ -159,3 +159,25 @@ temporal edges (Cartesian: same sensor at h±1; Kronecker: neighbouring sensors 
 strong: both). Diffusion figure redrawn as a signal on a road of seven sensors, diverging colours
 (blue −, red +) plus a value profile under each state, smooth wave → white noise; distribution row kept
 (scatter + 2σ ellipse); fitted to the text width. Both rendered and checked.
+
+**User read 4 (2026-09-10) — claims audit + figures, final round:**
+- *Citation audit of Ch. 1–2:* every paragraph checked (`scratchpad/bg_audit.txt` method: paragraphs > 40 words
+  without `\cite`). Added: data examples (li2018dcrnn, guo2019astgcn), two dependences (capone2025stgnn_survey),
+  windowing convention (li2018dcrnn, wu2019graphwavenet), margins-blind scoring (gneiting2007strictly),
+  spread–error ratio (**new bib entry `fortin2014spread`**), DiffCast/CorrDiff regimes (diffcast2024,
+  mardani2025corrdiff), autoregressive (salinas2019deepar, timegrad) vs joint-horizon (tashiro2021csdi,
+  wen2023diffstg), normalised-Laplacian identity + connected-graph zero mode (chung1997spectral), heat kernel
+  (shuman2013emerging, hammond2011wavelets), matrix normal (dutilleul1999mle), graph products
+  (hammack2011handbook), conditioning by context (tashiro2021csdi, wen2023diffstg), isotropic-vs-structured
+  corruption (graph-aware-diffusion, rissanen2023ihd, hoogeboom2023blurring), Tweedie (efron2011tweedie).
+  Intro: white-noise claim now cited (timegrad, tashiro2021csdi, wen2023diffstg, lin2024specstg,
+  liu2023pristi, hysrdnet2026); cross-refs to §2.1.5 (scores), §2.2.5 (GMRF sums), §2.6 (GAD), Ch. 5.
+- *Figures, after checking the canonical depictions online:* product graphs drawn as **lattices** as in
+  Sandryhaila & Moura (2014, IEEE SPM): sensors down the side, lead times along the bottom, Cartesian = grid,
+  Kronecker = diagonals, strong = both; separable covariance shown apart. Diffusion figure reverted to the
+  **classic DDPM chain** (Ho et al. 2020 Fig. 2 layout): four panels of the same road signal, smooth → noise,
+  forward arrow above, learned reverse below; the distribution row was dropped as too much.
+- Sources consulted: Sandryhaila & Moura 2014 (hajim.rochester.edu PDF), DDPM figure descriptions (arXiv
+  2405.13540 and reviews).
+- **Figure rules (permanent):** shared preamble styles only; no text may overflow its box; render and inspect
+  every figure (pymupdf at 120 dpi) before declaring it done; one idea per figure.

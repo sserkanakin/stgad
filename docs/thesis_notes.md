@@ -102,3 +102,7 @@ modelling; that the prior is right under distribution shift (PEMS08 speed / PEMS
   `ch:discussion`, `chapter:conclusion`). Dropped: the old contribution 4 ("improves on all published
   baselines on every metric") and the old RQ framing around capacity/conditioning.
 - Citations available in report.bib for later chapters: `timegrad`, `tashiro2021csdi` (CRPS_sum).
+- **User read (2026-09-10): good.** Changes applied: the DC-mode sentence removed from the intro
+  (discussed later, Ch. 5/6); each RQ now has a short description of how it is answered; the chapter
+  has sections (Motivation · Diffusion on graph signals and the question of the noise · This thesis ·
+  Research questions · Contributions · Outline). **Step 1 CLOSED.**

@@ -252,3 +252,14 @@ PICP + spread/skill = that standard, applied where the field had not.
   then the per-node SOTA table as "nothing lost per node, both arms below published methods".
 - SSTVM's PeMS08 CRPS_sum: mention in the discussion with the protocol caveat, not in the main table.
 - Pooled-CRPS at several graph scales (sample level, eval-only) — proposed, not yet approved.
+
+**Decisions (2026-09-11, later):**
+- **Pooled-CRPS evaluation APPROVED** ("if you say it is important lets do it"): CRPS/PICP/spread of sums over
+  spectral clusters (64/16/4) + network, on the 48 GWN checkpoints, eval-only, files tagged `_pooled`
+  (`--tag`), clusters shared with the prior-level analysis (`src/data/adjacency.spectral_clusters`).
+  → Result 4b in the dossier and §5.3 figure "advantage vs aggregation scale" (GenCast's pooled CRPS).
+- **Order of work:** finish Ch. 2 (user reading) → Step 3 Literature review → then a dedicated
+  **results-overview session**: walk through every result and every number (dossier R0–R9) until the user
+  can explain each one, BEFORE writing Ch. 4–5. The user said they currently do not follow the numbers.
+- Status snapshot: GWN campaign 48/48 + DC ablation 48/48; MLP wave 24/24; GCN wave ~10/24 running;
+  prior analyses 18/18 (all backbones × datasets) + two-moment; figures 13; story page + dossier live.

@@ -144,3 +144,11 @@ ticks, brackets, two-row legend; 2.3 predict-and-refine with stage bands, histor
 add), Kronecker product, separable covariance (penalties multiply); 2.5 diffusion chain drawn ON a graph
 signal (smooth → noise). Rendered and checked twice (pymupdf); builds 80 pages.
 **Rule from now on: every new figure in the thesis uses these styles.** Step 2 still open for the user's read.
+
+**User read 2 (2026-09-10):** overflowing text in 2.3 → cards sized to their text; 2.2 redone so the
+ensemble members are visibly many random paths and the bands are their pointwise quantiles (caption
+explains why bands are smooth while paths wiggle; the realised future is one more path); strong product
+added to the text (A_⊠ = A_□ + A_⊗) and to the figure (2.4 now: top row factors + separable covariance,
+bottom row Cartesian / Kronecker / strong); 2.5 redone as "one sample" (four-node graph states) over
+"the distribution" (scatter of two neighbouring nodes over many samples with 2σ ellipse: narrow diagonal
+→ round isotropic cloud). All five rendered and checked; builds 81 pages.

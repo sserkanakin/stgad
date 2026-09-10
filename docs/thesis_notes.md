@@ -131,3 +131,16 @@ denoiser were all already there). Four additions, no rewrite:
    ablation in Ch. 5 (prior level: NLL + multi-scale; add a `cartesian` prior to prior_fidelity.py).**
 Deferred (optional trims): 2.1.3 deterministic limits, 2.1.6 autoregressive vs joint, 2.4 neural
 forecasting. `\citet` → `\textcite` (biblatex). Builds: 79 pages, no warnings.
+
+**User read (2026-09-10):** (a) the product-graph text must not call product graphs "natural" or prejudge
+the comparison — reworded to neutral ("could equally be defined on them"; "neither assumption is right a
+priori; Chapter 5 measures how well each fits"). (b) **All background figures redrawn to paper quality**
+with one shared visual language (preamble: `fig`, `sensor`, `road`, `tedge`, `block`, `flow`,
+`condarrow`, `lab` tikz styles; palette figink/figmuted/figrule/figaccent/figwarm/figamber/figgreen/
+figviolet; `\sensorgraph` macro): 2.1 sensor graph at t* with value-shaded nodes + identity-coloured
+trajectories with t* marked; 2.2 fan chart with observed history, forecast origin, nested one-hue bands,
+ticks, brackets, two-row legend; 2.3 predict-and-refine with stage bands, history + forecast conditioning
+(dashed), stacked-card ensembles; 2.4 (new) product graphs — factors, Cartesian (Kronecker sum, penalties
+add), Kronecker product, separable covariance (penalties multiply); 2.5 diffusion chain drawn ON a graph
+signal (smooth → noise). Rendered and checked twice (pymupdf); builds 80 pages.
+**Rule from now on: every new figure in the thesis uses these styles.** Step 2 still open for the user's read.

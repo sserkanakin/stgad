@@ -152,3 +152,10 @@ added to the text (A_⊠ = A_□ + A_⊗) and to the figure (2.4 now: top row fa
 bottom row Cartesian / Kronecker / strong); 2.5 redone as "one sample" (four-node graph states) over
 "the distribution" (scatter of two neighbouring nodes over many samples with 2σ ellipse: narrow diagonal
 → round isotropic cloud). All five rendered and checked; builds 81 pages.
+
+**User read 3 (2026-09-10):** product graphs redrawn with lead time running left to right — one copy of
+G_S per column, h = 1,2,3 labelled, a "lead time" axis under each product; solid = spatial edges, dashed =
+temporal edges (Cartesian: same sensor at h±1; Kronecker: neighbouring sensors at neighbouring h;
+strong: both). Diffusion figure redrawn as a signal on a road of seven sensors, diverging colours
+(blue −, red +) plus a value profile under each state, smooth wave → white noise; distribution row kept
+(scatter + 2σ ellipse); fitted to the text width. Both rendered and checked.

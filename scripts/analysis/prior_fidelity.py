@@ -32,6 +32,9 @@ def unit_residuals(ds, split):
     """(r, mask, sigma_i): residual / per-sensor train scale, exactly the diffusion's space."""
     d = np.load(paths.residual_npz(ds, split, 42, BB))
     R = d["residuals"].astype(np.float32); M = d["mask"].astype(bool)
+    cap = int(os.environ.get("MAX_WINDOWS", "0"))              # memory guard for the big datasets (pems-bay: 36k windows)
+    if cap and len(R) > cap:
+        idx = np.linspace(0, len(R) - 1, cap).astype(int); R, M = R[idx], M[idx]
     sig = np.asarray(train_residual_sigma(ds, 42, BB, norm="pernode")).reshape(-1)
     return (R / sig.reshape(1, -1, 1).astype(np.float32)), M, sig
 

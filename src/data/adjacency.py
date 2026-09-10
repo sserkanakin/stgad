@@ -234,3 +234,17 @@ def laplacian_eigendecomposition(
         np.savez(cache_path, eigenvalues=eigenvalues, eigenvectors=eigenvectors)
 
     return eigenvalues, eigenvectors
+
+
+def spectral_clusters(dataset: str, k: int, repair: bool = REPAIR_GRAPH, seed: int = 0) -> np.ndarray:
+    """labels (N,) of a k-way spectral clustering of the repaired road graph: k-means on the first
+    few non-trivial eigenvectors of the normalised laplacian. deterministic (seed). shared by the
+    prior-level multi-scale analysis and the pooled (GenCast-style) evaluation so both aggregate
+    over the SAME node sets."""
+    import math
+    from scipy.cluster.vq import kmeans2
+    L = compute_normalized_laplacian(load_adjacency(dataset, repair=repair))
+    lam, V = np.linalg.eigh(L); V = V[:, np.argsort(lam)]
+    feats = V[:, 1:1 + max(2, int(math.ceil(math.log2(k))) + 1)]
+    _, lab = kmeans2(feats, k, minit="++", seed=seed)
+    return lab.astype(np.int64)

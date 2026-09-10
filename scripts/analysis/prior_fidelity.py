@@ -158,8 +158,8 @@ def main(ds):
     del Cfull, Rt, X
     # B4 multi-scale variance: aggregates = sensors, 1-hop neighbourhoods, spectral clusters (4,16,64), network
     def clusters(k):
-        feats = V[:, 1:1 + max(2, int(math.ceil(math.log2(k))) + 1)]
-        _, lab = kmeans2(feats, k, minit="++", seed=0); return [np.where(lab == c)[0] for c in range(k) if (lab == c).sum() > 0]
+        from src.data.adjacency import spectral_clusters                     # shared with the pooled evaluation
+        lab = spectral_clusters(ds, k); return [np.where(lab == c)[0] for c in range(k) if (lab == c).sum() > 0]
     aggs = {"sensor": [np.array([i]) for i in range(N)], "1-hop": [np.where((hops[i] <= 1))[0] for i in range(N)],
             "cluster64": clusters(64), "cluster16": clusters(16), "cluster4": clusters(4), "network": [np.arange(N)]}
     def agg_ratio(R, M, ok, VS, var, sets):

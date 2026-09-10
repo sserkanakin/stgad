@@ -106,3 +106,28 @@ modelling; that the prior is right under distribution shift (PEMS08 speed / PEMS
   (discussed later, Ch. 5/6); each RQ now has a short description of how it is answered; the chapter
   has sections (Motivation · Diffusion on graph signals and the question of the noise · This thesis ·
   Research questions · Contributions · Outline). **Step 1 CLOSED.**
+
+---
+
+## Step 2 — Background (drafted 2026-09-10, awaiting the user's read)
+
+**Decisions:** keep the existing chapter (7 sections, 4 figures; CRPS, calibration, GFT, filters, heat
+kernel, GMRF, Kronecker algebra, DDPM/SDE/Tweedie, GAD with the FCPS rate and the optimal graph-filter
+denoiser were all already there). Four additions, no rewrite:
+1. **2.1 "Scoring a forecast over a graph"** (new subsection): per-node CRPS is blind to dependence;
+   CRPS_sum on the network total and on the cumulative per node (TimeGrad, CSDI); energy score;
+   PICP + interval score (Gneiting & Raftery; "Winkler"); spread–error ratio. Every Ch. 5 metric defined
+   once, standard names, citations.
+2. **2.2 GFT:** the constant mode v₁ = 1/√N (λ₁ = 0) named as "the network-wide shift", the rough modes
+   near λ = 2; "a prior that gives the constant mode too little variance cannot represent a network-wide
+   shift".
+3. **2.2 GMRF:** variance of a sum over a node set under the GMRF, Eq. (bg_gmrf_sum_variance):
+   Σ_k (v_kᵀ1_S)²/(λ_k+γ); the whole network = the constant mode alone (N/γ); under white noise N·σ² —
+   the calculation behind the multi-scale analysis.
+4. **2.3 "Product graphs: the other route to a spatio-temporal graph"** (new subsection, the user's
+   "vanilla spatio-temporal graphs"): Cartesian / Kronecker / strong products (Sandryhaila & Moura;
+   GTCNN), the Cartesian Laplacian is a Kronecker SUM; a GMRF on it is NOT separable (penalties add) vs
+   the separable covariance (precision = Kronecker product; penalties multiply). **To be compared as an
+   ablation in Ch. 5 (prior level: NLL + multi-scale; add a `cartesian` prior to prior_fidelity.py).**
+Deferred (optional trims): 2.1.3 deterministic limits, 2.1.6 autoregressive vs joint, 2.4 neural
+forecasting. `\citet` → `\textcite` (biblatex). Builds: 79 pages, no warnings.

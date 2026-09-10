@@ -318,3 +318,39 @@ good just make sure it is all centered."
   label. Measured on the PDF: panel row centre 297.6 pt vs text-block centre 297.5 pt.
 - Both confirmed on rendered screenshots (pages 23 and 25). Rule kept: measure figure bounding boxes against
   the text block with pymupdf after every figure change (drawings + words), not by eye.
+
+**Final pass on Ch. 1–2 (2026-09-11):** user: "do a final run on the intro and background. check all figures with
+screenshots. confirm every claim is supported. no unnecessary info. nothing is mentioned before explaining.
+and cited. and normal words are used, nothing too fancy so that it doesnt look like AI too."
+- Claims corrected (each checked against the data or the source):
+  - Intro: "diffusion models are the strongest tool" → plain description; "applied to the residual … reach
+    SOTA [DiffSTG, PriSTI]" was wrong (DiffSTG diffuses the signal, PriSTI is imputation) → "hold the published
+    per-node records [DiffSTG, SpecSTG, HySRD]; the most recent diffuse the residual [HySRD]".
+  - Intro: "wrong by construction … however good the denoiser is" overclaimed (a perfect score model would
+    recover the correlations from any prior) → "a poor starting point; the small denoisers used here do not
+    put the shared component back" (what we measured).
+  - Intro: "both sit below the published methods" → qualified to the four PEMS benchmarks where diffusion
+    forecasters publish per-node CRPS (ours 0.066/0.021/0.050/0.017 vs best published 0.072/0.024/0.055/0.020;
+    METR-LA and PEMS-BAY have no such published numbers). "per-node linear model" for the smallest backbone
+    verified: DLinear has no nonlinearity.
+  - Intro: the 5 %-correlation example made explicit as a hypothetical with the arithmetic
+    ((N−1)ρ = 169·0.05 ≈ 8.5, "more than eight times").
+  - Background: CRPS_sum credited to Salinas et al. 2019 (GP-Copula), not TimeGrad; energy-score weakness
+    now cited (Pinson & Tastu 2013, new bib entry); PriSTI removed from "forecasters we compare against";
+    the unverifiable "same left-factor convention as the product-graph literature" sentence removed; the
+    "EM sampler kept as parity comparison" sentence removed (no EM evaluations exist in the matched campaign,
+    only ancestral); a garbled double "Tweedie's formula" sentence fixed; worked-example numbers re-verified
+    (S₂ = 7 / 124, energies 19 / 28, Rayleigh 0.18 / 1.92, path-graph eigenvalues {0,1,2}, 13.6 M entries).
+- Order: forward pointers added where a term is used before its section (diffusion in §2.1.4 and §2.1.6);
+  GMRF glossed in the intro before its name is used.
+- Unnecessary info removed: the three adjacency + edge-count formulas under Figure 2.4 (they duplicate §2.3.1)
+  → one line "edges kept: Cartesian = spatial + temporal; Kronecker = diagonal; strong = all three"; the
+  GNN-variant enumeration in §2.4.1; the sampler-literature sentence shortened.
+- Wording toned down in ~25 places ("common currency", "natural headline metric", "paradigm", "fingerprint",
+  "signature", "the rest of this thesis lives in it", "precisely", "cosmetic", "division of labor", …).
+- Background conclusion now also carries the scoring thread (six things, not five).
+- All five Chapter-2 figures re-rendered and checked (pages 13, 15, 17, 23, 25 of the PDF): no overflow,
+  no edge over a node, diffusion row centred. Build clean, zero undefined references or citations.
+- Decision recorded: product-graph prior (Kronecker sum, same eigenbasis V_T⊗V_S, precision adds instead
+  of multiplies) is a one-line ablation for later; Kronecker/strong products would need a full NH×NH
+  eigendecomposition and stay text-only.

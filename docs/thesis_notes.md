@@ -299,3 +299,22 @@ below; caption states the DDPM forward marginal (Eq. bg_ddpm_marginal). Product-
 the three products as an aligned equation block (adjacency + edge counts) with the colour legend at left.
 Both confirmed on rendered screenshots (pages 23, 25). The graph-aware two-row version is kept in git history
 for a possible Ch. 4 figure.
+
+**User read 7 (2026-09-11) — edges off the nodes, row centred:** user: "the kronecker is not bad, but can be
+better the edges are overlapping with the nodes, make them look better with a 3d effect maybe. diffusion is
+good just make sure it is all centered."
+- Product-graph figure (2.4): the copies of the sensor graph are now drawn as thin slabs in an oblique view
+  (front face + extruded top/right faces along the horizon direction), offset d = (3.0, 1.2) cm per lead time.
+  The four-node tree was replaced by four sensors along a road (a path 1–2–3–4, gentle wiggle) because a
+  geometric search over layouts showed the tree could never get more than ~0.35 cm between an edge and a
+  node it does not touch (node radius 0.22 cm), while the path gets 0.66 cm: no temporal or diagonal arrow
+  passes over a node any more. Draw order: slabs → nodes → diagonal (grey) → temporal (green) → spatial (red)
+  → nodes again on top. Legend moved under the factors; the aligned equation block (Cartesian/Kronecker/
+  strong adjacency + edge counts) is centred under the whole drawing; the picture now fits the text width
+  (before it ran 20 pt into the right margin). Caption: "Four sensors along a road", "given below the drawing".
+- Diffusion figure (2.5): the row of four panels sat 24 pt right of the text centre and the picture overflowed
+  the margin by 8 pt. Fix: picture scaled 0.88, both end labels ("data: residual field" / "noise: N(0,I) −/+")
+  given the same width (1.3 cm) and the same distance to the row, moved clear of the rotated "sensor i" axis
+  label. Measured on the PDF: panel row centre 297.6 pt vs text-block centre 297.5 pt.
+- Both confirmed on rendered screenshots (pages 23 and 25). Rule kept: measure figure bounding boxes against
+  the text block with pymupdf after every figure change (drawings + words), not by eye.

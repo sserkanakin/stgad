@@ -243,3 +243,12 @@ PICP + spread/skill = that standard, applied where the field had not.
 - GenCast's device for spatial dependence = **pooled CRPS at several spatial scales**; our prior-level
   multi-scale check is the same idea; the sample-level version (CRPS of sums over spectral clusters of the
   road graph, per model) is an eval-only addition — proposed as "R4b".
+
+**Decisions (2026-09-11):**
+- **AIR-BJ / non-traffic dataset: NOT added now.** Goes in as a side note (future work / "the method needs only
+  a graph, regular sampling and a point forecaster; USTD/SSTVM's AIR-BJ is the natural next case"). Work
+  with the six traffic datasets.
+- Chapter 5 order: network-level results first (GenCast-style: CRPS_sum, cumulative, PICP, spread/skill),
+  then the per-node SOTA table as "nothing lost per node, both arms below published methods".
+- SSTVM's PeMS08 CRPS_sum: mention in the discussion with the protocol caveat, not in the main table.
+- Pooled-CRPS at several graph scales (sample level, eval-only) — proposed, not yet approved.

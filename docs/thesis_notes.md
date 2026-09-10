@@ -181,3 +181,24 @@ strong: both). Diffusion figure redrawn as a signal on a road of seven sensors, 
   2405.13540 and reviews).
 - **Figure rules (permanent):** shared preamble styles only; no text may overflow its box; render and inspect
   every figure (pymupdf at 120 dpi) before declaring it done; one idea per figure.
+
+---
+
+## Results dossier (2026-09-11) — how every result is presented
+
+Web view, built from `results/analysis/results_dossier.json` (collector inline in the session; figures
+from `results/figures/*.png` embedded) → artifact **"STGAD Results Dossier"**
+https://claude.ai/code/artifact/7c8c2379-7f14-49ae-9b7d-87672c6bfe75 . Companion to the story page
+("Noise With a Shape", method). Each result = figure/table + the claim sentence + where it goes + what it
+supports + what it does not show:
+- Setup table (datasets, backbone MAE, (β, γ), match ratios, steps) → §5.1 / App. B.
+- R1 residual field (corr vs hops, common-mode share, total sd vs independence, horizon growth) → §5.2.
+- R2 prior fit at every scale (multiscale, spectrum, NLL + separability) → §5.2, key figure.
+- R3 per-node tie + SOTA table with the Gaussian floor → §5.3 / §5.5.
+- R4 network level 6/6 (joint total + cumulative figures, per-dataset table with DC column) → §5.3.
+- R5 ladder (prior level + result level; GCN partial) → §5.4.
+- R6 old protocol vs new → §5.7 + discussion.
+- R7 chain diagnostic + DC rule on all cells → §5.7 / discussion.
+- R8 prior-level ablations (five priors, NLL + network scale) + two-moment rule → §5.7.
+- R9 cost (steps, s/window) → §4.5 / App. B.
+- "Not in yet": GCN wave, Cartesian prior row, aMMD + steps curve, calibration curves, sampler ablation, DiffSTG.

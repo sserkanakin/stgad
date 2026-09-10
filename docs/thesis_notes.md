@@ -225,3 +225,21 @@ Use in Ch. 3 positioning: the traffic-diffusion line (DiffSTG → SpecSTG → Hy
 SpecSTG says why; the general multivariate line (TimeGrad, CSDI) and the newest ST-graph work (SSTVM) and
 weather (GenCast pooled CRPS) treat the sum as the test of joint structure. Our CRPS_sum + cumulative +
 PICP + spread/skill = that standard, applied where the field had not.
+
+**Comparable network-level numbers in the literature (checked 2026-09-11):**
+- SSTVM (TSIPN 2025) Table IV, *normalised* CRPS_sum on PeMS08: TimeVAE 0.163, TimeGrad 0.090, CSDI 0.110,
+  ScoreGrad 0.044, TSDiff 0.097, SSTVM 0.074 (their MAE on PeMS08 = 13.3 vs DiffSTG's 17.7 → a different
+  protocol/normalisation; not directly comparable, quote with that caveat).
+- Ours in the same convention (CRPS of the sum ÷ mean |sum|, test, GWN): pems08f iso 0.0115 → kron 0.0112;
+  pems08s 0.0046 → 0.0044; pems04f 0.0123 → 0.0117; pems04s 0.0041 → 0.0040; metrla 0.0103 → 0.0099;
+  pemsbay 0.0065 → 0.0061 (−3 to −6 %). An order of magnitude below SSTVM's table → protocols differ
+  (residual on GWN with history conditioning vs full-signal generation); present side by side only with the
+  caveat, or not at all.
+- Pal et al. (ICML 2021, RNN + particle flow): PeMSD3/4/7/8 **speed**, 70/10/20 split, P = Q = 12, raw-unit
+  per-node CRPS (PeMSD8 60 min: 1.28; PeMSD4: 1.56) — per node only, and our PEMS split is 60/20/20
+  (ASTGNN), so not comparable without a re-split.
+- AIR-BJ / AIR-GZ (air quality, station graph): USTD reports MAE/RMSE/CRPS, SSTVM CRPS_sum 0.055 on AIR-BJ;
+  processed data in the USTD repo (Google Drive) → the natural non-traffic dataset if we extend the scope.
+- GenCast's device for spatial dependence = **pooled CRPS at several spatial scales**; our prior-level
+  multi-scale check is the same idea; the sample-level version (CRPS of sums over spectral clusters of the
+  road graph, per model) is an eval-only addition — proposed as "R4b".

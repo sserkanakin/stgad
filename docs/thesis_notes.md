@@ -369,3 +369,37 @@ and cited. and normal words are used, nothing too fancy so that it doesnt look l
   `rsync -r --inplace --no-perms --no-owner --no-group --no-times --size-only`.
   Submission script `scripts/daic/submit_pooled.sh` (12 jobs: 8×5 cells + 4×2 pems-bay cells,
   `EVAL_EXTRA=--tag pooled`), dry-run verified on DAIC; submitted once the upload is md5-verified.
+
+**Pooled pass resubmitted (2026-09-11 12:1x):** GWN train+test caches md5-verified on DAIC (12/12 files) →
+`submit_pooled.sh` → jobs 286645–286656 (8 "pooled" × 5 cells, 4 "pooled-bay" × 2 cells), monitor bf8810ej1.
+
+## Step 3 — Literature review: DONE (2026-09-11), awaiting the user's read
+
+Followed the approved proposal; the chapter went from 5,061 to ~5,600 words (one new subsection + one table).
+1. **New §3.2.1 "How these forecasters are evaluated"** + Table 3.1 (model × per-node CRPS × CRPS of sums ×
+   coverage/spread–error): DiffSTG/USTD/TSGDiff per node only, HySRD coverage only in a figure, SpecSTG's
+   stated refusal of CRPS_sum, TimeGrad/CSDI CRPS_sum (score introduced by GP-Copula), SSTVM CRPS_sum on
+   PeMS08/air quality, GenCast pooled CRPS + spread–error. Closes with: a change of the corruption is
+   invisible in every published table of the graph line; Ch. 5 keeps per-node scores and adds the standard
+   of the other lines (total, cumulative, pooled; coverage; spread–error).
+2. **§3.5 positioning** rewritten to the step-0 claims: the gap is the corruption (isotropic) AND the
+   evaluation (per node); the last paragraph names the three claims Ch. 5 tests (nothing lost per node,
+   network-level scores improve, gain grows as the backbone leaves more structure). No result numbers in Ch. 3.
+3. **§3.4** + one sentence: product-graph GMRF (Kronecker sum) as the other structure, "no diffusion
+   forecaster uses it either, Ch. 5 compares the two at the level of the prior" → **commitment: the
+   Cartesian-product prior row (prior level, Mac CPU) must be added to the prior-fidelity analysis.**
+4. Figures 3.1 (structure entry) and 3.2 (gap map) redrawn in the shared tikz style; confirmed on renders
+   (pages 30, 36). Table 3.2 untouched.
+5. Claims verified online (the PDF folder ~/Desktop/tudelft/thesis/papers is not readable from this
+   session: macOS blocks it): **DR paper** (arXiv 2301.06650) wraps STGCN, Graph WaveNet, AGCRN, ASTGCN,
+   D2STGNN on PEMSD7(M) speed + PEMS08 flow; error covariance Σ_Q⊗Σ_N + σ²I; bilinear AR on the error
+   field one hour (Δ=12) or one week (Δ=2016) earlier; trained jointly; reports CRPS + ρ-risk → the old
+   TODO resolved, "one seasonal period" → "an hour or a week", "proved Kronecker-separable" → "showed a
+   Kronecker-structured error model improves CRPS". **SpecSTG** (arXiv 2401.08119): autoregressive ✓,
+   "We do not adopt CRPS_sum because sensors are not regarded as features" ✓, PEMS04/08 flow+speed, 60 min.
+   **Not re-verifiable now:** HySRD-Net's ablation percentages (~10 % CRPS from per-sensor normalisation,
+   16–17 % from stage-one error) — taken from the PDF in an earlier session; ScienceDirect blocks fetching.
+   → ask the user to copy the literature PDFs into a readable folder (e.g. `papers/` in the repo, ignored).
+6. Removed: the "UGnet as capacity reference in the experiments" claim (no UGnet run in the matched
+   campaign — old data), the DiT-theory aside (fu2025ditgp), "deliberately", "of course", "orthogonal",
+   "consequential", "mature field", "cleanest".

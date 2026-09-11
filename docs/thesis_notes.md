@@ -594,3 +594,42 @@ in graph-filter terms, everything checked against the code, figures confirmed on
   one scale"); the regularising link in one sentence; "43–62 % un-denoised at a fixed floor" in the appendix.
 - Remaining undefined refs (26) are Ch. 5–7 → old labels; resolved when those chapters are rewritten.
 
+**User read 1 of Ch. 4 (2026-09-11):** "no analysis figures in the methodology (that is for the experiments)
+· is the sampler basically DDPM or something different? make sure nothing is mathematically wrong · Fig 4.1
+has overlapping boxes/text/lines · better visuals of our actual method, with the graph · some equations wrong
+or under-explained, e.g. the variance stuff · maybe things not needed, maybe important info skipped."
+Round 3 (2026-09-11):
+- **All data-analysis figures removed from Ch. 4** (the four real-PEMS08 figures stay in
+  `figures/generated/m_*_pems08f.pdf` for Chapter 5: prior fit, forward corruption of a real window,
+  optimal filter on the real θ, one real reverse chain of the trained model). Replaced by **schematic figures
+  on a seven-sensor toy graph** (same layout as Fig. 2.1; node shades = signed values computed from a toy
+  prior with γ = 0.3, H = 3, θ ∈ [0.8, 177]; shades written by a script to `figures/generated/toy/*.tex`):
+  4.2 a draw of the Kronecker prior vs a draw of white noise at three lead times + how the prior is assembled;
+  4.3 forward corruption of one toy field at c̄ = 0, 0.05, 0.5, 5 under both priors; 4.4 analytic curves
+  (survival e^{−θc̄} for θ = 0.8/8/80; optimal-filter gain vs graph frequency at c̄ = 0.3, 3, solid vs
+  dashed white noise); 4.5 the denoiser as a block diagram; 4.6 the reverse process on the toy graph with the
+  prior's own filter as denoiser (state and estimate at c̄ = 7, 1, 0.1, 0.001).
+- **Sampler section rewritten and verified.** Plain statement: it IS DDPM ancestral sampling, per mode, on
+  the continuous OU process (DDPM's chain is the discretisation of its own VP process). Eq. 4.13 defines the
+  three (shrinkage, variance) pairs, Eq. 4.14 the DDPM posterior q(x_{c'} | x_c, x_0) (mean and v), then the
+  variance question: DDPM's two standard choices (β̃ = v: x̂₀ treated as known; β = s_d: x₀ as uncertain as
+  under the prior) bracket the truth; ours carries the prior-posterior variance ς² of x₀ | x_c through the
+  mean → Eq. 4.15. **Verified numerically (random θ ∈ [0.8, 3000], c, c'):** the corrected variance equals
+  the exact reverse transition σ²(1−a_d²)/θ to 1e-6, and with x̂₀ = the prior's filter the mean equals
+  a_d x_c; DDPM's β̃ is up to 27 % too small for slow modes at small θc. Euler–Maruyama would need steps ∝
+  θ_max. The optional DC rule kept as one sentence (ablation).
+- **Fig 4.1 cleaned**: wider bands, the prior→diffusion line routed around the right end of the forecast
+  row (no crossings), labels moved off the lines.
+- **Equations tightened:** forward marginal now read line by line (mean shrinks by e^{−θc̄}, variance grows
+  from 0 to σ²/θ); the σ² convention stated as energy matching; θ_min = 0.8 explained as a choice of units
+  for c̄ (GAD's schedule constants transfer) that does not change the prior; dataset numbers removed from
+  §4.2/§4.3 (qualitative + "Chapter 5 measures"); the optimal filter derivation stated (stationarity ⇒
+  E[C₀ | C_c̄] = e^{−θc̄} C_c̄).
+- Build note: the renamed draft folder corrupts latexmk's aux/out files (NUL bytes; sync-drive artefact?)
+  → the thesis is now built in the scratchpad (`scratchpad/thesis_build`, rsync of the folder) and the PDF
+  copied back to `tudelft_thesis_paper/build/report.pdf`.
+- **Pooled-CRPS pass DONE 48/48** (jobs 286645–286656); `_pooled.json` files synced to
+  `results/20260907_matched/`. Example pems08f kron s42: CRPS on cluster sums c64/c16/c4 = 19.4/50.0/127.4,
+  coverage 0.85/0.85/0.85, spread ratio 0.88/0.85/0.69 (total: 437, 0.71, 0.62). → to aggregate iso vs
+  kron over 4 seeds and add "advantage vs aggregation scale" (R4b) in the results session.
+

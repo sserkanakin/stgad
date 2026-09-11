@@ -468,3 +468,22 @@ the background and later … confirm that each paper is used correctly, confirm 
   percentages (per-sensor normalisation, stage-one error) and the "oracle trend" sentence. → still ask the user
   to copy the literature PDFs into a readable folder.
 - Build clean, 0 undefined references; tree confirmed on render (page 30, fits 75.7–519.4 pt).
+
+**User read 3 of Ch. 3 (2026-09-11):** "better but some of the boxes are glued together … make the overall thing
+look better. Also: if we mention the other residual forecasters like DiffCast, CorrDiff, why aren't we using them
+as comparisons in our experiments?"
+- Tree re-laid out: the non-generative branch is one taller box at level 1 (method names + the "one error bar
+  per entry, no joint samples" note inside it), so levels 2–3 have the full width; leaves 2.55 cm wide with
+  0.5 cm gaps, equal heights; the two level-2 boxes moved apart (x = 5.6 / 12.3); the first question sits to
+  the right of the root's vertical path. Confirmed on render (page 30, 83–512 pt, no overlaps).
+- **Why the residual forecasters are not baselines — answer written into §3.5:** the comparison is controlled,
+  not broad. (i) The white-noise arm IS the two-stage residual diffusion of CorrDiff/HySRD-Net rebuilt on our
+  backbone, denoiser and training — the two arms differ in nothing but the noise. (ii) CorrDiff and DiffCast are
+  image models (UNets) for weather fields; no graph version, no sensor-network results; porting them would
+  reproduce arm (i). (iii) HySRD-Net has no public code (checked earlier) → compared through its published
+  per-node numbers (SOTA table). (iv) DR is linear-Gaussian with a Kronecker covariance → our prior used
+  WITHOUT a denoiser is that kind of model → **commitment: add a "prior alone (no denoiser)" row to Ch. 5**
+  (Mac CPU: sample R ~ N(0, Σ_kron) per cell on the test set, score with the same metrics; extend
+  `gaussian_no_diffusion_baseline.py`). Running DR's own code would be a new GPU campaign — not planned.
+- Folder rename by the user: `tudelft_thesis_only/` → `tudelft_thesis_paper/`; added to .gitignore (still the
+  live, uncommitted draft). Build path updated in this session.

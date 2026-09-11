@@ -650,3 +650,19 @@ better; two figures are not clear how they work; words and boxes must not overfl
 - Overflow: Fig 4.2 was 11 pt over the text edge → graph spacing and column tightened (now 89–519 pt);
   all six chapter figures measured inside 74–521 pt. Build in the scratchpad, PDF copied back.
 
+**User read 3 of Ch. 4 (2026-09-11):** "the figures are now worse; too many of the same; remove 4.6; in 4.2 the
+graphs are too close, the top row has no blue, I don't get what it tells us." Round 5:
+- **Fig 4.6 (reverse process on the toy graph) removed**, with its sentence; the reverse process is carried by
+  Eq. 4.15, Algorithm 4 and Fig 4.4(b). Chapter now has five figures (pipeline, prior, forward, curves, denoiser).
+- **Fig 4.2 redesigned as a correlation view instead of random draws** (a draw cannot show what a covariance
+  claims): (a) the toy graph shaded by the correlation of every sensor with one marked sensor (neighbours
+  0.56–0.59, two hops 0.46–0.48, far 0.34: strong, weaker with distance, never zero = the shared part);
+  (b) the 3×3 temporal covariance with its numbers printed (variance 1.0 → 1.5 → 2.1; correlations 0.98/1.51/0.87);
+  (c) the product: three graphs = the covariance of the marked entry (sensor 2, h = 2) with every sensor at
+  every lead time — the same spatial pattern at every lead time, scaled by the row of (b). One hue (0 →
+  strongest), colour bar, one-line notes under each panel; caption ends with "under white noise only the marked
+  node itself would be shaded". Width 105–489 pt.
+- Fig 4.3: graphs scaled 0.9 with 0.85 cm gaps; note at c̄ = 0.5 under white noise corrected to "trend and
+  detail fade together" (0.67 of each kept, not half).
+- All remaining figures measured inside the text width; build clean.
+

@@ -403,3 +403,28 @@ Followed the approved proposal; the chapter went from 5,061 to ~5,600 words (one
 6. Removed: the "UGnet as capacity reference in the experiments" claim (no UGnet run in the matched
    campaign — old data), the DiT-theory aside (fu2025ditgp), "deliberately", "of course", "orthogonal",
    "consequential", "mature field", "cleanest".
+
+**User read 1 of Ch. 3 (2026-09-11):** "we need to make this chapter significantly better … too simple … the
+first diagram doesn't need any equation-like symbols and is confusing … the two tables don't tell much … not
+sure the evaluation literature belongs in a literature review … figure 3.2 and table 3.2 unnecessary, maybe a
+tree diagram dividing into categories … make the whole section connected, only information relevant to our
+contribution." Changes:
+- **New Figure 3.1 = the chapter's map:** a category tree (root: probabilistic forecasting of a signal on a
+  sensor graph → *where does the uncertainty come from?* (perturb the model | generative model) → *what is
+  generated?* (the signal | the residual) → *how is it corrupted?* (white | structured)), leaves list the
+  systems, the marker ●/○ after each name = scored on sums / per sensor only; highlighted leaf = this thesis;
+  each branch labelled with the section that covers it. Replaces the gap-map figure AND the design-axes
+  table AND the evaluation table. Chapter intro rewritten to walk the tree; §3.5 opens with "the path
+  through Figure 3.1 summarises the review" and closes on its empty leaf.
+- **Figure 3.2 (where domain knowledge enters) redrawn in words only** — noise field → denoiser network →
+  one forecast sample → ensemble by repeating; past observations + road graph → encoder → denoiser; labels
+  (i) what the network is told, (ii) how it is built, (iii) the noise it starts from and is trained to
+  remove, "this thesis works here" — moved from §3.1 to the opening of §3.4 where corruption is discussed.
+- **Evaluation literature kept, but as one paragraph** ("What these systems report", end of §3.2) and as
+  the ●/○ marker in the tree; the table is gone. Why it stays: a literature review positions the work, and
+  the position here is that the graph line's published tables cannot see the choice we make (per-node
+  CRPS is blind to dependence, §2.1.5); we add no new metric, we adopt the multivariate standard of
+  TimeGrad/CSDI/SSTVM/GenCast. That is the justification of Ch. 5's protocol and belongs here.
+- No result numbers in Ch. 3 (unchanged rule). Words 5,624 → 5,250. Chapter overview no longer forces a
+  page break, so the tree sits with the intro and §3.1 follows on the same page.
+- Rendered and checked: tree (page 30 of the PDF, fits 78.8–516.3 pt), mechanism figure (page 34, 91.8–509.7 pt).

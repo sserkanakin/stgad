@@ -666,3 +666,13 @@ graphs are too close, the top row has no blue, I don't get what it tells us." Ro
   detail fade together" (0.67 of each kept, not half).
 - All remaining figures measured inside the text width; build clean.
 
+**User read 4 of Ch. 4 (2026-09-11):** "the old way was better, this is too complicated; previous style or a
+completely new way, in a good working way; confirm with screenshots." Round 6:
+- Fig 4.2 back to the draw style, done properly: the Kronecker draw is a real draw selected among 400 seeds
+  (seed 129) for the features the caption names — both signs present at every lead time, road neighbours
+  agreeing in sign on 6 of 8 edges, the pattern persisting (correlation 0.94 between h = 1 and h = 3) and
+  growing (2.1× in spread); the white-noise draw (seed 8) has chance-level neighbour agreement (4 of 8) and
+  no persistence (0.24). Graphs scaled 0.9 with 1.2 cm gaps, "along the horizon" arrow, one short note under
+  each panel (neighbours agree / same pattern, stronger / … vs no agreement / no relation), colour bar.
+  Confirmed on render (page 36, 118–490 pt, no overlaps).
+

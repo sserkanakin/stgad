@@ -705,3 +705,38 @@ introduce them better in the text first, and centre them." Round 8:
   second rows moved down so the first row's notes no longer run into the second row's heading.
 - Chapter now 4,380 words incl. figures/algorithms; three figures (pipeline, prior, forward), two algorithms.
 
+## Understanding problem (2026-09-11): user "does not get most of the stuff" in Ch. 4 — approach + Step 5 draft
+
+User: "it is still really confusing … maybe I lack the knowledge … find a way … also start drafting the
+experiments section … give me an online web thing to understand both side by side."
+**Approach taken:** (1) a reading companion artifact to be read next to the PDF; (2) Chapter 5 drafted in the
+same structure as the companion so both can be read together; (3) the results-overview session is thereby
+folded into reading the companion's results part.
+- **Companion artifact "STGAD Reading Companion"** https://claude.ai/code/artifact/69d1e364-6d1b-4e3f-9f84-4f59ea216103
+  — for every section of Ch. 4: one sentence, the objects (symbol + plain name + role), the equations in
+  words, where it shows up in Ch. 5; two interactive toy-graph figures (spatial/temporal factors with a
+  reference-sensor picker; the heat slider showing what survives under the Kronecker prior vs white noise,
+  with/without noise); for every result R1–R6: the question, the score in words, a chart from the real
+  numbers, "how to read it"; a glossary of every symbol; FAQ (heat, modes, DC mode, product graph, DDPM,
+  global edge, 91–95 %). Data inlined from `results/analysis/companion_data.json` (+ `companion_toy.json`).
+- **Chapter 5 drafted (2,980 words, 8 tables generated from the result JSONs by
+  `tables/exp_*.tex`, 13 figures):** 5.1 Setup (datasets table with windows per split: PEMS 60/20/20,
+  METR-LA/PEMS-BAY 70/10/20; backbones; 48+24+24 models) · 5.2 What the residual contains (RQ1; figs
+  field_horizon / field_common_mode / field_total_sd) · 5.3 How well the prior fits (prior_multiscale,
+  prior_spectrum, prior_nll_separability; Table exp_priorfit) · 5.4 Per node (Table exp_pernode: tie
+  −0.0…−1.0 %, both 8–15 % below the best published on the 4 PEMS sets; results_perpoint_horizon) · 5.5 On
+  sums (Table exp_sums: CRPS_sum −2.8…−5.7 %, coverage +6–8 pts, spread +21–54 %; results_joint_total /
+  _cumulative; pooled scales Table exp_pooled + NEW figure results_pooled_scales: −0.2…−1.3 % at 64 regions →
+  −2.8…−5.7 % network) · 5.6 Three backbones (Table exp_ladder: linear −2.6…−6.0 % node / −4…−24 % total /
+  +8…+24 pts; GCN −0.7…−3.3 / −0.9…−7.2 (PEMS-BAY +2.0 % exception, stated) / +9…+23; GWN tie / −3…−6 / +6…+8;
+  ladder_results, ladder_prior) · 5.7 Where the remaining error comes from (chain diagnostic table: oracle
+  0.99, learned 0.58, hybrid 1.00; DC-rule ablation table; the real reverse chain figure) · 5.8 Conclusion
+  (RQ1–3 answered). Old chapter kept as `5_experiments_old.tex`.
+- New aggregated files: `results/analysis/ladder_summary.json` (mean/sd over seeds, 3 backbones),
+  `pooled_summary.json` (48 pooled cells), `companion_data.json`, `companion_toy.json`;
+  `results/figures/results_pooled_scales.pdf`; result PDFs copied to `tudelft_thesis_paper/figures/results/`.
+- Still to do for Ch. 5 (Mac CPU): the prior-alone (no denoiser) row and the product-graph (Cartesian)
+  prior at prior level; both are announced in §4.5 and must be added or the sentences removed.
+- Build: the thesis builds in the scratchpad (adjustbox is not in TinyTeX → wide tables use \resizebox);
+  remaining undefined references are Ch. 6/7 → old labels.
+

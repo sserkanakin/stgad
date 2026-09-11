@@ -511,3 +511,52 @@ Feasible now: 8 pems08f checkpoints (17k params) are on the Mac → real reverse
 (18 files) → prior figures; `cell_config_preview.json` → derived numbers. Commitments carried in: prior-alone row,
 Cartesian-product prior at prior level (both Mac CPU).
 
+**User feedback on the Step 4 plan (2026-09-11):** "do not report the global edge (keep in code) · what is the
+94 % captured, is it relevant · explain why we deviate from vanilla spatio-temporal (product graphs), I am not
+sure myself · much less on choosing γ, β — remember GAD: say why γ matters, too small / too large · no tails ·
+no repetition of background · focus on the Kronecker part · the derived floor is confusing, just how we choose
+numbers, does not belong · better explanations and equations in the style of Mazzola's thesis and the GAD paper
+· build it in the draft, one by one."
+
+Decisions taken:
+- **Global edge:** cannot be dropped from the description because it is in the model that produced every
+  result (β = 0.003–0.03 on all six datasets; without it the prior's spread on the network total is ~0.5 of
+  the truth, which is the very quantity the network-level wins rest on). Minimal honest treatment: ONE sentence
+  in §4.3.2 ("the road graph is regularised with a weak link between every pair of sensors before the
+  Laplacian is formed, which lets the prior carry the shared network-wide part of the error; weights and the
+  selection of (β, γ) in Appendix B"), no β in the main text otherwise. Flagged to the user.
+- **"91–94 % captured":** the nearest-Kronecker-product test — how much of the residual's empirical
+  covariance one Σ_T ⊗ Σ_S can reproduce. It is the data-side justification of the separable form (RQ1),
+  belongs in Ch. 5 (R1) as one number; in Ch. 4 only as a pointer.
+- **Why separable (Kronecker product) and not a product-graph GMRF (Kronecker sum):** written into §4.3.1:
+  (i) the temporal structure of forecast errors (variance growing with lead time, correlation between
+  horizons) is a property of the forecaster, not of any graph — no temporal path Laplacian gives it, the
+  training residuals give it directly; (ii) DR showed a Kronecker product describes traffic residuals;
+  (iii) the eigenbasis is the product of the two factor bases, so GAD's per-mode machinery carries over
+  unchanged; (iv) the product-graph GMRF ties both axes to one γ — Ch. 5 compares the two at prior level.
+- γ, β selection, derived floor, step counts, tails: OUT of the main text → Appendix B (one line each in Ch. 4).
+- Style model: Mazzola (TU Delft 2020, Isufi): Overview → components as subsections → architecture →
+  numerical insight → conclusion; GAD §3–4: forward SDE (4) → closed-form marginal (5) → FCPS → γ
+  (too small: low modes decay too slowly; too large: geometry lost) → stationary GMRF → Remark 1 (per-mode
+  decay = future work, which is exactly what our Kronecker prior does) → reverse SDE (6) → Tweedie (7) →
+  MMSE denoiser (8) → GSP filter (9–12) → GCNN (16) → loss (17). Copies fetched to the scratchpad.
+
+Final Ch. 4 structure: 4.1 Overview (pipeline figure) · 4.2 The residual as a graph-time signal · 4.3 A
+space-time prior for the residual (4.3.1 from GAD's prior to a space-time prior: the design choice; 4.3.2
+spatial factor; 4.3.3 temporal factor; 4.3.4 the prior in its eigenbasis + Alg. 1 + 3-panel figure) · 4.4
+Diffusion on the space-time prior (4.4.1 forward + Alg. 2 + erasure figure; 4.4.2 reverse process and denoiser
++ Alg. 3; 4.4.3 sampling + Alg. 4 + real reverse-chain figure) · 4.5 Evaluation protocol · 4.6 Conclusion ·
+Appendix B derived numbers and selection procedures.
+
+**Round 1 written (2026-09-11): §4.1 Overview + §4.2 The residual as a graph-time signal** (1,224 words,
+new file; old chapter kept as `4_methodology_old.tex`, not compiled). Pipeline figure redrawn in the shared
+style: top band "once per dataset: build the prior" (road graph → Σ_S, training residuals → Σ_T → prior, with
+the white-noise control beside it), bottom band "per forecast window" (history → frozen backbone → point
+forecast → + → forecast samples; residual diffusion starting from a draw of N(0, Σ) → residual samples;
+conditioning dashed), the prior feeding the diffusion box. §4.2: residual (Eq. 4.1), mask, per-sensor
+scale (Eq. 4.2), vec order, and the three structures with PEMS08-flow numbers computed on the Mac from the
+rebuilt prior/residuals (variance 0.78→1.18 over the hour; adjacent-horizon correlation 0.27→0.48 — NOTE:
+method.md's "adjacent ≈ 0.9" is wrong for pems08f/GWN, corrected here; neighbour correlation 0.14 measured;
+constant-mode share 2.5–6.5 % vs 1/N). The 33 undefined references in the build are Ch. 5–7 pointing at the
+old chapter's labels; they resolve when those chapters are rewritten.
+

@@ -633,3 +633,20 @@ Round 3 (2026-09-11):
   coverage 0.85/0.85/0.85, spread ratio 0.88/0.85/0.69 (total: 437, 0.71, 0.62). → to aggregate iso vs
   kron over 4 seeds and add "advantage vs aggregation scale" (R4b) in the results session.
 
+**User read 2 of Ch. 4 (2026-09-11):** "the graph examples are a nice idea, but colours and details need to be
+better; two figures are not clear how they work; words and boxes must not overflow." Round 4:
+- Toy prior made visibly smooth (γ = 0.15, θ ∈ [0.8, 333]); node colours now scaled per figure to the largest
+  value (saturated), and a colour-scale bar (negative → 0 → positive) added to every graph figure.
+- Fig 4.2: the shown Kronecker draw is a real draw chosen among 60 seeds at the 90th percentile of
+  smooth-mode energy (seed 49), so the features named in the caption are visible; assembly column reworded
+  ("how lead times are related", "how sensors are related", "one variance per space–time pattern").
+- Fig 4.3 redesigned: instead of random corrupted draws it shows **what survives** of a constructed field
+  (left-to-right trend + alternating fine detail) after heat c̄ = 0.05, 0.5, 5 — the MEAN of the forward
+  marginal — under both priors, with a note under every panel (fine detail gone / trend kept / trend fading /
+  pure prior noise vs. everything fades at the same rate); caption says the corrupted field is this plus
+  prior-shaped noise (Fig 4.2).
+- Fig 4.6: notes under every column (nothing decided → network-wide lean → neighbourhoods → every detail =
+  the sample); chain seed chosen the same way (seed 39).
+- Overflow: Fig 4.2 was 11 pt over the text edge → graph spacing and column tightened (now 89–519 pt);
+  all six chapter figures measured inside 74–521 pt. Build in the scratchpad, PDF copied back.
+

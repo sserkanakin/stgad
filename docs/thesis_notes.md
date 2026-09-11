@@ -487,3 +487,27 @@ as comparisons in our experiments?"
   `gaussian_no_diffusion_baseline.py`). Running DR's own code would be a new GPU campaign — not planned.
 - Folder rename by the user: `tudelft_thesis_only/` → `tudelft_thesis_paper/`; added to .gitignore (still the
   live, uncommitted draft). Build path updated in this session.
+
+## Step 4 — Methodology (proposal 2026-09-11, awaiting the user)
+
+Source of truth: `docs/method.md` (what the 20260907_matched code does). The existing chapter (7,139 words) describes
+the OLD pipeline (γ = 0.8 fixed, no global edge, no matching, iso "by flattening the spectrum", no derived floor,
+no DC rule) → rewrite section by section, reusing only what still holds. Workflow per section: (1) plain-words
+explanation of what we do and why, (2) the section written with its figure/algorithm, rendered and checked,
+(3) one line "what Chapter 5 reports about this", (4) notes. User reads each section before the next.
+
+| § | content | figure | algorithm | what Ch. 5 must report |
+|---|---|---|---|---|
+| 4.0 | overview: the pipeline; principle "only the noise changes" (two arms) | pipeline figure (redrawn, shared style) | — | the two arms, three backbones, six datasets |
+| 4.1 | the residual field: backbone, R = Y − Ŷ, mask, per-sensor scale r = R/σ_i; what structure it carries (horizon growth, neighbour correlation, network-wide share) | "three faces of the residual" from the prior-analysis JSONs (GWN) | — | R1 residual structure (multi-scale variance ratios), separability 91–99 % |
+| 4.2 | the prior (the contribution): white noise control; Kronecker meaning + toy; temporal factor from training residuals; spatial factor = heat-kernel GMRF on road graph + global edge; unit diagonal; (β,γ) by matching the spread of the network total; joint eigenbasis, θ_{k,h}, energy match to iso; what it does not claim | (a) Σ_S correlation from one sensor on the road graph, road-only vs road+global edge; (b) Σ_T (variance growth + horizon correlation); (c) mode-variance map over (graph frequency × horizon), kron vs flat iso | Alg. 1 BuildPrior | R2 prior fidelity (spread ratio at every scale), NLL, two-moment variant, Cartesian-product prior (prior level), (β,γ) per dataset (appendix) |
+| 4.3 | forward process: per-mode OU, closed form, FCPS schedule, log-uniform noise levels, derived floor f(c_lo) = 1.3e-3 | erasure order per mode (DC last, checkerboard first) + f(c̄) with both floors | Alg. 2 Corrupt(r, c̄) | derived floors/steps per dataset (appendix); "43–62 % un-denoised" under the old floor as the reason |
+| 4.4 | denoiser + training: 17,305-param GCNN (graph taps + temporal conv + FiLM), conditioning [X_z \| Ŷ_z], SNR-weighted masked MSE, AdamW, EMA, checkpoint = best val CRPS (fair, K = 16) | denoiser block diagram (words) | Alg. 3 Train | training curves, checkpoint selection; identical denoiser in every cell |
+| 4.5 | sampling: exact per-mode ancestral step with the x₀-posterior variance; step grid 16/decade; DC rule (ablation only); why not Euler–Maruyama | one real reverse chain on pems08f (Mac CPU, local checkpoint): network-wide pattern first, detail last | Alg. 4 Sample | chain diagnostic (oracle / learned / hybrid), DC-rule ablation, steps sweep |
+| 4.6 | evaluation protocol: per node (CRPS, MAE, RMSE, PICP, Winkler, energy), sums (network total, cumulative, pooled clusters 64/16/4: CRPS_sum, PICP, spread–error), fair CRPS, K = 100, y = 0 masked; comparisons: iso arm, prior-alone (no denoiser), published per-node numbers; ladder MLP/GCN/GWN | "what is compared" grid (arms × backbones × datasets) | — | the whole of Ch. 5 |
+| 4.7 | cost (short) + conclusion | — | — | — |
+
+Feasible now: 8 pems08f checkpoints (17k params) are on the Mac → real reverse-chain figure on CPU; prior JSONs
+(18 files) → prior figures; `cell_config_preview.json` → derived numbers. Commitments carried in: prior-alone row,
+Cartesian-product prior at prior level (both Mac CPU).
+

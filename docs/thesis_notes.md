@@ -688,3 +688,20 @@ cleaner, shorter, simpler." Round 7:
   the discussion of the variance choice cut to four sentences; evaluation section in three short paragraphs.
 - Chapter 4 = PDF pages 34–42 (9 pages incl. figures/algorithms). Build clean.
 
+**User read 6 of Ch. 4 (2026-09-11):** "too many pseudo-codes: one for training, one for sampling · Fig 4.5
+(denoiser diagram) not needed · Fig 4.4 (curves) belongs to the experiments · the graph figures are good but
+introduce them better in the text first, and centre them." Round 8:
+- Algorithms 1 (build the prior) and 2 (corrupt) removed; their content is one sentence each in §4.3.4 and
+  §4.4.1, and the one-shot corruption is now a line inside the training algorithm. Two algorithms remain:
+  Train and Sample.
+- Figures 4.4 (survival + optimal-filter curves) and 4.5 (denoiser block diagram) removed; the filter's
+  low-pass → all-pass behaviour stays in words; the real-data version of the curves goes to Ch. 5.
+- §4.3.1 now introduces the toy graph before the first graph figure: the seven sensors and eight roads of
+  Fig 2.1, three lead times, the prior built for it as for the real networks (temporal variances 1.0 → 2.1,
+  adjacent correlations 0.8–0.85, precision ratio ≈ 400), and how to read the panels (red positive, blue
+  negative, darker larger).
+- Graph figures centred: row labels moved from the left of the rows to headings above them, symmetric
+  bounding boxes; measured on the figure area only (drawings centre 297.6 pt vs text centre 297.5 for both);
+  second rows moved down so the first row's notes no longer run into the second row's heading.
+- Chapter now 4,380 words incl. figures/algorithms; three figures (pipeline, prior, forward), two algorithms.
+

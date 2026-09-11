@@ -676,3 +676,15 @@ completely new way, in a good working way; confirm with screenshots." Round 6:
   each panel (neighbours agree / same pattern, stronger / … vs no agreement / no relation), colour bar.
   Confirmed on render (page 36, 118–490 pt, no overlaps).
 
+**User read 5 of Ch. 4 (2026-09-11):** "why are there full white graphs in 4.3? confusing. make the whole chapter
+cleaner, shorter, simpler." Round 7:
+- Fig 4.3 now shows the corrupted field itself (one draw per panel, seeds chosen so panels look typical)
+  instead of the expected field: the last column is smooth prior noise vs speckle, never blank nodes;
+  notes: "fine detail gone, trend still there / trend fading into smooth noise / smooth noise only: a draw of
+  the prior" vs "a little noise on everything / trend and detail fade together / speckle only".
+- Chapter rewritten tighter: 5,840 → 4,950 words including figures and algorithms (prose ≈ 3,300); same
+  five figures and four algorithms; shorter chapter intro and overview; §4.3.1 titled "Which Gaussian";
+  the θ-units sentence cut to one line; the residual section's numbers gone; the sampler derivation kept but
+  the discussion of the variance choice cut to four sentences; evaluation section in three short paragraphs.
+- Chapter 4 = PDF pages 34–42 (9 pages incl. figures/algorithms). Build clean.
+

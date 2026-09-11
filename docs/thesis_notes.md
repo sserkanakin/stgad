@@ -560,3 +560,37 @@ method.md's "adjacent ≈ 0.9" is wrong for pems08f/GWN, corrected here; neighbo
 constant-mode share 2.5–6.5 % vs 1/N). The 33 undefined references in the build are Ch. 5–7 pointing at the
 old chapter's labels; they resolve when those chapters are rewritten.
 
+**Round 2 written (2026-09-11): §4.3–4.6 + Appendix B — the whole chapter is drafted (4,850 words, 5 figures, 4 algorithms).**
+User asked for: good figures, a connected story with references instead of repetition, the denoiser's job
+in graph-filter terms, everything checked against the code, figures confirmed on screenshots, creativity.
+- **Checked against the code** (`prior.py`, `forward_fcps.py`, `denoiser.py`, `losses.py`, `reverse.py`,
+  `train_diffusion.py`, `eval_diffusion.py`, `crps.py`, `intervals.py`, the pems08f train config):
+  conditioning = [X_z | Ŷ_z] split into channels; denoiser = GCNN, K = 5 hops on S = D̃^{-1/2}(A+I)D̃^{-1/2}
+  of the plain repaired road graph (**same graph in both arms — method.md's "S of A_β for kron" was wrong,
+  corrected**), 3 layers, 24 channels, depthwise temporal conv (1×3), FiLM on a sinusoidal τ embedding
+  (t×10), SiLU, residual output r_c̄ + head; 17,305 params; loss = masked MSE with w = 1/(1+2c(t));
+  c̄ ~ logU[c_lo, c_0]; AdamW 1e-4/1e-4, batch 32, clip 1.0, EMA 0.999, val every epoch (512 windows,
+  K = 16, ancestral at the derived steps), best_crps.pt, patience 40, ≤ 200 epochs; sampler = exact per-mode
+  ancestral step with the ς² (x₀-posterior) term, 16 steps/decade (63 iso, 87–96 kron), DC rule optional;
+  eval: α = 0.1 (90 % intervals), normalised quantile CRPS (19 quantiles), MAE/RMSE of the ensemble mean,
+  Winkler, energy distance, sums scored with the fair CRPS (K(K−1)), PICP, spread/error; K = 100; y = 0 masked.
+  θ rescale to θ_min = 0.8 = GAD's γ; σ² = mean r²; ridge ρ = 0.1; derived floor f(c_lo) = 1.3e-3; β,γ grid
+  {0.003…0.3} × 40 log-spaced γ ∈ [1e-3, 3]; match on mean_h ratio of the total's sd.
+- **GSP reading written into §4.4.2:** for the prior alone, E[C₀ | C_c̄] = e^{−θ c̄} C_c̄ per mode (stationary
+  OU reversibility) = GAD's optimal filter for the space–time prior: graph low-pass at large c̄ → all-pass
+  at small c̄; for white noise a scalar gain. The learned denoiser = this filter + what the conditioning adds.
+- **Figures (all real PEMS08-flow data, computed on the Mac):** 4.2 the prior (correlation vs hops:
+  data 0.14→floor 0.045 vs prior 0.33→0.022; Σ_T; mode-variance map); 4.3 forward corruption of test window
+  3189 under both priors at c̄ ∈ {0, 0.01, 0.1, 1, 7} + survival curves (white noise = the θ = 0.8 curve for
+  every mode); 4.4 the optimal filter vs graph frequency at five c̄; 4.5 one real reverse chain of the trained
+  kron model (seed 42, epoch 49, 87 steps; state and estimate at 6 levels vs the true residual; verified
+  equal to `reverse_sample_ancestral` with the same generator). All confirmed on renders; 4.2 needed a
+  constrained layout (labels clipped), 4.3 a wider spacer.
+- **Algorithms:** 1 BuildPrior, 2 Corrupt (one-shot), 3 Train, 4 Sample — each line points at its equation.
+- **Appendix B (`app:derived`) written:** graph repair + regularising link, (β,γ) matching rule, floor
+  rule f(c_lo) = 1.3e-3 and n = ⌈16 log10(c_0/c_lo)⌉, Table B.1 from the six train configs + rebuilt priors
+  (identical to method.md §9).
+- Honest sentences kept: the prior over-states neighbour correlation (0.33 vs 0.14, "the price of matching
+  one scale"); the regularising link in one sentence; "43–62 % un-denoised at a fixed floor" in the appendix.
+- Remaining undefined refs (26) are Ch. 5–7 → old labels; resolved when those chapters are rewritten.
+

@@ -428,3 +428,43 @@ contribution." Changes:
 - No result numbers in Ch. 3 (unchanged rule). Words 5,624 → 5,250. Chapter overview no longer forces a
   page break, so the tree sits with the intro and §3.1 follows on the same page.
 - Rendered and checked: tree (page 30 of the PDF, fits 78.8–516.3 pt), mechanism figure (page 34, 91.8–509.7 pt).
+
+**User read 2 of Ch. 3 (2026-09-11):** "remove figure 3.2 … the tree looks too over-populated and confusing …
+remove the scored-by things … just important things for us … content much better written, good connection to
+the background and later … confirm that each paper is used correctly, confirm them by reading." Done:
+- **Chapter rewritten from scratch (5,250 → 3,290 words), five sections, one figure.** Every section now
+  opens from a Chapter-2 section and closes towards Chapter 4/5: §3.1 (backbones, §2.4.2/§2.1.3; non-generative
+  UQ gives one error bar per entry, §2.1.5) → §3.2 (diffusion forecasters; horizon handling §2.1.7; denoiser
+  fixed §2.6; "what these systems report" paragraph → Ch. 5 protocol) → §3.3 (residual, §2.1.6; DR's
+  Kronecker covariance = §2.3's separable form, placed in the stationary law in Ch. 4; ResCAL → history
+  conditioning in Ch. 4) → §3.4 (white noise's cost §2.6.1; horizon: schedules vs covariance → Σ_T of Ch. 4;
+  graph: IHD/blurring ↔ our eigenbasis §2.3, GiffCF, GAD §2.6, SPDE ↔ GMRF §2.2.5, product-graph GMRF §2.3.1 →
+  Ch. 5 prior-level comparison; Double-Diffusion = heat as mean, ours = heat as covariance) → §3.5 (the empty
+  leaf; the three claims Ch. 5 tests).
+- **Figure 3.1 (tree) simplified:** markers and legend removed, ≤5 names per leaf, the path to the thesis leaf
+  drawn in the accent colour; questions carry the section numbers. Figure 3.2 (mechanism) removed; its one idea
+  (three places where knowledge can enter: what the network is told / how it is built / the noise) is one
+  sentence in §3.4. No tables.
+- **Papers dropped as not important for the contribution:** PriSTI, GCRDD, TSGDiff, LaDCast, PSTDT, DiT,
+  fu2025 (DiT theory), DiffSTOCK, TSDiff, STVNN, DoubleDiffusion-on-meshes (wang2025meshdd), STAEformer kept
+  only as "attention line". 26 citations remain.
+- **Verification by reading (sources fetched online; Desktop PDF folder is blocked by macOS for this session):**
+  DiffSTG (arXiv 2301.13629: first DDPM for STG, non-autoregressive, UGnet, CRPS+RMSE) ✓; USTD (2310.17360:
+  shared pre-trained encoder + attention decoders for forecasting and kriging, one-shot, isotropic, MAE/RMSE/CRPS) ✓;
+  SpecSTG (2401.08119: autoregressive, spectral, "do not adopt CRPS_sum because sensors are not regarded as
+  features") ✓; DR (2301.06650: STGCN/GWN/AGCRN/ASTGCN/D2STGNN, Σ_Q⊗Σ_N+σ²I, bilinear AR on errors 1 h or 1 week
+  earlier, joint training, CRPS) ✓; CorrDiff (2309.15214: UNet mean trained first, diffusion on r = x − μ̂) ✓;
+  DiffCast (2312.06734: end-to-end joint, residual in segments, isotropic) ✓; GenCast (2312.15796: residual
+  w.r.t. last state, graph transformer on icosahedral mesh, 12 h steps, CRPS/spread-skill/rank histograms/
+  spatially pooled CRPS because per-cell scores "do not measure the accuracy of larger-scale spatial structures") ✓;
+  Double-Diffusion (2506.23053: heat prior = residual target + conditioning, Resfusion warm start, corruption
+  standard, 4 air-quality/traffic networks) ✓; Resfusion (2311.14900: reverse starts from the degraded input) ✓;
+  ResCAL (2209.05406: future errors estimated from previous errors + graph signals, real-time correction) ✓;
+  GiffCF (2311.08744: heat-equation smoothing on the item graph as forward process) ✓; ERDM (2506.20024: noise
+  increases with lead time, initialisation for the first window, weather + Navier–Stokes) ✓; TSGDiff (TRC 2025
+  abstract: graph-attention U-Net, horizon as input, point-to-point) ✓ but dropped.
+  From earlier PDF reading (recorded in the evidence table): HySRD-Net coverage-only-in-a-figure, SSTVM CRPS_sum
+  on PeMS08/AIR-BJ, TimeGrad/CSDI CRPS_sum. **Removed because not re-verifiable now:** HySRD-Net's ablation
+  percentages (per-sensor normalisation, stage-one error) and the "oracle trend" sentence. → still ask the user
+  to copy the literature PDFs into a readable folder.
+- Build clean, 0 undefined references; tree confirmed on render (page 30, fits 75.7–519.4 pt).

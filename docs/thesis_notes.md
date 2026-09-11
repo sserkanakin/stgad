@@ -354,3 +354,18 @@ and cited. and normal words are used, nothing too fancy so that it doesnt look l
 - Decision recorded: product-graph prior (Kronecker sum, same eigenbasis V_T⊗V_S, precision adds instead
   of multiplies) is a one-line ablation for later; Kronecker/strong products would need a full NH×NH
   eigendecomposition and stay text-only.
+
+**Campaign status (2026-09-11):**
+- **GCN wave done 24/24** (jobs 286347–286370). Ladder now complete: GWN 48/48, MLP 24/24, GCN 24/24.
+  GCN per-node CRPS kron vs iso: −1.0 % (pems04f) … −2.0 % (metrla), 6/6 datasets; every joint metric 6/6.
+  Metrics JSON synced to `results/20260909_ladder/`; `aggregate_matched.py` + `make_figures.py` rerun →
+  `ladder_results` / `ladder_prior` figures now show all three backbones (per-node gain MLP > GCN > GWN ≈ 0;
+  CRPS_sum gain −5…−24 % MLP, −3…−7 % GCN, −3…−6 % GWN; total-coverage gain shrinks the same way).
+- **Pooled-CRPS pass failed 0/48 — cause was NOT Kerberos:** the preflight wanted
+  `residuals/<ds>/gwn/seed42/train.npz`, which had been rotated off DAIC to fit the MLP/GCN caches (8 GB
+  windowshome quota). Fix: GCN caches removed from DAIC after md5 check of all 18 npz + 18 model files
+  against the Mac copies (`results/residuals/<ds>/gcn/seed42/`); GWN train+test npz (≈2.9 GB) uploaded
+  back. `rsync -a` fails on windowshome ("mkstemp … Operation not permitted") → use
+  `rsync -r --inplace --no-perms --no-owner --no-group --no-times --size-only`.
+  Submission script `scripts/daic/submit_pooled.sh` (12 jobs: 8×5 cells + 4×2 pems-bay cells,
+  `EVAL_EXTRA=--tag pooled`), dry-run verified on DAIC; submitted once the upload is md5-verified.

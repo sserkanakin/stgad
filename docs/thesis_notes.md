@@ -916,3 +916,20 @@ equations … 4.11 … 4.12 … 4.13 … focus on our novelty".
   say exactly that ("small but not nothing; a correctness fix that costs nothing, the same for both priors").
 - Algorithms referenced by section/equation labels accordingly; Appendix B's reference to the denoiser equation
   now points at §4.4.2. Build clean, 66 pages.
+
+## Factor ablation (2026-09-12 evening): temporal-only and spatial-only priors on PEMS04 flow
+
+User: "do we also have an ablation … what if we just do temporal factor, spatial factor?" → yes, on the dataset
+with the largest effects for both backbones (PEMS04 flow: linear −24 % on the total, GWN −4.9 %).
+- `src/diffusion/prior.py`: `prior="temporal"` (Σ_T ⊗ I: V_S = I, θ_{k,h} = 1/μ^T_h) and `prior="spatial"`
+  (I ⊗ Σ_S: V_T = I, θ_{k,h} = 1/μ^S_k, with the (β,γ) the Kronecker cell of the same dataset/backbone matched,
+  so only the missing factor differs); same θ_min = 0.8 and energy-match conventions. Verified on the Mac for
+  pems04f/gwn: temporal θ 0.8–4.6 (72 steps), spatial θ 0.8–19.1 (80 steps), Kronecker 0.8–110 (89 steps).
+  DAIC arms `temp|spat` in `histcond_cell.sbatch` (the spatial arm reads β,γ from the kron config in the same
+  EXP). Commit 6cc3faa.
+- Four arms per backbone then: white (neither) / temporal / spatial / Kronecker (both). Submitted: GWN cells
+  as jobs **286934–286937** (EXP 20260907_matched, seeds 42+1); the linear-backbone cells under EXP
+  20260909_ladder (where its iso/kron cells and the kron config live) after uploading its residual caches
+  (443 MB; data share 3.6 → 4.1 G of 8 G). All queued behind the product-graph and horizon passes.
+- To add to the thesis when done: a small four-arm table in §5.7 (Three Backbones) or a new short
+  subsection "Which factor does the work", per node and on the total and the cumulative sum, for both backbones.

@@ -37,4 +37,4 @@ axs[5].imshow(r0[order], aspect="auto", cmap=div, vmin=-vmax, vmax=vmax, interpo
 for ax in axs: ax.set_xlabel("lead time $\\to$", fontsize=6.5)
 axs[0].set_ylabel("sensors, ordered along the road graph $\\downarrow$", fontsize=6.5)
 fig.suptitle("the denoiser's estimate of the clean field along the reverse chain (PEMS08 flow, one test window)", fontsize=8)
-fig.savefig("tudelft_thesis_paper/figures/results/exp_reverse.pdf"); print("written; levels", [round(est[i][0], 4) for i in want], "of", n_steps, "steps")
+fig.savefig("tudelft_thesis_paper/figures/results/exp_reverse.pdf", bbox_inches="tight", pad_inches=0.03); print("written; levels", [round(est[i][0], 4) for i in want], "of", n_steps, "steps")

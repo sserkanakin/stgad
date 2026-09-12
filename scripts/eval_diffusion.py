@@ -508,7 +508,7 @@ def main():
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--dataset", choices=("metrla", "pemsbay", "pems04f", "pems04s",
                                           "pems08f", "pems08s"))
-    p.add_argument("--prior", choices=("kronecker", "isotropic", "cartesian", "strong"))
+    p.add_argument("--prior", choices=("kronecker", "isotropic", "cartesian", "strong", "temporal", "spatial"))
     p.add_argument("--backbone", choices=("gwn", "gcn", "mlp"), default="gwn",
                    help="which backbone's diffusion runs to eval (namespaces results)")
     p.add_argument("--exp", default="dev", help="experiment tag (matches training --exp)")

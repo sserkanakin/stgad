@@ -216,6 +216,43 @@ def _implied_total_sd(V_S: np.ndarray, sigma2: np.ndarray, sig: np.ndarray) -> n
     return np.array([np.sqrt(sig @ (V_S * sigma2[:, h]) @ V_S.T @ sig) for h in range(sigma2.shape[1])])
 
 
+# ─── single-factor priors (the ablation of the two factors) ──────────────────
+# "temporal": Σ_T ⊗ I — the horizon factor read from the residuals, sensors independent.
+# "spatial":  I ⊗ Σ_S — the road-graph factor, the same variance at every lead time.
+# both keep the kronecker prior's conventions (θ_min = γ_default, energy match), so
+# the four arms {neither, temporal, spatial, both} differ only in which factor is on.
+def _build_factor_prior(dataset: str, kind: str, seed: int, gamma: float | None, shrink_t: float | None,
+                        backbone: str, repair: bool, norm: str, global_edge: float | str | None) -> KroneckerPrior:
+    R, mask = _load_residuals_train(dataset, seed, backbone, norm)
+    _, N, H = R.shape
+    var_data = float((R[mask] ** 2).mean())
+    delta_h, R_H, Sigma_T = _fit_sigma_T(R, mask)
+    mu_T, V_T = np.linalg.eigh(Sigma_T)
+    mu_T = np.clip(mu_T, a_min=1e-12, a_max=None)
+    rho = SHRINK_T if shrink_t is None else shrink_t
+    if rho:
+        mu_T = (1.0 - rho) * mu_T + rho * mu_T.mean()
+    match_ratio = float("nan")
+    if kind == "temporal":
+        beta, gamma = 0.0, 0.0
+        V_S, lam_S = np.eye(N), np.zeros(N)
+        theta = np.broadcast_to(1.0 / mu_T[None, :], (N, H)).copy()
+    else:
+        if global_edge == "match":
+            beta, gamma, match_ratio = match_global_edge(dataset, seed, backbone, norm, repair, np.ones(H), var_data)
+        else:
+            beta = float(global_edge or 0.0)
+            gamma = GAMMA_DEFAULT if gamma is None else gamma
+        mu_S, V_S, lam = _spatial_factor(dataset, repair, beta, gamma)
+        lam_S = 1.0 / mu_S - gamma
+        V_T, mu_T = np.eye(H), np.ones(H)
+        theta = np.broadcast_to((1.0 / mu_S)[:, None], (N, H)).copy()
+    theta, sigma2_scale = _normalize_scale(theta)
+    sigma2_scale *= var_data / float((sigma2_scale / theta).mean())
+    return KroneckerPrior(dataset=dataset, gamma=gamma, V_S=V_S, lam_S=lam_S, V_T=V_T, mu_T=mu_T, theta=theta,
+                          delta_h=delta_h, R_H=R_H, sigma2_scale=sigma2_scale, global_edge=beta, match_ratio=match_ratio)
+
+
 # ─── product-graph priors (the ablation of the separable form) ──────────────
 # a GMRF on a product of the road graph and a path along the horizon has a
 # kronecker-SUM precision: L_S ⊕ L_T + γI for the cartesian product, plus the
@@ -376,6 +413,8 @@ def load_prior(
     prior="kronecker": Σ = Σ_T ⊗ Σ_S, Σ_T fit from the residuals, Σ_S the road-graph
       heat kernel (L+γI)^{-1}.
     prior="isotropic": scale-matched white noise Σ = σ²·I (the control).
+    prior="temporal" | "spatial": one factor of the kronecker prior alone (Σ_T ⊗ I, or
+      I ⊗ Σ_S with the given/matched (β, γ)), the ablation of the two factors.
     prior="cartesian" | "strong": the GMRF on the product of the road graph and a
       path along the horizon (kronecker-sum precision), the ablation of the
       separable form; (β, γ) matched with the exact total-spread rule.
@@ -391,13 +430,15 @@ def load_prior(
     """
     if prior == "isotropic":
         return _build_isotropic_prior(dataset, seed, backbone, norm)
-    if prior in PRODUCT_KINDS:
+    if prior in PRODUCT_KINDS or prior in ("temporal", "spatial"):
         if repair is None:
             from src.data.adjacency import REPAIR_GRAPH
             repair = REPAIR_GRAPH
-        return _build_product_prior(dataset, prior, seed, gamma, backbone, repair, norm, global_edge)
+        if prior in PRODUCT_KINDS:
+            return _build_product_prior(dataset, prior, seed, gamma, backbone, repair, norm, global_edge)
+        return _build_factor_prior(dataset, prior, seed, gamma, shrink_t, backbone, repair, norm, global_edge)
     if prior != "kronecker":
-        raise ValueError(f"unknown prior {prior!r}; use 'kronecker', 'isotropic', 'cartesian' or 'strong'")
+        raise ValueError(f"unknown prior {prior!r}; use 'kronecker', 'isotropic', 'cartesian', 'strong', 'temporal' or 'spatial'")
 
     R, mask = _load_residuals_train(dataset, seed, backbone, norm)
     _, N, H = R.shape

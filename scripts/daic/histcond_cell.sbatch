@@ -72,7 +72,18 @@ for cell in "${CELL_ARR[@]}"; do
     # precision on road graph x horizon path, (beta, gamma) matched with the exact rule
     cart)   prior_name="cartesian"; prior_extra=(--global-edge "${GLOBAL_EDGE}") ;;
     strong) prior_name="strong";    prior_extra=(--global-edge "${GLOBAL_EDGE}") ;;
-    *) echo "unknown arm '${arm}' (use iso|kron|cart|strong)"; fail=$((fail+1)); continue ;;
+    # single-factor ablation: temporal = Sigma_T (x) I; spatial = I (x) Sigma_S with the (beta, gamma)
+    # the kron cell of the same dataset/backbone matched, so only the missing factor differs
+    temp)   prior_name="temporal" ;;
+    spat)   prior_name="spatial"
+            kcfg="${OUTPUT_ROOT}/${EXP}/kron-hist/${ds}/${bb}/kronecker/seed${RESIDUAL_SEED}/train/config.json"
+            if [ -f "${kcfg}" ]; then
+              read -r kb kg < <("${DAIC_PYTHON}" -c "import json,sys; c=json.load(open(sys.argv[1])); print(c['global_edge_beta'], c['gamma_resolved'])" "${kcfg}")
+              prior_extra=(--global-edge "${kb}" --gamma "${kg}"); echo "  spatial arm takes (beta, gamma) = (${kb}, ${kg}) from ${kcfg}"
+            else
+              prior_extra=(--global-edge "${GLOBAL_EDGE}"); echo "  no kron config for ${ds}/${bb}; spatial arm matches its own (beta, gamma)"
+            fi ;;
+    *) echo "unknown arm '${arm}' (use iso|kron|cart|strong|temp|spat)"; fail=$((fail+1)); continue ;;
   esac
   cond_args=()
   [ "${cond}" = "hist" ] && cond_args=(--cond-past)

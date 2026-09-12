@@ -18,6 +18,7 @@ for arm in args:
         if not ms: print("missing", arm, ds); continue
         cell = {"n": len(ms)}
         for k, v in ms[0].items():
+            if any(k not in m for m in ms): continue                     # keys added to the eval mid-campaign
             if isinstance(v, (int, float)) and not isinstance(v, bool): cell[k] = {"mean": float(np.mean([m[k] for m in ms])), "sd": float(np.std([m[k] for m in ms], ddof=1)) if len(ms) > 1 else 0.0}
             elif isinstance(v, list) and v and isinstance(v[0], (int, float)): cell[k] = np.mean([m[k] for m in ms], axis=0).tolist()
         out[f"{ds}/{arm}"] = cell; print(arm, ds, "seeds", len(ms), "crps %.4f" % cell["crps"]["mean"], "tot crps %.1f" % cell["joint_tot_crps"]["mean"], "tot cov %.3f" % cell["joint_tot_coverage"]["mean"])

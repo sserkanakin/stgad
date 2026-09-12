@@ -885,3 +885,12 @@ is critical … more analysis like errors on horizons, is the temporal thing hel
   Fig 5.5(c) when it lands. Prior alone per-h (`prior_alone_baseline.py`, resumable) running on the Mac.
 - Figure/table numbering shifted (horizon figure = 5.5, ladder 5.6, reverse 5.7; tables 5.3 point, 5.4 CRPS,
   5.5 scale check, 5.6 sums, 5.7 alone, 5.8 chain); companion refs updated accordingly.
+- **Algorithms rewritten in the GAD-paper style** (user's screenshot of GAD's Algorithm 1): an Input line, then
+  four numbered plain statements each pointing at an equation (Train: sample window + log-uniform heat; corrupt
+  by Eq. 4.9; estimate by Eq. 4.11; one gradient step on Eq. 4.12). Sampling: draw the prior per mode; for each
+  grid level estimate + rotate, then the step of Eq. 4.15; final estimate rescaled and added to the point
+  forecast. No inline formulas or comments in the blocks any more. Build clean.
+- Product-graph arms: 8/24 cells done (pems08f/08s both arms, 2 seeds); early signal — on pems08f flow the
+  Cartesian/strong priors are slightly better than Kronecker on the network total (432.7/434.7 vs 437.7,
+  coverage 0.75 vs 0.72) and slightly worse on the cumulative sum; on pems08s Kronecker ahead (47.2 vs 48.3/50.0).
+  To be reported as it comes out; §4.3.1 / §6.2 wording to be adjusted then.

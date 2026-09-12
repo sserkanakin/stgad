@@ -933,3 +933,9 @@ with the largest effects for both backbones (PEMS04 flow: linear −24 % on the 
   (443 MB; data share 3.6 → 4.1 G of 8 G). All queued behind the product-graph and horizon passes.
 - To add to the thesis when done: a small four-arm table in §5.7 (Three Backbones) or a new short
   subsection "Which factor does the work", per node and on the total and the cumulative sum, for both backbones.
+- **Figure/table layout fix (user: "overlapping text with some edge … tables overlapping"):** all multi-panel
+  matplotlib figures now use constrained layout with explicit padding, shorter axis labels, tight bounding
+  boxes on save, and legends outside the data (figure-level legends under the panels for Figs 5.3, 5.5, 5.6);
+  the clipped x-label of Fig 5.2(c) and the colliding y-labels are gone (checked by render). All nine tables
+  that were scaled with \resizebox are now typeset unscaled at \scriptsize with 3.5 pt column padding, so every
+  table has the same font size and no header runs into a rule; 0 overfull boxes. Build clean, 66 pages.

@@ -223,12 +223,15 @@ def evaluate(dataset, prior, seed, *, exp, device, k, n_steps, alpha,
             lab = torch.as_tensor(spectral_clusters(dataset, kc), device=device)
             C_ind = torch.zeros(N, kc, device=device, dtype=torch.float32); C_ind[torch.arange(N, device=device), lab] = 1.0
             pools[f"c{kc}"] = C_ind; jt[f"c{kc}"] = dict(crps=0.0, cov=0.0, sp2=0.0, er2=0.0, n=0)
+    jt_h = {"tot": dict(crps=torch.zeros(H), cov=torch.zeros(H), sp2=torch.zeros(H), er2=torch.zeros(H), n=torch.zeros(H))}   # the total per lead time
     def _joint(key, S, T):                                   # S (k, ...) samples, T (...) truth
         a = jt[key]
-        a["crps"] += float(empirical_crps(S, T).sum()); a["n"] += T.numel()
+        fc = empirical_crps(S, T); a["crps"] += float(fc.sum()); a["n"] += T.numel()
         lo_, hi_ = torch.quantile(S, alpha / 2, dim=0), torch.quantile(S, 1 - alpha / 2, dim=0)
-        a["cov"] += float(((T >= lo_) & (T <= hi_)).float().sum())
-        a["sp2"] += float(S.var(dim=0, unbiased=True).sum()); a["er2"] += float((T - S.mean(0)).pow(2).sum())
+        hit = ((T >= lo_) & (T <= hi_)).float(); a["cov"] += float(hit.sum())
+        sp2 = S.var(dim=0, unbiased=True); er2 = (T - S.mean(0)).pow(2); a["sp2"] += float(sp2.sum()); a["er2"] += float(er2.sum())
+        if key in jt_h and T.dim() == 2:                     # (b, H): keep the per-lead-time sums as well
+            b = jt_h[key]; b["crps"] += fc.sum(0).cpu(); b["cov"] += hit.sum(0).cpu(); b["sp2"] += sp2.sum(0).cpu(); b["er2"] += er2.sum(0).cpu(); b["n"] += float(T.shape[0])
     qnum_n = torch.zeros(H); qden_n = torch.zeros(H)
     if fit_spread_grid is not None:
         fit_qnum = [torch.zeros(H) for _ in fit_spread_grid]
@@ -386,6 +389,8 @@ def evaluate(dataset, prior, seed, *, exp, device, k, n_steps, alpha,
         "winkler": overall(wink_n), "coverage": overall(cov_n),
         "crps_energy": overall(crps_n),                              # raw-unit fair/energy CRPS
         # joint: network total per horizon / hour-ahead cumulative per sensor
+        **{f"joint_{k}_{m}_h": v.tolist() for k, b in jt_h.items() for m, v in (
+            ("crps", b["crps"] / b["n"].clamp(min=1)), ("coverage", b["cov"] / b["n"].clamp(min=1)), ("spread_ratio", (b["sp2"] / b["er2"].clamp(min=1e-12)).sqrt()))},
         **{f"joint_{k}_{m}": v for k, a in jt.items() for m, v in (
             ("crps", a["crps"] / max(a["n"], 1)), ("coverage", a["cov"] / max(a["n"], 1)),
             ("spread_ratio", float(np.sqrt(a["sp2"] / max(a["er2"], 1e-12)))))},

@@ -894,3 +894,25 @@ is critical … more analysis like errors on horizons, is the temporal thing hel
   Cartesian/strong priors are slightly better than Kronecker on the network total (432.7/434.7 vs 437.7,
   coverage 0.75 vs 0.72) and slightly worse on the cumulative sum; on pems08s Kronecker ahead (47.2 vs 48.3/50.0).
   To be reported as it comes out; §4.3.1 / §6.2 wording to be adjusted then.
+
+## Step 4 final check (2026-09-12 evening): methodology maths and clutter
+
+User: "make sure that it is mathematically sound … no unnecessary details and constants and numbers and
+equations … 4.11 … 4.12 … 4.13 … focus on our novelty".
+- Equations 4.11 (denoiser layer), 4.13 (step coefficients) and 4.14 (DDPM posterior) removed; the chapter has
+  12 numbered equations. The denoiser architecture is now one paragraph in words (verified against
+  `GCNNDenoiser.forward`: graph filter of order 5 → +width-3 horizon convolution → FiLM on the heat level → SiLU;
+  output = input + correction; three input channels). The loss (now 4.11) is written as w(c̄)·masked MSE with
+  w = 1/(1+2c_t) (verified: `snr_weighted_mse` with `fcps_rate_torch`). The sampler is one equation (now 4.12)
+  with a(c)=e^{−θc}, s(c)=σ²(1−e^{−2θc})/θ defined in one line and v defined in words.
+- Numbers removed from the chapter: toy-prior variances/correlations/precision ratio, the schedule constants
+  (→ Table C.1), the erasure levels (in words), the step counts (→ Appendix B), the optimiser settings (→ Table
+  C.1), the channel count. Kept: θ_min = 0.8 (the unit of c̄) and 17,305 parameters.
+- **Correction of an unsupported claim:** the text said DDPM's variance choice was "up to a quarter too small per
+  step for the slow modes and negligible for white noise". Checked numerically on the actual geometric grid: the
+  per-step deficit is ≤13 % for every θ (0.8, 10, 100 alike — on a geometric grid it is scale-free), and a chain
+  with the prior's filter and DDPM's variance ends 4 % too narrow on every mode at 16 steps/decade, 8 % at 8,
+  15 % at 4; the exact variance reproduces the prior's spread at any density. The thesis and the companion now
+  say exactly that ("small but not nothing; a correctness fix that costs nothing, the same for both priors").
+- Algorithms referenced by section/equation labels accordingly; Appendix B's reference to the denoiser equation
+  now points at §4.4.2. Build clean, 66 pages.

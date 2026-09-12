@@ -31,9 +31,9 @@ div = LinearSegmentedColormap.from_list("div", [ACC, "#FFFFFF", WARM]); vmax = 3
 fig, axs = plt.subplots(1, 6, figsize=(6.4, 2.35), constrained_layout=True)
 for ax, i in zip(axs[:5], want):
     c, f = est[i]; ax.imshow(f[order], aspect="auto", cmap=div, vmin=-vmax, vmax=vmax, interpolation="nearest")
-    ax.set_title(("start, $\\bar c=%g$" % c) if i == steps[0] else ("end, at the floor" if i == steps[-1] else "$\\bar c=%.3g$, step %d of %d" % (c, i, n_steps)), fontsize=7)
+    ax.set_title(("start\n$\\bar c=%g$" % c) if i == steps[0] else ("end\nat the floor" if i == steps[-1] else "step %d of %d\n$\\bar c=%.3g$" % (i, n_steps, c)), fontsize=7)
     ax.set_xticks([]); ax.set_yticks([])
-axs[5].imshow(r0[order], aspect="auto", cmap=div, vmin=-vmax, vmax=vmax, interpolation="nearest"); axs[5].set_title("true residual", fontsize=7); axs[5].set_xticks([]); axs[5].set_yticks([])
+axs[5].imshow(r0[order], aspect="auto", cmap=div, vmin=-vmax, vmax=vmax, interpolation="nearest"); axs[5].set_title("true\nresidual", fontsize=7); axs[5].set_xticks([]); axs[5].set_yticks([])
 for ax in axs: ax.set_xlabel("lead time $\\to$", fontsize=6.5)
 axs[0].set_ylabel("sensors, ordered along the road graph $\\downarrow$", fontsize=6.5)
 fig.suptitle("the denoiser's estimate of the clean field along the reverse chain (PEMS08 flow, one test window)", fontsize=8)

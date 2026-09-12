@@ -835,3 +835,26 @@ like … connections to previous chapters … add the final chapters too".
   total), heavy-tailed law over the modes, other fields). **Summary rewritten** to the current story.
 - Appendix A re-pointed to the new labels (eq:m_forward_sde/mode, eq:m_rotate, eq:m_prior, subsec:m_eigen) and
   notation (θ_{k,h}); the intro's result paragraph mentions the prior-alone finding. Build: 0 errors, 66 pages.
+
+## Step 5 round 4 (2026-09-12): figures made readable, final chapters restructured
+
+User: "some figures are just not understandable … too confusing … the last two chapters are over repeating same
+things. please make a better structure for all … check other thesis examples if needed."
+- Reviewed every figure page again. Simplified the dense ones: **Fig 2.4** (product graph) now draws only the
+  Cartesian product (spatial + temporal edges; the diagonal edges of the strong product are named in the legend,
+  not drawn). **Fig 5.2** (prior fit) redesigned: (a) three priors at six sizes of sum, mean with range error
+  bars; (b) the network total per dataset as grouped bars for white / Cartesian / strong / Kronecker; (c) the
+  lead-time profile as mean + range band, Kronecker vs Cartesian; likelihood gains moved to Table 5.2 only.
+  **Fig 5.6** (reverse chain) redrawn as one row: the denoiser's estimate at five levels (start 7, 0.47, 0.048,
+  0.0049, floor) plus the true residual (`scripts/analysis/reverse_chain_figure.py`, real chain via the
+  sampler's step callback, window 3189, seed 42 checkpoint). Figures 2.1–2.3, 2.5, 3.1, 4.1–4.3, 5.1, 5.3–5.5
+  judged clear and left as they are.
+- Repetition removed following the reference-thesis template (conclusion in every chapter, but short):
+  **§5.8** is one paragraph without RQ labels; **Ch. 6** is now 6.1 What the results mean (four run-in
+  paragraphs: dependence vs marginals, the one pattern, supply vs the forecaster, the prior alone vs the trained
+  model), 6.2 Relation to previous work, 6.3 Limitations, 6.4 Conclusion (three sentences) — numbers are not
+  repeated, each claim points at its section; **Ch. 7 "Conclusions and Recommendations"**: 7.1 Conclusions
+  (RQ1–3 in words, one headline number each, plus one paragraph tying back to the contributions of §1.5),
+  7.2 Recommendations (for practice; the four research recommendations). The old "Contributions revisited",
+  "When to use it" and "Implications" sections are gone.
+- Build clean (0 errors, 0 undefined refs, 64 pages); PDF copied back.

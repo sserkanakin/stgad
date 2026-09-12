@@ -54,26 +54,29 @@ if "residual" in only or not only:
     ax.set_ylim(0, 9.5); ax.legend(fontsize=6, loc="upper right", handlelength=1.2)
     fig.savefig(f"{OUT}/exp_residual_structure.pdf"); plt.close(fig); print("exp_residual_structure")
 
-# ---------------- 5.3 the prior's fit: exact formula, four priors ----------------
+# ---------------- 5.3 the prior's fit: exact formula ----------------
 if ("prior" in only or not only) and struct is not None and len(struct) == 6:
-    scales = struct["pems08f"]["scales"]; lab = {"iso": "white noise", "road08": "road graph only", "matched": "Kronecker prior (used)", "cartesian": "Cartesian product graph", "strong": "strong product graph"}
+    lab = {"iso": "white noise", "road08": "road graph only", "matched": "Kronecker prior (used)", "cartesian": "Cartesian product graph", "strong": "strong product graph"}
     pc = {"iso": MUTED, "road08": AMBER, "matched": ACC, "cartesian": VIOLET, "strong": GREEN}
     fig, axs = plt.subplots(1, 3, figsize=(6.4, 2.4), constrained_layout=True)
+    # (a) three priors at six sizes of sum: mean over datasets, range as error bars
     ax = axs[0]
-    for p in ("iso", "road08", "cartesian", "strong", "matched"):
-        R = np.array([struct[ds]["priors"][p]["ratio_test"] for ds in DS]); ax.plot(range(6), R.mean(0), "o-", color=pc[p], lw=1.2, ms=2.5, label=lab[p])
-        ax.fill_between(range(6), R.min(0), R.max(0), color=pc[p], alpha=0.15, lw=0)
+    for k, p in enumerate(("iso", "road08", "matched")):
+        R = np.array([struct[ds]["priors"][p]["ratio_test"] for ds in DS]); xs = np.arange(6) + (k - 1) * 0.12
+        ax.errorbar(xs, R.mean(0), yerr=[R.mean(0) - R.min(0), R.max(0) - R.mean(0)], fmt="o-", color=pc[p], lw=1.2, ms=3, capsize=2, elinewidth=0.7, label=lab[p])
     ax.axhline(1, color=INK, lw=0.7, ls=":"); ax.set_xticks(range(6)); ax.set_xticklabels(["sensor", "1-hop", "64 reg.", "16 reg.", "4 reg.", "network"], rotation=35, ha="right", fontsize=6.5)
-    ax.set_ylabel("spread of the sum: prior ÷ measured"); ax.set_title("(a) six sizes of sum, test windows", loc="left"); ax.legend(fontsize=5.5, loc="lower left", handlelength=1.5)
+    ax.set_ylim(0.2, 1.3); ax.set_ylabel("spread of the sum: prior ÷ measured"); ax.set_title("(a) by size of the sum", loc="left"); ax.legend(fontsize=6, loc="lower left", handlelength=1.5)
+    # (b) the network total per dataset, the four priors that can reach it
     ax = axs[1]
-    for j, ds in enumerate(DS):
-        ax.plot(range(1, 13), struct[ds]["priors"]["matched"]["total_profile_test"], "-", color=cols[j], lw=1.1, label=names[ds])
-    ax.axhline(1, color=INK, lw=0.7, ls=":"); ax.set_xticks([1, 6, 12]); ax.set_xlabel("lead time (steps of 5 min)"); ax.set_ylabel("network total: prior ÷ measured")
-    ax.set_title("(b) network total, by lead time", loc="left"); ax.legend(fontsize=5, ncol=1, loc="upper right", handlelength=1.5)
+    for k, p in enumerate(("iso", "cartesian", "strong", "matched")):
+        ax.bar(x + (k - 1.5) * 0.2, [struct[ds]["priors"][p]["ratio_test"][-1] for ds in DS], 0.2, color=pc[p], label=lab[p])
+    ax.axhline(1, color=INK, lw=0.7, ls=":"); xticks(ax); ax.set_ylim(0, 1.7); ax.set_yticks([0, 0.5, 1.0]); ax.set_ylabel("network total: prior ÷ measured"); ax.set_title("(b) the network total, per dataset", loc="left"); ax.legend(fontsize=6, loc="upper left", ncol=2, handlelength=1.2)
+    # (c) by lead time: mean and range over datasets, Kronecker against Cartesian
     ax = axs[2]
-    for k, p in enumerate(("road08", "cartesian", "strong", "matched")):
-        ax.bar(x + (k - 1.5) * 0.2, [struct[ds]["priors"]["iso"]["nll_test"] - struct[ds]["priors"][p]["nll_test"] for ds in DS], 0.2, color=pc[p], label=lab[p])
-    xticks(ax); ax.set_ylabel("nats per entry"); ax.set_title("(c) likelihood gain", loc="left"); ax.set_ylim(-0.3, 1.35); ax.axhline(0, color=INK, lw=0.5); ax.legend(fontsize=5.5, loc="upper left", handlelength=1.2)
+    for p, ls in (("matched", "-"), ("cartesian", "--")):
+        P = np.array([struct[ds]["priors"][p]["total_profile_test"] for ds in DS]); ax.plot(range(1, 13), P.mean(0), ls, color=pc[p], lw=1.3, label=lab[p]); ax.fill_between(range(1, 13), P.min(0), P.max(0), color=pc[p], alpha=0.15, lw=0)
+    ax.axhline(1, color=INK, lw=0.7, ls=":"); ax.set_xticks([1, 6, 12]); ax.set_xlabel("lead time (steps of 5 min)"); ax.set_ylabel("network total: prior ÷ measured")
+    ax.set_title("(c) by lead time", loc="left"); ax.set_ylim(0.3, 2.0); ax.legend(fontsize=6, loc="upper right", handlelength=1.5)
     fig.savefig(f"{OUT}/exp_prior_fit.pdf"); plt.close(fig); print("exp_prior_fit")
 
 # ---------------- 5.5 the network total: three panels ----------------

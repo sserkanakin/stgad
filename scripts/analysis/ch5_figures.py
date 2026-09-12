@@ -56,11 +56,11 @@ if "residual" in only or not only:
 
 # ---------------- 5.3 the prior's fit: exact formula, four priors ----------------
 if ("prior" in only or not only) and struct is not None and len(struct) == 6:
-    scales = struct["pems08f"]["scales"]; lab = {"iso": "white noise", "road08": "road graph only", "matched": "Kronecker prior (used)", "cartesian": "product-graph prior"}
-    pc = {"iso": MUTED, "road08": AMBER, "matched": ACC, "cartesian": VIOLET}
+    scales = struct["pems08f"]["scales"]; lab = {"iso": "white noise", "road08": "road graph only", "matched": "Kronecker prior (used)", "cartesian": "Cartesian product graph", "strong": "strong product graph"}
+    pc = {"iso": MUTED, "road08": AMBER, "matched": ACC, "cartesian": VIOLET, "strong": GREEN}
     fig, axs = plt.subplots(1, 3, figsize=(6.4, 2.4), constrained_layout=True)
     ax = axs[0]
-    for p in ("iso", "road08", "cartesian", "matched"):
+    for p in ("iso", "road08", "cartesian", "strong", "matched"):
         R = np.array([struct[ds]["priors"][p]["ratio_test"] for ds in DS]); ax.plot(range(6), R.mean(0), "o-", color=pc[p], lw=1.2, ms=2.5, label=lab[p])
         ax.fill_between(range(6), R.min(0), R.max(0), color=pc[p], alpha=0.15, lw=0)
     ax.axhline(1, color=INK, lw=0.7, ls=":"); ax.set_xticks(range(6)); ax.set_xticklabels(["sensor", "1-hop", "64 reg.", "16 reg.", "4 reg.", "network"], rotation=35, ha="right", fontsize=6.5)
@@ -71,9 +71,9 @@ if ("prior" in only or not only) and struct is not None and len(struct) == 6:
     ax.axhline(1, color=INK, lw=0.7, ls=":"); ax.set_xticks([1, 6, 12]); ax.set_xlabel("lead time (steps of 5 min)"); ax.set_ylabel("network total: prior ÷ measured")
     ax.set_title("(b) network total, by lead time", loc="left"); ax.legend(fontsize=5, ncol=1, loc="upper right", handlelength=1.5)
     ax = axs[2]
-    for k, p in enumerate(("road08", "cartesian", "matched")):
-        ax.bar(x + (k - 1) * 0.26, [struct[ds]["priors"]["iso"]["nll_test"] - struct[ds]["priors"][p]["nll_test"] for ds in DS], 0.26, color=pc[p], label=lab[p])
-    xticks(ax); ax.set_ylabel("nats per entry"); ax.set_title("(c) likelihood gain", loc="left"); ax.set_ylim(0, 1.3); ax.legend(fontsize=5.5, loc="upper left", handlelength=1.2)
+    for k, p in enumerate(("road08", "cartesian", "strong", "matched")):
+        ax.bar(x + (k - 1.5) * 0.2, [struct[ds]["priors"]["iso"]["nll_test"] - struct[ds]["priors"][p]["nll_test"] for ds in DS], 0.2, color=pc[p], label=lab[p])
+    xticks(ax); ax.set_ylabel("nats per entry"); ax.set_title("(c) likelihood gain", loc="left"); ax.set_ylim(-0.3, 1.35); ax.axhline(0, color=INK, lw=0.5); ax.legend(fontsize=5.5, loc="upper left", handlelength=1.2)
     fig.savefig(f"{OUT}/exp_prior_fit.pdf"); plt.close(fig); print("exp_prior_fit")
 
 # ---------------- 5.5 the network total: three panels ----------------

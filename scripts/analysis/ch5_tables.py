@@ -37,11 +37,11 @@ if struct and len(struct) == 6:
     for ds in DS:
         s = struct[ds]["priors"]; p = prior[ds]
         rows.append(f"{names[ds]} & {p['A2_corr_by_hops']['test'][0]:.2f} & {p['B7_match']['neighbour_corr_prior']:.2f} & "
-                    f"{s['matched']['ratio_train'][-1]:.2f} & {s['matched']['ratio_test'][-1]:.2f} & {s['cartesian']['ratio_train'][-1]:.2f} & {s['cartesian']['ratio_test'][-1]:.2f} & "
-                    f"{100 * p['B3_separability']['kron_rank1_fraction']:.0f} & {s['iso']['nll_test'] - s['matched']['nll_test']:.2f} & {s['iso']['nll_test'] - s['cartesian']['nll_test']:.2f}")
-    tab("lrrrrrrrrr", " & \\multicolumn{2}{c}{neighbour corr.} & \\multicolumn{4}{c}{spread of the network total, prior / measured} & Kron. & \\multicolumn{2}{c}{likelihood gain (nats)} \\\\\n"
-        "\\cmidrule(lr){2-3}\\cmidrule(lr){4-7}\\cmidrule(lr){9-10}\n & & & \\multicolumn{2}{c}{Kronecker prior} & \\multicolumn{2}{c}{product-graph prior} & share & Kronecker & product \\\\\n"
-        "dataset & data & prior & train & test & train & test & (\\%) & prior & graph \\\\", rows, "exp_priorfit")
+                    f"{s['matched']['ratio_train'][-1]:.2f} & {s['matched']['ratio_test'][-1]:.2f} & {s['cartesian']['ratio_train'][-1]:.2f} & {s['cartesian']['ratio_test'][-1]:.2f} & {s['strong']['ratio_train'][-1]:.2f} & {s['strong']['ratio_test'][-1]:.2f} & "
+                    f"{100 * p['B3_separability']['kron_rank1_fraction']:.0f} & {s['iso']['nll_test'] - s['matched']['nll_test']:.2f} & {s['iso']['nll_test'] - s['cartesian']['nll_test']:.2f} & {s['iso']['nll_test'] - s['strong']['nll_test']:.2f}")
+    tab("lrrrrrrrrrrrr", " & \\multicolumn{2}{c}{neighbour corr.} & \\multicolumn{6}{c}{spread of the network total, prior / measured} & Kron. & \\multicolumn{3}{c}{likelihood gain over white (nats)} \\\\\n"
+        "\\cmidrule(lr){2-3}\\cmidrule(lr){4-9}\\cmidrule(lr){11-13}\n & & & \\multicolumn{2}{c}{Kronecker} & \\multicolumn{2}{c}{Cartesian} & \\multicolumn{2}{c}{strong} & share & & & \\\\\n"
+        "dataset & data & prior & train & test & train & test & train & test & (\\%) & Kronecker & Cartesian & strong \\\\", rows, "exp_priorfit")
 else: print("skip exp_priorfit (prior_structures incomplete)")
 
 # ---- 5.4 per node ----

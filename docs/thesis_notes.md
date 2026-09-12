@@ -792,3 +792,46 @@ nothing else. make it all blend better please. only relevant information too."
   locates it in the one network-wide pattern. Table 5.5 (`tables/exp_alone.tex`).
 - Build clean (0 errors, 69 pages; Ch. 5 p. 41–, App. B p. 65, App. C p. 67); remaining undefined refs are all
   Ch. 6/7 → old labels. Companion updated via `scripts/analysis/companion_update.py` (same URL).
+
+## Step 5 round 3 (2026-09-12 afternoon): product-graph arms started, final pass on Ch. 4–5, Ch. 6/7 + Summary rewritten
+
+User: "yes lets try to train those too … kronecker cartesian and strong product graphs … final run on [methodology
+and experiments] … point to point correct … no unnecessary info … mathematically sound … my writing style, thesis
+like … connections to previous chapters … add the final chapters too".
+- **Product-graph priors as trainable arms** (`src/diffusion/prior.py`: `cartesian` and `strong`; kronecker-SUM
+  precision λ_S(k)+λ_T(h)+γ, strong adds λ_S·λ_T; eigenvectors V_S ⊗ V_T(path); (β,γ) matched with the EXACT
+  total-spread rule; same θ_min=0.8 / energy-match conventions; the tensor product graph is not offered — its
+  precision is γ on N+H−1 modes). `train_diffusion.py`/`eval_diffusion.py` accept `--prior cartesian|strong`;
+  `histcond_cell.sbatch` arms `cart|strong` (with `--global-edge match`). Verified on the Mac: the cartesian
+  prior reproduces the analysis pair (0.01, 0.0494, ratio 1.0004) exactly; strong (0.01, 0.0745); c_lo 2.5e-5 /
+  3.0e-5, 88 / 86 steps; smoke train + eval ran end to end. Committed a91f682, pushed, pulled on DAIC.
+- **DAIC:** val residual caches uploaded (460 MB; data share now ~3.7 G of 8 G, out 0.7 G). 24 cells submitted
+  14:0x as jobs **286838–286861** (`EXP=20260907_matched`, arms cart/strong, GWN, seeds 42 and 1, one cell per
+  job, 8 running / 16 pending; results land in `20260907_matched/{cart,strong}-hist/<ds>/gwn/<prior>/seed*/`).
+  To aggregate: mean over the two seeds per (ds, prior) from `eval/test_metrics_bestcrps_ancestral*.json`
+  (no tag suffix) — a small aggregator is still to be written; then a "trained product-graph arms" paragraph
+  in §5.3/§5.5 and the ablation sentence in §6.3 ("the thesis does not claim it yet") becomes a result.
+- **Strong product prior at prior level** (`prior_structures.py --strong`, resumable): pairs (β,γ) 0.01/0.075,
+  0.003/0.314, 0/0.012, 0.01/0.314, 0.01/0.112, 0.003/0.049; test network ratio 0.90/0.70/1.02/0.64/0.88/0.76;
+  NLL gain over white 0.14/0.52/−0.24/0.40/0.26/0.57 (below white on pems04f); lead-time profile 1.2–1.8 → 0.35–0.67.
+  Fig 5.2 now five priors (band per prior), Table 5.2 with Cartesian and strong columns.
+- **Final pass Ch. 4** (verified against code): denoiser equation corrected (the horizon convolution acts on the
+  graph-filtered features: Z = Σ S^k X W; X' = SiLU(FiLM(Z + conv_H Z))); τ defined (position of c̄ in the log
+  range); conditioning channels stated; "checkerboards gone by c̄ ≈ 0.05" (was 0.01); mode ordering wording
+  ("ordered by variance …"); stacking sentence de-jargonised; step-density sentence corrected (same density per
+  decade for both priors, EM would need thousands for the fastest modes); seeds sentence (4 main / 2 weaker);
+  "What is compared" names both product graphs. Toy numbers verified (var 1.0/1.5/2.1, corr 0.8/0.85, θ ratio 417).
+- **Final pass Ch. 5:** "eight to fifteen times" (was six); §5.3 likelihood sentence corrected (road-only within
+  0.03 nats of matched on every dataset — the link buys the spread of sums, not likelihood; matched is NOT the
+  closest of the priors on 3/6); product-graph sentences with the exact gaps (Cartesian up to 0.5, strong up to
+  0.4 nats; strong below white on pems04f).
+- **Ch. 6 Discussion rewritten** (6.1 why sums not nodes; 6.2 prior alone vs trained model — the denoiser adds
+  conditioning/sharpness, loses calibration on the total, the single shared coefficient; 6.3 literature — the
+  graph line publishes no sums, GAD sampler, product graphs at prior level, trained arms "in progress, not
+  claimed"; 6.4 limitations — separability/lead-time profile, the rule's approximation, kurtosis 7–45, test var
+  1.1–2.4× train, seeds/one denoiser/binary graphs/GCN PEMS-BAY exception; 6.5 when to use it; 6.6 conclusion).
+- **Ch. 7 Conclusion rewritten** (answers to RQ1–3 with the numbers; contributions; future work: lead-time-
+  dependent shared part, exact/two-moment matching, a denoiser that keeps the shared coefficient (loss term on the
+  total), heavy-tailed law over the modes, other fields). **Summary rewritten** to the current story.
+- Appendix A re-pointed to the new labels (eq:m_forward_sde/mode, eq:m_rotate, eq:m_prior, subsec:m_eigen) and
+  notation (θ_{k,h}); the intro's result paragraph mentions the prior-alone finding. Build: 0 errors, 66 pages.

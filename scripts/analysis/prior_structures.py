@@ -13,7 +13,7 @@ from src.diffusion import prior as P
 from src.data.adjacency import load_adjacency, compute_normalized_laplacian, spectral_clusters
 from src.data.residual_dataset import train_residual_sigma
 from src.utils import paths
-DS = sys.argv[1:] or ["pems08f", "pems08s", "pems04f", "pems04s", "metrla", "pemsbay"]
+DS = [a for a in sys.argv[1:] if a != "--strong"] or ["pems08f", "pems08s", "pems04f", "pems04s", "metrla", "pemsbay"]
 def unit(ds, split, sig):
     d = np.load(paths.residual_npz(ds, split, 42, "gwn")); R = d["residuals"].astype(np.float64) / sig[None, :, None]; M = d["mask"].astype(bool)
     ok = M.reshape(len(M), -1).mean(1) > 0.5; return np.where(M, R, 0.0)[ok], M[ok]
@@ -25,7 +25,6 @@ def nll_test(R, M, VS, VT, var):
 import os
 out = json.load(open("results/analysis/prior_structures.json")) if os.path.exists("results/analysis/prior_structures.json") else {}
 ONLY_STRONG = "--strong" in sys.argv          # add the strong product prior to a finished file
-DS = [d for d in DS if d != "--strong"]
 for ds in DS:
     if ds in out and not ONLY_STRONG: print(ds, "already done"); continue
     if ds in out and ONLY_STRONG and "strong" in out[ds]["priors"]: print(ds, "strong already done"); continue

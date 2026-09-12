@@ -44,15 +44,34 @@ if struct and len(struct) == 6:
         "dataset & data & prior & train & test & train & test & train & test & (\\%) & Kronecker & Cartesian & strong \\\\", rows, "exp_priorfit")
 else: print("skip exp_priorfit (prior_structures incomplete)")
 
-# ---- 5.4 per node ----
+# ---- 5.4 per node: point accuracy against the published methods, then CRPS ----
+pubv = load("published_verified.json") or {}
+def best(ds, key):
+    cands = [(v[key], m) for m, v in (pubv.get(ds) or {}).items() if isinstance(v, dict) and key in v]
+    return min(cands) if cands else None
 rows = []
 for ds in DS:
-    pub = dos["published"].get(ds); best = min(pub.items(), key=lambda kv: kv[1]["crps"]) if pub else None
-    i, k = g[f"{ds}/iso"], g[f"{ds}/kron"]; a = alone.get(ds) if alone else None
+    i, k = g[f"{ds}/iso"], g[f"{ds}/kron"]; bm, br = best(ds, "mae"), best(ds, "rmse")
+    rows.append(f"{names[ds]} & " + (f"{bm[0]:.2f} ({bm[1]})" if bm else "---") + " & " + (f"{br[0]:.2f} ({br[1]})" if br else "---") +
+                f" & {dos['backbone_mae'][f'{ds}/gwn']:.2f} & {m(i, 'mae'):.2f} & {m(k, 'mae'):.2f} & {m(i, 'rmse'):.2f} & {m(k, 'rmse'):.2f}")
+tab("lrrrrrrr", " & \\multicolumn{2}{c}{best published} & backbone & \\multicolumn{2}{c}{MAE of the ensemble mean} & \\multicolumn{2}{c}{RMSE of the ensemble mean} \\\\\n\\cmidrule(lr){2-3}\\cmidrule(lr){5-6}\\cmidrule(lr){7-8}\n"
+    "dataset & MAE (method) & RMSE (method) & MAE & white & Kronecker & white & Kronecker \\\\", rows, "exp_point")
+rows = []
+for ds in DS:
+    bc = best(ds, "crps"); i, k = g[f"{ds}/iso"], g[f"{ds}/kron"]; a = alone.get(ds) if alone else None
     al = f"{a['iso']['crps']:.4f} & {a['kron']['crps']:.4f}" if a else "--- & ---"
-    rows.append(f"{names[ds]} & " + (f"{best[1]['crps']:.4f} ({best[0]})" if best else "---") + f" & {al} & {m(i, 'crps'):.4f} & {m(k, 'crps'):.4f} & {pct(m(i, 'crps'), m(k, 'crps')):+.1f}")
+    rows.append(f"{names[ds]} & " + (f"{bc[0]:.4f} ({bc[1]})" if bc else "---") + f" & {al} & {m(i, 'crps'):.4f} & {m(k, 'crps'):.4f} & {pct(m(i, 'crps'), m(k, 'crps')):+.1f}")
 tab("lrrrrrr", " & best published & \\multicolumn{2}{c}{prior alone, no denoiser} & \\multicolumn{3}{c}{diffusion} \\\\\n\\cmidrule(lr){3-4}\\cmidrule(lr){5-7}\n"
     "dataset & CRPS (method) & white & Kronecker & white & Kronecker & $\\Delta$ (\\%) \\\\", rows, "exp_pernode")
+# the scale check: CRPS over MAE/mean|y| for ours and for the published methods
+rows = []
+for ds in DS:
+    d = np.load(ROOT / f"results/residuals/{ds}/gwn/seed42/test.npz"); Y = d["y_pred"] + d["residuals"]; M = d["mask"].astype(bool) & (np.abs(Y) > 1e-6); my = float(np.abs(Y[M]).mean())
+    i, k = g[f"{ds}/iso"], g[f"{ds}/kron"]; a = alone.get(ds) if alone else None
+    r_ours = f"{m(i, 'crps') / (m(i, 'mae') / my):.2f} / {m(k, 'crps') / (m(k, 'mae') / my):.2f}"; r_alone = f"{a['kron']['crps'] / (a['kron']['mae'] / my):.2f}" if a else "---"
+    pr = [v["crps"] / (v["mae"] / my) for mm, v in (pubv.get(ds) or {}).items() if isinstance(v, dict) and "crps" in v and "mae" in v]
+    rows.append(f"{names[ds]} & {my:.1f} & " + (f"{min(pr):.2f} to {max(pr):.2f}" if pr else "---") + f" & {r_alone} & {r_ours}")
+tab("lrrrr", "dataset & mean $|y|$ & published methods & prior alone & white / Kronecker \\\\", rows, "exp_scalecheck")
 
 # ---- 5.5 sums ----
 rows = []

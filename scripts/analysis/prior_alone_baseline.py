@@ -50,6 +50,6 @@ for ds in DS:
         out[ds][arm] = {"crps": qnum / qden, "mae": mae / cnt, "coverage": cov / cnt, "joint_tot_crps": tot_crps / ntot, "joint_tot_coverage": tot_cov / ntot, "joint_tot_spread_ratio": float(np.sqrt(sp2 / er2)), "windows": B, "K": K,
                         "crps_h": (qnum_h / qden_h).tolist(), "mae_h": (mae_h / cnt_h).tolist(), "coverage_h": (cov_h / cnt_h).tolist(),
                         "joint_tot_crps_h": (tot_crps_h / ntot_h).tolist(), "joint_tot_coverage_h": (tot_cov_h / ntot_h).tolist(), "joint_tot_spread_ratio_h": np.sqrt(sp2_h / er2_h).tolist()}
-        print(ds, arm, {k: round(v, 4) for k, v in out[ds][arm].items()}, flush=True)
+        print(ds, arm, {k: round(v, 4) for k, v in out[ds][arm].items() if not isinstance(v, list)}, flush=True)
     json.dump(out, open("results/analysis/prior_alone.json", "w"), indent=1)
 print("saved results/analysis/prior_alone.json")

@@ -858,3 +858,30 @@ things. please make a better structure for all … check other thesis examples i
   7.2 Recommendations (for practice; the four research recommendations). The old "Contributions revisited",
   "When to use it" and "Implications" sections are gone.
 - Build clean (0 errors, 0 undefined refs, 64 pages); PDF copied back.
+
+## Step 5 round 5 (2026-09-12): MAE/RMSE vs the published methods, the "is something wrong?" check, scores along the horizon
+
+User: "we do not talk about the mae rmse results at all … do we actually win over [SOTA] … even with graphwavenet
+backbone and just pure prior on it everything wins over the published numbers. that is weird … ensure for sure this
+is critical … more analysis like errors on horizons, is the temporal thing helping".
+- **Verification (critical):** protocol identical to SpecSTG/DiffSTG/HySRD (60/20/20, P=H=12, 100 samples, zero
+  targets masked, CSDI normalised quantile CRPS — SpecSTG Table 2 text re-read from arXiv 2401.08119: "CRPS Avg =
+  Σ CRPS / Σ|x|", CRPS_sum declined). Published rows re-read and stored in `results/analysis/published_verified.json`
+  (TimeGrad/GCRDD/DiffSTG/PriSTI/SpecSTG on the four PEMS sets with RMSE; HySRD-Net as recorded, paywalled now).
+  Our GWN backbone matches the literature's GWN (STAEformer re-run: PEMS08 14.40/23.39, PEMS04 18.53/29.92; GWN
+  paper METR-LA 2.69/3.07/3.53, PEMS-BAY 1.30/1.63/1.95). Scale check: CRPS/(MAE/mean|y|) = 0.76–0.88 for every
+  published method, 0.77–0.82 for ours, 0.79–0.92 prior alone → the whole gap is the backbone's point accuracy
+  (published ensemble means 7–23 % less accurate than GWN). **Nothing is wrong**; §5.4 now shows the check
+  (Table 5.3 point accuracy vs published MAE/RMSE + backbone; Table 5.4 CRPS; Table 5.5 scale check), §6.2 and
+  §7.1 say it in one sentence each.
+- **Along the horizon (new §5.6 + Fig 5.5 + Table C.5):** backbone MAE grows ×1.2–1.3 (flow) / ×1.6–2.3 (speed)
+  over the hour; ensemble mean 1–3 % above the backbone at every lead time (both noises); per-node CRPS gain of
+  the prior nil at h=1, ~1 % mid-horizon on speed sets; coverage: white 0.88 → 0.82–0.86 (too wide early, too
+  narrow late — same variance at every h at the start of its chain), Kronecker flatter 0.86–0.87 → 0.84–0.86.
+  `scripts/analysis/horizon_analysis.py` (per-cell metrics mae_h/crps_h/coverage_h + backbone per-h MAE +
+  prior alone per-h). Eval now also writes `joint_tot_{crps,coverage,spread_ratio}_h` (commit 28feb35);
+  **horizon eval pass submitted on DAIC: jobs 286889–286900** (`submit_horizon.sh`, `--tag horizon`, 48 GWN
+  cells, queued behind the product-graph runs) → the trained models' network total by lead time goes into
+  Fig 5.5(c) when it lands. Prior alone per-h (`prior_alone_baseline.py`, resumable) running on the Mac.
+- Figure/table numbering shifted (horizon figure = 5.5, ladder 5.6, reverse 5.7; tables 5.3 point, 5.4 CRPS,
+  5.5 scale check, 5.6 sums, 5.7 alone, 5.8 chain); companion refs updated accordingly.

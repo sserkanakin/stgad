@@ -740,3 +740,55 @@ folded into reading the companion's results part.
 - Build: the thesis builds in the scratchpad (adjustbox is not in TinyTeX → wide tables use \resizebox);
   remaining undefined references are Ch. 6/7 → old labels.
 
+
+## Step 5 round 2 (2026-09-12): runs complete, Ch. 5 rebuilt to "blend", exact prior fit, prior alone
+
+User: "are we done with all our runs. if so bring everything together … some plots you added are hard to
+understand and everything is too complicated and no words you just added too many tables and figures with
+nothing else. make it all blend better please. only relevant information too."
+- **Runs:** GPU campaign complete (GWN 48/48, GCN 24/24, MLP 24/24, DC-rule 48/48, pooled 48/48). Two CPU
+  analyses on the Mac closed the two announced gaps: the prior used on its own (`scripts/analysis/
+  prior_alone_baseline.py` → `results/analysis/prior_alone.json`) and the prior fit at every scale with the
+  exact per-lead-time covariance plus the product-graph prior (`scripts/analysis/prior_structures.py` →
+  `results/analysis/prior_structures.json`). Both scripts first ran with a 3-operand `np.einsum` (naive loop,
+  no BLAS) and were restarted with matrix products; they resume per dataset.
+- **Finding (must stay honest):** the (β,γ) matching rule and the old prior-fit analysis read the mode
+  variances at the lead-time index (as if V_T = I). Exact spread ratio of the network total, matched prior:
+  train 1.08/1.27/1.07/1.33/1.18/1.37, test 0.98/0.87/1.09/0.83/1.02/1.01 (pems08f/08s/04f/04s/metrla/pemsbay);
+  by lead time at test h=1 1.3–1.7, h=12 0.6–0.9 — the shared part grows along the horizon and a separable
+  prior gives every lead time the same spatial correlation. Re-matching exactly would give test 0.62–1.02
+  (larger γ everywhere). NLL gain over white: matched 0.11–0.93 nats ≈ road-only 0.13–0.90 → the global edge
+  buys the spread of sums, not likelihood. Product-graph (Cartesian) prior matched the same way: test network
+  0.64–1.02, NLL 0.03–0.5 nats worse than the Kronecker prior on every dataset, same lead-time problem.
+  Written into Appendix B (matching paragraph + Table B.1 columns rule / exact train / exact test), §4.3.2
+  softened ("close to … Appendix B gives the rule and how close it gets"), §5.3 and the Ch. 5 conclusion.
+- **Chapter 5 rebuilt** (`mainmatter/5_experiments.tex`): 6 figures (was 13), 6 tables (was 8), prose that
+  introduces and reads every figure and table. 5.1 Setup (+ the prior alone as the third forecaster) · 5.2 the
+  residual (one 3-panel figure: horizon growth 1.3–3.0×, neighbour corr 0.13–0.21, shared share 3.4–6.7 % =
+  6–15× independent; total 0.9–1.9× independent at h=1, 3.1–6.7× at h=12) · 5.3 the prior's fit (one 3-panel
+  figure: four priors at six scales with min–max bands, matched prior by lead time, NLL gains; Table 5.2) ·
+  5.4 per node (Table 5.3 with best published / prior alone / diffusion; tie −0.1…−0.9 %; both 9–15 % below
+  the best published; the prior alone already 6–8 % below) · 5.5 sums (3-panel total figure with a shared
+  legend, Table 5.4, pooled 2-panel figure: CRPS change and coverage gain vs size of sum; "The prior on its
+  own" paragraph + Table 5.5) · 5.6 backbones (3-panel figure incl. the network-wide share per backbone on
+  the test windows: linear 8–20 %, GCN 5–7 %, GWN 3–7 %) · 5.7 diagnostics (chain table; DC rule in prose —
+  corrected: it lowers CRPS_sum on 2 of 6 and raises it 4–16 % on 4, not "3 of 6"; reverse-chain figure) ·
+  5.8 conclusion. Figures by `scripts/analysis/ch5_figures.py`, tables by `scripts/analysis/ch5_tables.py`
+  (also Table B.1 and the Appendix C grids). Every figure checked by render.
+- **Appendix C rewritten** (`appendix/appendix-b-results.tex`, was the retired campaign): training settings
+  (verified in `scripts/train_diffusion.py`: AdamW 1e-4/1e-4, clip 1, EMA 0.999, best_crps.pt, patience 40),
+  backbone MAE, per-node scores in full, seed spread, pooled grid, three-backbone grid, DC-rule ablation,
+  sampling cost (13–112 min per test split; Kronecker ≈ 40 % more time for 87–96 vs 63 steps).
+- Next step: Ch. 6/7 (still reference old labels), then the summary; companion artifact updated with the
+  exact R2 numbers and the prior-alone row.
+- **Prior alone, all six (GWN, K=100, test):** per node the trained Kronecker model is 3–13 % better in CRPS
+  than the prior alone (pems08f 2.7, 08s 7.8, 04f 3.7, 04s 8.8, metrla 12.2, pemsbay 13.4 %), which itself is
+  already 5–8 % below the best published CRPS on the four PEMS sets; per-node coverage: prior alone 0.89–0.93,
+  trained 0.85–0.86. On the network total the prior alone covers 0.81–0.92 (spread 0.66–1.08) against 0.55–0.74
+  (0.37–0.63) for the trained model; CRPS_sum: the prior alone beats both trained models on the two flow sets
+  (−4.4 / −11.3 % vs white), loses on the four speed sets (+4.7 / +6.8 / +10.5 / −1.0 % vs white). Reading in
+  §5.5: the denoiser sharpens around the conditioning (good per node, and on the total for speed) but narrows
+  the network-wide part below prior and data (costs calibration everywhere, and CRPS_sum on flow); §5.7
+  locates it in the one network-wide pattern. Table 5.5 (`tables/exp_alone.tex`).
+- Build clean (0 errors, 69 pages; Ch. 5 p. 41–, App. B p. 65, App. C p. 67); remaining undefined refs are all
+  Ch. 6/7 → old labels. Companion updated via `scripts/analysis/companion_update.py` (same URL).

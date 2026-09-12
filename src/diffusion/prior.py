@@ -216,6 +216,113 @@ def _implied_total_sd(V_S: np.ndarray, sigma2: np.ndarray, sig: np.ndarray) -> n
     return np.array([np.sqrt(sig @ (V_S * sigma2[:, h]) @ V_S.T @ sig) for h in range(sigma2.shape[1])])
 
 
+# ─── product-graph priors (the ablation of the separable form) ──────────────
+# a GMRF on a product of the road graph and a path along the horizon has a
+# kronecker-SUM precision: L_S ⊕ L_T + γI for the cartesian product, plus the
+# elementwise product term for the strong product (the parametric product-graph
+# shift with the normalised laplacians as the factor shifts). both are diagonal in
+# V_S ⊗ V_T with V_T the path's eigenvectors, so the forward process, the denoiser
+# and the sampler run unchanged; only θ and the two bases differ from the
+# separable prior. the kronecker (tensor) product graph is not offered: its
+# precision λ_S·λ_T + γ is γ on the N+H−1 modes where either factor is zero.
+PRODUCT_KINDS = {
+    "cartesian": lambda lS, lT: lS[:, None] + lT[None, :],
+    "strong": lambda lS, lT: lS[:, None] + lT[None, :] + lS[:, None] * lT[None, :],
+}
+
+
+def _path_laplacian_eig(H: int) -> tuple[np.ndarray, np.ndarray]:
+    """(λ, V) of the normalised laplacian of the path graph on H lead times, ascending."""
+    from src.data.adjacency import compute_normalized_laplacian
+    L = compute_normalized_laplacian(np.eye(H, k=1) + np.eye(H, k=-1))
+    lam, V = np.linalg.eigh(L)
+    o = np.argsort(lam)
+    return lam[o].astype(np.float64), V[:, o].astype(np.float64)
+
+
+def _implied_total_sd_exact(V_S: np.ndarray, V_T: np.ndarray, sigma2: np.ndarray,
+                            sig: np.ndarray) -> np.ndarray:
+    """sd the prior implies for the NETWORK TOTAL at each lead time, with the temporal
+    eigenvectors mixed in: C_h = V_S diag(Σ_h' V_T[h,h']² sigma2[:,h']) V_Sᵀ. this is
+    the exact form; _implied_total_sd reads sigma2[:, h] directly, which is exact
+    only when V_T is the identity (see Appendix B of the thesis)."""
+    return np.array([np.sqrt(sig @ (V_S * ((V_T[h] ** 2) @ sigma2.T)) @ V_S.T @ sig)
+                     for h in range(V_T.shape[0])])
+
+
+def _product_theta(dataset: str, repair: bool, beta: float, gamma: float, kind: str, H: int):
+    """(θ, V_S, V_T, λ_S, λ_T): precision eigenvalues of the product-graph GMRF, unscaled."""
+    lam_S, V_S = _load_laplacian_eig(dataset, repaired=repair, global_edge=beta)
+    lam_T, V_T = _path_laplacian_eig(H)
+    return PRODUCT_KINDS[kind](lam_S, lam_T) + gamma, V_S, V_T, lam_S, lam_T
+
+
+def match_product_graph(dataset: str, seed: int, backbone: str, norm: str, repair: bool,
+                        kind: str, var_data: float, H: int,
+                        betas=(0.0, 0.003, 0.01, 0.03, 0.1, 0.3),
+                        gammas=None) -> tuple[float, float, float]:
+    """(β, γ, ratio) for a product-graph prior, chosen like match_global_edge (the
+    prior-implied sd of the network total over the measured one on the train
+    residuals, closest to 1) but with the exact per-lead-time covariance, since the
+    path's eigenvectors are far from the identity."""
+    from src.data.residual_dataset import train_residual_sigma
+    gammas = np.geomspace(1e-3, 3.0, 40) if gammas is None else gammas
+    d = np.load(paths.residual_npz(dataset, "train", seed, backbone))
+    R = d["residuals"].astype(np.float64)
+    M = d["mask"].astype(bool)
+    sig = np.asarray(train_residual_sigma(dataset, seed, backbone, norm=norm))
+    sig = np.broadcast_to(sig.reshape(-1), (R.shape[1],)).astype(np.float64)
+    tot = np.where(M, R, 0.0).sum(axis=1)
+    ok = M.reshape(len(M), -1).mean(1) > 0.5
+    truth = tot[ok].std(axis=0)
+    best = None
+    for beta in betas:
+        lam_S, V_S = _load_laplacian_eig(dataset, repaired=repair, global_edge=float(beta))
+        lam_T, V_T = _path_laplacian_eig(H)
+        for g in gammas:
+            sigma2 = 1.0 / (PRODUCT_KINDS[kind](lam_S, lam_T) + float(g))
+            sigma2 *= var_data / sigma2.mean()
+            r = float((_implied_total_sd_exact(V_S, V_T, sigma2, sig) / truth).mean())
+            if best is None or abs(r - 1.0) < abs(best[2] - 1.0):
+                best = (float(beta), float(g), r)
+    return best
+
+
+def _build_product_prior(dataset: str, kind: str, seed: int, gamma: float | None,
+                         backbone: str, repair: bool, norm: str,
+                         global_edge: float | str | None) -> KroneckerPrior:
+    """the product-graph GMRF as a noise prior: same scale conventions as the
+    separable prior (θ_min = γ_default, mean mode variance = the residual's)."""
+    R, mask = _load_residuals_train(dataset, seed, backbone, norm)
+    _, N, H = R.shape
+    var_data = float((R[mask] ** 2).mean())
+    delta_h, R_H, _ = _fit_sigma_T(R, mask)            # recorded for reporting only
+    match_ratio = float("nan")
+    if global_edge == "match":
+        beta, gamma, match_ratio = match_product_graph(dataset, seed, backbone, norm, repair,
+                                                       kind, var_data, H)
+    else:
+        beta = float(global_edge or 0.0)
+        gamma = GAMMA_DEFAULT if gamma is None else gamma
+    theta, V_S, V_T, lam_S, lam_T = _product_theta(dataset, repair, beta, gamma, kind, H)
+    theta, sigma2_scale = _normalize_scale(theta)
+    sigma2_scale *= var_data / float((sigma2_scale / theta).mean())
+    return KroneckerPrior(
+        dataset=dataset,
+        gamma=gamma,
+        V_S=V_S,
+        lam_S=lam_S,
+        V_T=V_T,
+        mu_T=1.0 / (lam_T + gamma),                     # the path factor alone, nominal
+        theta=theta,
+        delta_h=delta_h,
+        R_H=R_H,
+        sigma2_scale=sigma2_scale,
+        global_edge=beta,
+        match_ratio=match_ratio,
+    )
+
+
 def match_global_edge(dataset: str, seed: int, backbone: str, norm: str,
                       repair: bool, mu_T: np.ndarray, var_data: float,
                       betas=(0.003, 0.01, 0.03, 0.1, 0.3),
@@ -269,6 +376,9 @@ def load_prior(
     prior="kronecker": Σ = Σ_T ⊗ Σ_S, Σ_T fit from the residuals, Σ_S the road-graph
       heat kernel (L+γI)^{-1}.
     prior="isotropic": scale-matched white noise Σ = σ²·I (the control).
+    prior="cartesian" | "strong": the GMRF on the product of the road graph and a
+      path along the horizon (kronecker-sum precision), the ablation of the
+      separable form; (β, γ) matched with the exact total-spread rule.
     gamma:    spatial shift γ. None = GAMMA_DEFAULT (ignored when global_edge="match").
     shrink_t: temporal ridge ρ. None = SHRINK_T. 0 = faithful empirical Σ_T.
     global_edge: β for the all-to-all edge (adjacency.add_global_edge); None/0 = road
@@ -281,8 +391,13 @@ def load_prior(
     """
     if prior == "isotropic":
         return _build_isotropic_prior(dataset, seed, backbone, norm)
+    if prior in PRODUCT_KINDS:
+        if repair is None:
+            from src.data.adjacency import REPAIR_GRAPH
+            repair = REPAIR_GRAPH
+        return _build_product_prior(dataset, prior, seed, gamma, backbone, repair, norm, global_edge)
     if prior != "kronecker":
-        raise ValueError(f"unknown prior {prior!r}; use 'kronecker' or 'isotropic'")
+        raise ValueError(f"unknown prior {prior!r}; use 'kronecker', 'isotropic', 'cartesian' or 'strong'")
 
     R, mask = _load_residuals_train(dataset, seed, backbone, norm)
     _, N, H = R.shape

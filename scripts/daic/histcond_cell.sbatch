@@ -68,7 +68,11 @@ for cell in "${CELL_ARR[@]}"; do
   case "${arm}" in
     iso)  prior_name="isotropic" ;;
     kron) prior_name="kronecker"; prior_extra=(--global-edge "${GLOBAL_EDGE}") ;;
-    *) echo "unknown arm '${arm}' (use iso|kron)"; fail=$((fail+1)); continue ;;
+    # product-graph priors (the ablation of the separable form): kronecker-sum
+    # precision on road graph x horizon path, (beta, gamma) matched with the exact rule
+    cart)   prior_name="cartesian"; prior_extra=(--global-edge "${GLOBAL_EDGE}") ;;
+    strong) prior_name="strong";    prior_extra=(--global-edge "${GLOBAL_EDGE}") ;;
+    *) echo "unknown arm '${arm}' (use iso|kron|cart|strong)"; fail=$((fail+1)); continue ;;
   esac
   cond_args=()
   [ "${cond}" = "hist" ] && cond_args=(--cond-past)

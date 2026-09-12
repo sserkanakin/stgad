@@ -616,7 +616,7 @@ def main() -> None:
                                           "pems08f", "pems08s"), required=True)
     p.add_argument("--backbone", choices=("gwn", "gcn", "mlp"), default="gwn",
                    help="which backbone's residuals to model. namespaces results")
-    p.add_argument("--prior", choices=("kronecker", "isotropic"), default="kronecker",
+    p.add_argument("--prior", choices=("kronecker", "isotropic", "cartesian", "strong"), default="kronecker",
                    help="noise prior: kronecker Σ_T⊗Σ_S, or the isotropic σ²I control")
     p.add_argument("--gamma", type=float, default=None,
                    help="Laplacian shift γ in Σ_S=(L+γI)^-1 (kronecker only). None = GAMMA_DEFAULT")

@@ -24,8 +24,11 @@ def nll_test(R, M, VS, VT, var):
     C = VS.T @ R @ VT; return float(0.5 * np.mean(C ** 2 / var + np.log(2 * np.pi * var)))
 import os
 out = json.load(open("results/analysis/prior_structures.json")) if os.path.exists("results/analysis/prior_structures.json") else {}
+ONLY_STRONG = "--strong" in sys.argv          # add the strong product prior to a finished file
+DS = [d for d in DS if d != "--strong"]
 for ds in DS:
-    if ds in out: print(ds, "already done"); continue
+    if ds in out and not ONLY_STRONG: print(ds, "already done"); continue
+    if ds in out and ONLY_STRONG and "strong" in out[ds]["priors"]: print(ds, "strong already done"); continue
     cfg = json.load(open(f"results/20260907_matched/kron-hist/{ds}/gwn/kronecker/seed42/train/config.json"))
     sig = np.asarray(train_residual_sigma(ds, 42, "gwn", norm="pernode")).reshape(-1)
     Rtr, Mtr = unit(ds, "train", sig); Rte, Mte = unit(ds, "test", sig); N, H = Rtr.shape[1], Rtr.shape[2]; var_data = float((Rtr[Mtr] ** 2).mean())
@@ -69,7 +72,12 @@ for ds in DS:
             r = float(np.mean(total_profile(VSb, VTp, var, tot_tr)))
             if best is None or abs(r - 1) < abs(best[0] - 1): best = (r, b, float(g), VSb, var)
     priors["cartesian"] = (best[3], VTp, best[4]); cart_pair = (best[1], best[2], best[0])
-    res = {"N": N, "matched_pair": [beta, gamma], "kron_exact_pair": list(kron_exact_pair), "cartesian_pair": list(cart_pair), "scales": list(sets), "priors": {}}
+    # strong product (adds the λ_S·λ_T term), built by the live loader so it is exactly the trained arm's prior
+    ps = P.load_prior(ds, "strong", 42, backbone="gwn", norm="pernode", global_edge="match"); priors["strong"] = (ps.V_S, ps.V_T, ps.sigma2); strong_pair = (ps.global_edge, ps.gamma, ps.match_ratio)
+    if ONLY_STRONG and ds in out:
+        res = out[ds]; res["strong_pair"] = list(strong_pair); priors = {"strong": priors["strong"]}
+    else:
+        res = {"N": N, "matched_pair": [beta, gamma], "kron_exact_pair": list(kron_exact_pair), "cartesian_pair": list(cart_pair), "strong_pair": list(strong_pair), "scales": list(sets), "priors": {}}
     for name, (VS, VT, var) in priors.items():
         res["priors"][name] = {"ratio_train": [ratio(Rtr, VS, VT, var, S) for S in sets.values()], "ratio_test": [ratio(Rte, VS, VT, var, S) for S in sets.values()],
                                "total_profile_train": total_profile(VS, VT, var, tot_tr), "total_profile_test": total_profile(VS, VT, var, tot_te), "nll_test": nll_test(Rte, Mte, VS, VT, var)}

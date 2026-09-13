@@ -980,3 +980,12 @@ a story and no useless information … with reasons for the experiments".
   Structure Matters" = backbones + which factor; 5.8 the diagnostic separates sampler / prior / network). Section
   5.7 renamed; §5.5's prior-alone paragraph renamed "What the denoiser adds to the prior". Same figures and
   tables (7 figures, 10 tables), no new content, some repetition trimmed. Build clean, 68 pages.
+- **Ch. 4 additions (user: "an example about how our prior works with matrices, like the background"; "why more
+  steps for STGAD?"):** Example 4.1 at the end of §4.3.4 builds the prior on the three-node path of Example 2.2
+  with our conventions (unit-diagonal Σ_S at γ = 0.5 → correlations 0.53/0.29, μ^S {1.91, 0.71, 0.37}; Σ_T with
+  variance 1 → 1.5 and correlation 0.6, μ^T {2.03, 0.47}; the 6×6 Kronecker block form; θ scaled to θ_min = 0.8
+  → {0.8 … 17.5}; σ² = 2.48 for unit mean mode variance; smoothest mode variance 3.1, roughest 0.14; the erasure
+  order at c̄ = 0.05 and 0.5); all numbers computed with numpy. §4.4.3 now explains the step count: more steps
+  for the Kronecker prior not because denoising is harder but because its modes span many time scales (the
+  roughest are erased at a heat ~100× smaller than the network-wide pattern), so the floor is lower and, at
+  the same density per decade, the chain is longer; each step is the same closed-form draw for both priors.

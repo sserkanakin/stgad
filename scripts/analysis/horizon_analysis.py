@@ -28,25 +28,20 @@ for ds in DS:
 json.dump(out, open("results/analysis/horizon_summary.json", "w"), indent=1)
 h = np.arange(1, 13)
 # ---- the figure: per-node scores by lead time, two datasets side by side would be too much: show all six as thin lines relative to h=1? no: pick the ratios ----
-fig, axs = plt.subplots(1, 3, figsize=(6.8, 2.6))
+fig, axs = plt.subplots(1, 2, figsize=(6.4, 2.5))
 cols = [ACC, VIOLET, GREEN, AMBER, WARM, INK]
-ax = axs[0]   # per-node CRPS by lead time, kron vs white as a ratio, and prior alone vs white
-for j, ds in enumerate(DS):
-    c = out[ds]; ax.plot(h, 100 * (np.array(c["kron"]["crps_h"]) / np.array(c["iso"]["crps_h"]) - 1), "-", color=cols[j], lw=1.1, label=names[ds])
-ax.axhline(0, color=MUTED, lw=0.8, ls="--"); ax.set_ylabel("CRPS change (%)"); ax.set_title("(a) per-node CRPS", loc="left"); h_, l_ = ax.get_legend_handles_labels(); fig.legend(h_, l_, loc="outside lower center", ncol=6, fontsize=6, handlelength=1.4)
-ax = axs[1]   # coverage by lead time: white, kron, prior alone (mean over datasets with range)
-for key, lab, col, ls in (("iso", "white noise", MUTED, "-"), ("kron", "Kronecker prior", ACC, "-"), ("alone", "prior alone", WARM, "--")):
+ax = axs[0]   # per-node coverage by lead time: white, kron, prior alone (mean over datasets with range)
+for key, lab, col, ls in (("iso", "white noise", MUTED, "-"), ("kron", "Kronecker prior", ACC, "-"), ("alone", "Kronecker prior alone", WARM, "--")):
     A = np.array([out[ds][key]["coverage_h"] for ds in DS if key in out[ds]])
     if len(A): ax.plot(h, A.mean(0), ls, color=col, lw=1.3, label=lab); ax.fill_between(h, A.min(0), A.max(0), color=col, alpha=0.15, lw=0)
-ax.axhline(0.9, color=INK, lw=0.7, ls=":"); ax.set_ylabel("coverage, 90 % interval"); ax.set_title("(b) per-node coverage", loc="left"); ax.legend(fontsize=6, loc="lower left", handlelength=1.5)
-ax = axs[2]   # network total by lead time: the trained models (horizon eval pass) and the priors alone
+ax.axhline(0.9, color=INK, lw=0.7, ls=":"); ax.text(1.2, 0.897, "nominal level", fontsize=6, ha="left", va="top", color=INK); ax.set_ylabel("coverage of the 90 % interval"); ax.set_title("(a) per node", loc="left"); ax.legend(fontsize=6, loc="lower left", handlelength=1.5)
+ax = axs[1]   # the network total by lead time: trained models (horizon eval pass) and the prior alone
 ht = json.load(open("results/analysis/horizon_totals.json")) if os.path.exists("results/analysis/horizon_totals.json") else {}
 for key, lab, col, ls in (("iso", "white noise", MUTED, "-"), ("kron", "Kronecker prior", ACC, "-")):
     A = np.array([ht[f"{ds}/{key}"]["joint_tot_spread_ratio_h"] for ds in DS if f"{ds}/{key}" in ht])
     if len(A): ax.plot(h, A.mean(0), ls, color=col, lw=1.3, label=lab); ax.fill_between(h, A.min(0), A.max(0), color=col, alpha=0.15, lw=0)
-for key, lab, col in (("alone", "Kronecker, prior alone", WARM),):
-    A = np.array([out[ds][key]["joint_tot_spread_ratio_h"] for ds in DS if key in out[ds]])
-    if len(A): ax.plot(h, A.mean(0), "--", color=col, lw=1.3, label=lab)
-ax.axhline(1, color=INK, lw=0.7, ls=":"); ax.set_ylabel("total: spread ÷ error"); ax.set_title("(c) the network total", loc="left"); ax.legend(fontsize=6, loc="upper right", handlelength=1.5)
+A = np.array([out[ds]["alone"]["joint_tot_spread_ratio_h"] for ds in DS if "alone" in out[ds]])
+if len(A): ax.plot(h, A.mean(0), "--", color=WARM, lw=1.3, label="Kronecker prior alone")
+ax.axhline(1, color=INK, lw=0.7, ls=":"); ax.text(12, 1.01, "right width", fontsize=6, ha="right", va="bottom", color=INK); ax.set_ylabel("network total: spread ÷ error"); ax.set_title("(b) the network total", loc="left"); ax.legend(fontsize=6, loc="upper right", handlelength=1.5)
 for ax in axs: ax.set_xticks([1, 6, 12]); ax.set_xlabel("lead time (steps of 5 min)")
 fig.savefig("tudelft_thesis_paper/figures/results/exp_horizon.pdf", bbox_inches="tight", pad_inches=0.03); print("written; seeds per cell:", {ds: (out[ds]["iso"]["n_seeds"], out[ds]["kron"]["n_seeds"]) for ds in DS})

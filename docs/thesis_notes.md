@@ -989,3 +989,11 @@ a story and no useless information … with reasons for the experiments".
   for the Kronecker prior not because denoising is harder but because its modes span many time scales (the
   roughest are erased at a heat ~100× smaller than the network-wide pattern), so the floor is lower and, at
   the same density per decade, the chain is longer; each step is the same closed-form draw for both priors.
+- **Fewer figures in Ch. 5 (user: "3 different figures with statistics … confuses"; "lost on Fig 5.7"):** the
+  network-total bar figure dropped (its numbers are Table 5.6); the prior-fit figure reduced to two panels
+  (six sizes of sum; the total by lead time, Kronecker vs Cartesian); the horizon figure reduced to two panels
+  (per-node coverage; the total), with the per-node CRPS-by-lead-time curves left to Table C.5; the reverse-chain
+  figure redrawn as four panels (start / middle / end of the chain / truth) with labelled axes (sensor ordered
+  along the road × lead time) and a colour bar, and its paragraph now explains what a panel is before reading
+  it. Chapter now has 6 figures and 10 tables. Every page of Ch. 5 (42–51) checked by render: all figures and
+  tables sit directly after the text that introduces them, nothing clipped or overlapping.

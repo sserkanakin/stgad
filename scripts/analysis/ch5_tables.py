@@ -160,7 +160,7 @@ for ds in DS:
     rows.append(f"{names[ds]} & {m(i, 'crps'):.4f} $\\pm$ {sd(i, 'crps'):.4f} & {m(k, 'crps'):.4f} $\\pm$ {sd(k, 'crps'):.4f} & {m(i, 'joint_tot_crps'):.1f} $\\pm$ {sd(i, 'joint_tot_crps'):.1f} & {m(k, 'joint_tot_crps'):.1f} $\\pm$ {sd(k, 'joint_tot_crps'):.1f} & "
                 f"{m(i, 'joint_tot_coverage'):.3f} $\\pm$ {sd(i, 'joint_tot_coverage'):.3f} & {m(k, 'joint_tot_coverage'):.3f} $\\pm$ {sd(k, 'joint_tot_coverage'):.3f}")
 tab("lrrrrrr", " & \\multicolumn{2}{c}{per-node CRPS} & \\multicolumn{2}{c}{CRPS$_{\\mathrm{sum}}$, network total} & \\multicolumn{2}{c}{coverage of the total} \\\\\n\\cmidrule(lr){2-3}\\cmidrule(lr){4-5}\\cmidrule(lr){6-7}\n"
-    "dataset & white & Kronecker & white & Kronecker & white & Kronecker \\\\", rows, "app_seeds")
+    "dataset & white & Kronecker & white & Kronecker & white & Kronecker \\\\", rows, "app_spread")
 rows = []
 for ds in DS:
     p = pooled[ds]; i, k = g[f"{ds}/iso"], g[f"{ds}/kron"]
@@ -175,7 +175,7 @@ for ds in DS:
         i, k = lad[bb][f"{ds}/iso"], lad[bb][f"{ds}/kron"]
         cells += [f"{m(i, 'crps'):.4f}", f"{m(k, 'crps'):.4f}", f"{pct(m(i, 'joint_tot_crps'), m(k, 'joint_tot_crps')):+.1f}", f"{m(i, 'joint_tot_coverage'):.2f} / {m(k, 'joint_tot_coverage'):.2f}"]
     rows.append(names[ds] + " & " + " & ".join(cells))
-tab("lrrrrrrrrrrrr", " & \\multicolumn{4}{c}{linear (2 seeds)} & \\multicolumn{4}{c}{GCN (2 seeds)} & \\multicolumn{4}{c}{Graph WaveNet (4 seeds)} \\\\\n\\cmidrule(lr){2-5}\\cmidrule(lr){6-9}\\cmidrule(lr){10-13}\n"
+tab("lrrrrrrrrrrrr", " & \\multicolumn{4}{c}{linear} & \\multicolumn{4}{c}{GCN} & \\multicolumn{4}{c}{Graph WaveNet} \\\\\n\\cmidrule(lr){2-5}\\cmidrule(lr){6-9}\\cmidrule(lr){10-13}\n"
     " & \\multicolumn{2}{c}{node CRPS} & total & cov. & \\multicolumn{2}{c}{node CRPS} & total & cov. & \\multicolumn{2}{c}{node CRPS} & total & cov. \\\\\n"
     "dataset & white & Kron. & $\\Delta$ (\\%) & w. / K. & white & Kron. & $\\Delta$ (\\%) & w. / K. & white & Kron. & $\\Delta$ (\\%) & w. / K. \\\\", rows, "app_ladder")
 rows = []

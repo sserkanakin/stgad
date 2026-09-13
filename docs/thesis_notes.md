@@ -964,3 +964,19 @@ kept their credentials; only the interactive login lost the share (user renewed 
   coverage 0.81/0.86/0.81/0.85. Reading: the spatial factor carries the total, the temporal factor the sum along
   the horizon, each inert on the other's sum. Table 5.9 + "Which factor does the work" in §5.7; §6.1 and §7.1.
 - `horizon_analysis.py` glob now excludes the `_horizon` duplicates (seeds 4/4 again). Build clean, 68 pages.
+
+## Story pass on Chapter 5 (2026-09-13): no seeds, reasons first
+
+User: "do not talk about seeds anywhere … check the whole results section … step by step clear sections telling
+a story and no useless information … with reasons for the experiments".
+- Every mention of seeds removed from the visible text (Ch. 4 protocol sentence, Ch. 5 captions and prose, Ch. 6
+  limitations, Appendix C captions, table headers); the only trace is the internal label/file name of the spread
+  table, renamed `app_spread`. Where averaging must be stated it says "averaged over repeated training runs".
+- Chapter 5 rewritten as a story: the opening paragraph maps sections to RQs, and every section starts with why
+  the experiment is run (5.2 the prior's three assumptions must be true of a trained forecaster; 5.3 a badly
+  fitting prior would make the rest uninterpretable, and the Kronecker-vs-product-graph choice is settled by
+  measurement; 5.4 per-node scores first because the literature reports them, expected tie, then the scale
+  check; 5.5 a dependence prior can only show on sums; 5.6 the temporal factor's own axis; 5.7 "When the
+  Structure Matters" = backbones + which factor; 5.8 the diagnostic separates sampler / prior / network). Section
+  5.7 renamed; §5.5's prior-alone paragraph renamed "What the denoiser adds to the prior". Same figures and
+  tables (7 figures, 10 tables), no new content, some repetition trimmed. Build clean, 68 pages.

@@ -939,3 +939,28 @@ with the largest effects for both backbones (PEMS04 flow: linear −24 % on the 
   the clipped x-label of Fig 5.2(c) and the colliding y-labels are gone (checked by render). All nine tables
   that were scaled with \resizebox are now typeset unscaled at \scriptsize with 3.5 pt column padding, so every
   table has the same font size and no header runs into a rule; 0 overfull boxes. Build clean, 66 pages.
+
+## Results of the three overnight passes (2026-09-13): product graphs trained, horizon totals, factor ablation
+
+All 44 jobs completed (exit 0) between 14:28 and 04:07; the Kerberos ticket expired at 21:32 but the slurm jobs
+kept their credentials; only the interactive login lost the share (user renewed with kinit). Metrics JSONs synced
+(`results/20260907_matched/{cart,strong,temp,spat}-hist`, `..._horizon.json` under iso/kron,
+`results/20260909_ladder/{temp,spat}-hist`), aggregated by `aggregate_arms.py` (now with --exp/--bb/--ds/--out).
+- **Product-graph arms trained (GWN, 2 seeds):** all three structured priors beat white noise on every sum. Total
+  CRPS_sum vs white: Kron −2.8/−5.7/−4.9/−4.1/−4.4/−5.0; Cartesian −3.9/−4.3/−3.3/−3.0/−3.6/−4.9; strong
+  −3.4/−2.6/−2.5/−2.7/−3.2/−3.9 → Kronecker best on 5/6 (pems08f: Cartesian better by 1.1), strong last on 5/6;
+  cumulative sum: Kron −0.7…−2.0 vs Cart −0.2…−0.8, strong −0.3…−1.2 → Kronecker on 6/6; per node ties.
+  Table 5.8 + paragraph in §5.5; §5.3 points forward; §6.2 product-graph paragraph now a result ("real but
+  modest once a denoiser is trained; any of them vs white is not"); §7.1 and §4.3.1/§4.5 updated.
+- **Horizon pass (48 cells, `joint_tot_*_h`):** the trained models' total-CRPS gain grows with lead time: h1
+  +0.1/+0.9/−2.8/+1.1/−1.4/+3.3 % (slightly worse on 4 datasets, where the prior is too wide), h12 −2.6/−6.9/
+  −5.9/−4.7/−3.9/−4.6 %; coverage and spread fall with h for both, Kronecker above white throughout. Overall
+  numbers reproduce the main pass exactly. Fig 5.5(c) now shows the trained models (mean + range) with the
+  prior alone dashed; Table C.6 (network total by lead time) added; §5.6 text rewritten.
+- **Factor ablation (pems04f, temp/spat arms, 2 seeds):** GWN — per node all tie; total: temporal −0.5 %,
+  spatial −6.2 %, both −4.9 % (within seed sd of spatial alone); coverage 0.59/0.59/0.68/0.67; cumulative:
+  temporal −0.8, spatial −0.3, both −1.0, cumulative coverage 0.77/0.79/0.76/0.79. Linear — per node −1.9/−2.4/
+  −3.2 (additive); total −5.5/−20.2/−24.2; coverage 0.35/0.43/0.63/0.59; cumulative −1.3/−4.4/−4.1 with
+  coverage 0.81/0.86/0.81/0.85. Reading: the spatial factor carries the total, the temporal factor the sum along
+  the horizon, each inert on the other's sum. Table 5.9 + "Which factor does the work" in §5.7; §6.1 and §7.1.
+- `horizon_analysis.py` glob now excludes the `_horizon` duplicates (seeds 4/4 again). Build clean, 68 pages.

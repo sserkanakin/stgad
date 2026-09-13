@@ -18,7 +18,7 @@ for ds in DS:
     bb_mae_h = [float(np.abs(R[:, :, h][M[:, :, h]]).mean()) for h in range(R.shape[2])]
     cell = {"backbone_mae_h": bb_mae_h}
     for arm, prior in (("iso", "isotropic"), ("kron", "kronecker")):
-        fs = [f for f in glob.glob(f"results/20260907_matched/{arm}-hist/{ds}/gwn/{prior}/seed*/eval/test_metrics_bestcrps_ancestral*.json") if "_pooled" not in f and "_cmgauss" not in f]
+        fs = [f for f in glob.glob(f"results/20260907_matched/{arm}-hist/{ds}/gwn/{prior}/seed*/eval/test_metrics_bestcrps_ancestral*.json") if "_pooled" not in f and "_cmgauss" not in f and "_horizon" not in f]
         ms = [json.load(open(f)) for f in fs]
         cell[arm] = {k: np.mean([m[k] for m in ms], axis=0).tolist() for k in ("mae_h", "crps_h", "coverage_h", "winkler_h")}; cell[arm]["rmse_h"] = np.sqrt(np.mean([m["mse_h"] for m in ms], axis=0)).tolist(); cell[arm]["n_seeds"] = len(ms)
     if ds in alone and "crps_h" in alone[ds]["kron"]:
@@ -39,10 +39,14 @@ for key, lab, col, ls in (("iso", "white noise", MUTED, "-"), ("kron", "Kronecke
     A = np.array([out[ds][key]["coverage_h"] for ds in DS if key in out[ds]])
     if len(A): ax.plot(h, A.mean(0), ls, color=col, lw=1.3, label=lab); ax.fill_between(h, A.min(0), A.max(0), color=col, alpha=0.15, lw=0)
 ax.axhline(0.9, color=INK, lw=0.7, ls=":"); ax.set_ylabel("coverage, 90 % interval"); ax.set_title("(b) per-node coverage", loc="left"); ax.legend(fontsize=6, loc="lower left", handlelength=1.5)
-ax = axs[2]   # network total by lead time: prior alone kron vs white (the trained models' per-h totals come from the horizon eval pass)
-for key, lab, col in (("alone_iso", "white noise, prior alone", MUTED), ("alone", "Kronecker, prior alone", WARM)):
+ax = axs[2]   # network total by lead time: the trained models (horizon eval pass) and the priors alone
+ht = json.load(open("results/analysis/horizon_totals.json")) if os.path.exists("results/analysis/horizon_totals.json") else {}
+for key, lab, col, ls in (("iso", "white noise", MUTED, "-"), ("kron", "Kronecker prior", ACC, "-")):
+    A = np.array([ht[f"{ds}/{key}"]["joint_tot_spread_ratio_h"] for ds in DS if f"{ds}/{key}" in ht])
+    if len(A): ax.plot(h, A.mean(0), ls, color=col, lw=1.3, label=lab); ax.fill_between(h, A.min(0), A.max(0), color=col, alpha=0.15, lw=0)
+for key, lab, col in (("alone", "Kronecker, prior alone", WARM),):
     A = np.array([out[ds][key]["joint_tot_spread_ratio_h"] for ds in DS if key in out[ds]])
-    if len(A): ax.plot(h, A.mean(0), "-", color=col, lw=1.3, label=lab); ax.fill_between(h, A.min(0), A.max(0), color=col, alpha=0.15, lw=0)
+    if len(A): ax.plot(h, A.mean(0), "--", color=col, lw=1.3, label=lab)
 ax.axhline(1, color=INK, lw=0.7, ls=":"); ax.set_ylabel("total: spread ÷ error"); ax.set_title("(c) the network total", loc="left"); ax.legend(fontsize=6, loc="upper right", handlelength=1.5)
 for ax in axs: ax.set_xticks([1, 6, 12]); ax.set_xlabel("lead time (steps of 5 min)")
 fig.savefig("tudelft_thesis_paper/figures/results/exp_horizon.pdf", bbox_inches="tight", pad_inches=0.03); print("written; seeds per cell:", {ds: (out[ds]["iso"]["n_seeds"], out[ds]["kron"]["n_seeds"]) for ds in DS})

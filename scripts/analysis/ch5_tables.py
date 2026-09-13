@@ -94,6 +94,35 @@ if alone and len(alone) == 6:
         "\\cmidrule(lr){2-3}\\cmidrule(lr){4-5}\\cmidrule(lr){6-7}\\cmidrule(lr){8-9}\ndataset & prior alone & diffusion & prior alone & diffusion & prior alone & diffusion & prior alone & diffusion \\\\", rows, "exp_alone")
 else: print("skip exp_alone (prior_alone incomplete)")
 
+# ---- 5.3 / 5.5 the trained product-graph arms ----
+prod = load("product_summary.json")
+if prod:
+    rows = []
+    for ds in DS:
+        i, k = g[f"{ds}/iso"], g[f"{ds}/kron"]; c, st = prod[f"{ds}/cart"], prod[f"{ds}/strong"]
+        rows.append(f"{names[ds]} & " + " & ".join(f"{pct(m(i, 'joint_tot_crps'), m(a, 'joint_tot_crps')):+.1f}" for a in (k, c, st)) + " & " +
+                    " & ".join(f"{m(a, 'joint_tot_coverage'):.2f}" for a in (k, c, st)) + " & " + " & ".join(f"{pct(m(i, 'joint_cum_crps'), m(a, 'joint_cum_crps')):+.1f}" for a in (k, c, st)) + " & " +
+                    " & ".join(f"{pct(m(i, 'crps'), m(a, 'crps')):+.1f}" for a in (k, c, st)))
+    tab("lrrrrrrrrrrrr", " & \\multicolumn{3}{c}{network total, CRPS$_{\\mathrm{sum}}$ $\\Delta$ (\\%)} & \\multicolumn{3}{c}{coverage of the total} & \\multicolumn{3}{c}{cumulative sum, $\\Delta$ (\\%)} & \\multicolumn{3}{c}{per-node CRPS, $\\Delta$ (\\%)} \\\\\n"
+        "\\cmidrule(lr){2-4}\\cmidrule(lr){5-7}\\cmidrule(lr){8-10}\\cmidrule(lr){11-13}\ndataset & Kron. & Cart. & strong & Kron. & Cart. & strong & Kron. & Cart. & strong & Kron. & Cart. & strong \\\\", rows, "exp_product")
+else: print("skip exp_product")
+
+# ---- 5.7 the factor ablation on pems04f, two backbones ----
+fg, fm = load("factor_gwn.json"), load("factor_mlp.json")
+if fg and fm:
+    rows = []
+    for bbname, f in (("linear", fm), ("Graph WaveNet", fg)):
+        i = f["pems04f/iso"]
+        for arm, lab in (("iso", "neither (white noise)"), ("temp", "temporal factor only"), ("spat", "spatial factor only"), ("kron", "both (Kronecker prior)")):
+            c = f[f"pems04f/{arm}"]
+            rows.append(f"{bbname if arm == 'iso' else ''} & {lab} & {m(c, 'crps'):.4f} & {pct(m(i, 'crps'), m(c, 'crps')):+.1f} & {pct(m(i, 'joint_tot_crps'), m(c, 'joint_tot_crps')):+.1f} & {m(c, 'joint_tot_coverage'):.2f} & {m(c, 'joint_tot_spread_ratio'):.2f} & {pct(m(i, 'joint_cum_crps'), m(c, 'joint_cum_crps')):+.1f} & {m(c, 'joint_cum_coverage'):.2f}")
+        if bbname == "linear": rows.append("\\midrule")
+    rows = [r for r in rows]
+    body = "\n".join((r + " \\\\") if not r.startswith("\\midrule") else r for r in rows)
+    (T / "exp_factor.tex").write_text("\\begin{tabular}{llrrrrrrr}\n\\toprule\n & & \\multicolumn{2}{c}{per node} & \\multicolumn{3}{c}{network total} & \\multicolumn{2}{c}{cumulative sum} \\\\\n\\cmidrule(lr){3-4}\\cmidrule(lr){5-7}\\cmidrule(lr){8-9}\n"
+                                     "backbone & prior & CRPS & $\\Delta$ (\\%) & $\\Delta$ (\\%) & coverage & spread / error & $\\Delta$ (\\%) & coverage \\\\\n\\midrule\n" + body + "\n\\bottomrule\n\\end{tabular}\n"); print("wrote exp_factor")
+else: print("skip exp_factor")
+
 # ---- 5.7 chain diagnostic ----
 c = dos["chain"]["pems08f"]
 tab("lrrrr", " & \\multicolumn{2}{c}{white noise} & \\multicolumn{2}{c}{Kronecker prior} \\\\\n\\cmidrule(lr){2-3}\\cmidrule(lr){4-5}\ndenoiser used in the chain & spread / error & coverage & spread / error & coverage \\\\",

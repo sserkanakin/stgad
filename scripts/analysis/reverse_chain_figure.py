@@ -29,7 +29,7 @@ want = [steps[0], steps[int(np.argmin(np.abs(np.log(cs) - np.log(0.05))))], step
 lam, V = np.linalg.eigh(compute_normalized_laplacian(load_adjacency(ds, global_edge=0.0))); order = np.argsort(V[:, 1])
 div = LinearSegmentedColormap.from_list("div", [ACC, "#FFFFFF", WARM]); vmax = 3.0
 fig, axs = plt.subplots(1, 4, figsize=(6.4, 2.6), constrained_layout=True, gridspec_kw={"width_ratios": [1, 1, 1, 1]})
-titles = ["start of the chain\n(heat 7, the prior's draw)", "middle of the chain\n(heat 0.05)", "end of the chain\n(the sample)", "the true residual"]
+titles = ["start of the chain\n(heat 7, the prior's draw)", "middle of the chain\n(heat 0.05)", "end of the chain\n(one sample)", "the true residual"]
 fields = [est[want[0]][1], est[want[1]][1], est[want[2]][1], r0]
 for ax, f, t in zip(axs, fields, titles):
     im = ax.imshow(f[order], aspect="auto", cmap=div, vmin=-vmax, vmax=vmax, interpolation="nearest", extent=[0.5, 12.5, len(order) + 0.5, 0.5])

@@ -997,3 +997,20 @@ a story and no useless information … with reasons for the experiments".
   along the road × lead time) and a colour bar, and its paragraph now explains what a panel is before reading
   it. Chapter now has 6 figures and 10 tables. Every page of Ch. 5 (42–51) checked by render: all figures and
   tables sit directly after the text that introduces them, nothing clipped or overlapping.
+
+## What the denoiser learns (2026-09-13): size, not sign
+
+User: "isn't the end-of-chain image and the true residual too different?" → "are you telling me the diffusion
+model does not learn the residuals?" Checked on pems08f/gwn (`scripts/analysis/denoiser_window_check.py`,
+`denoiser_scale_check.py`, results in `results/analysis/denoiser_checks.json`):
+- Window 3189 (the figure's): one sample vs truth correlation 0.01, ensemble mean (100 samples) −0.02, sample vs
+  sample 0.03; ensemble-mean MAE 0.97 = zero-forecast 0.96; one sample std 0.97 vs truth 1.29; 90 % band covers
+  0.80 of the entries.
+- 240 windows, K = 20: ensemble width per window tracks the true error size per window with corr **0.78**
+  (widths 0.40–1.00 vs truth rms 0.32–2.63); ensemble mean pooled corr with truth **0.007**; standardised
+  residual std 1.37 (under-dispersed), coverage 0.79.
+- Ensemble-mean MAE vs backbone MAE (pems04f): linear 96.9 → 33–34; GCN 33.2 → 26.5–26.8; GWN 18.8 → 19.0.
+**Reading:** with a strong backbone the diffusion learns the size of the error per window and the structure of
+the errors, not their direction (nothing predictable is left); with weak backbones it also recovers the
+predictable part of the residual from the history. Written into §5.5 ("what the denoiser adds"), §5.7 (weak
+backbones), the Fig 5.6 paragraph/caption ("one sample … size and texture, not values"), §6.1, and the companion.

@@ -129,22 +129,6 @@ tab("lrrrr", " & \\multicolumn{2}{c}{white noise} & \\multicolumn{2}{c}{Kronecke
     [f"{n} & {c['iso'][k][0]:.2f} & {c['iso'][k][1]:.2f} & {c['kron'][k][0]:.2f} & {c['kron'][k][1]:.2f}" for n, k in
      (("the learned network", "learned"), ("the prior's filter for every pattern (oracle)", "gauss"), ("the prior's filter for the network-wide pattern only", "hybrid"))], "exp_chain")
 
-# ---- appendix B: derived quantities, with the exact spread ratio ----
-rows = []
-for ds in DS:
-    ck = json.load(open(ROOT / f"results/20260907_matched/kron-hist/{ds}/gwn/kronecker/seed42/train/config.json")); ci = json.load(open(ROOT / f"results/20260907_matched/iso-hist/{ds}/gwn/isotropic/seed42/train/config.json"))
-    p = prior[ds]; th = p["C3_theta"]["matched_theta_quantiles"][-1]
-    ex = f"{struct[ds]['priors']['matched']['ratio_train'][-1]:.2f} & {struct[ds]['priors']['matched']['ratio_test'][-1]:.2f}" if struct and ds in struct else "--- & ---"
-    def sci(v):
-        e = int(np.floor(np.log10(v))); return f"${v / 10 ** e:.1f}\\times10^{{{e}}}$"
-    rows.append(f"{names[ds]} & {p['N']} & {ck['global_edge_beta']:.3f} & {ck['gamma_resolved']:.3f} & {ck['global_edge_match_ratio']:.3f} & {ex} & {th:.0f} & {sci(ck['c_lo'])} & {ck['anc_steps_derived']} & {sci(ci['c_lo'])} & {ci['anc_steps_derived']}")
-(ROOT / "tudelft_thesis_paper/appendix/derived_table.tex").write_text(
-    "\\begin{table}[H]\n\\centering\n\\caption{Derived quantities of the prior and the sampler, Graph WaveNet residuals, one row per dataset. $N$ is the number of sensors; $\\beta$ the weight of the all-to-all regularising link relative to the mean road-edge weight; $\\gamma$ the Laplacian shift; "
-    "rule: the spread ratio of the network total as the matching rule computes it on the training residuals; exact: the same ratio with the temporal mixing taken into account, on the training and on the test residuals; $\\theta_{\\max}$ the precision of the fastest joint mode, with the slowest fixed at $0.8$; "
-    "$c_{\\mathrm{lo}}$ the noise floor and $n$ the number of sampling steps, for the Kronecker prior and for white noise.}\n\\label{tab:derived}\n\\footnotesize\n\\begin{tabular}{lrrrrrrrrrrr}\n\\toprule\n"
-    " & & \\multicolumn{8}{c}{Kronecker prior} & \\multicolumn{2}{c}{white noise} \\\\\n\\cmidrule(lr){3-10}\\cmidrule(lr){11-12}\n & & & & \\multicolumn{3}{c}{spread ratio of the total} & & & & & \\\\\n\\cmidrule(lr){5-7}\n"
-    "dataset & $N$ & $\\beta$ & $\\gamma$ & rule & exact, train & exact, test & $\\theta_{\\max}$ & $c_{\\mathrm{lo}}$ & $n$ & $c_{\\mathrm{lo}}$ & $n$ \\\\\n\\midrule\n" + "\n".join(r + " \\\\" for r in rows) + "\n\\bottomrule\n\\end{tabular}\n\\end{table}\n"); print("wrote derived_table")
-
 # ---- appendix C: full grids ----
 rows = [f"{names[ds]} & " + " & ".join(f"{dos['backbone_mae'][f'{ds}/{b}']:.2f}" for b in ("mlp", "gcn", "gwn")) for ds in DS]
 tab("lrrr", "dataset & linear & GCN & Graph WaveNet \\\\", rows, "app_backbone")

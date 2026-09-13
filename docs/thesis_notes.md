@@ -1020,3 +1020,17 @@ backbones), the Fig 5.6 paragraph/caption ("one sample … size and texture, not
   diagnostic and the sampling rule ("two diagnostics"); §6.1 reverted; companion block removed. The
   measurements stay in `results/analysis/denoiser_checks.json` and the scripts for reference. Chapter 5 now has
   5 figures and 10 tables. Build clean, 68 pages.
+
+## User decision (2026-09-13): no mention of the global edge; Appendix B removed
+
+User: "remove any mention of the global edge please. in the appendix also … directly remove appendix b and
+anywhere we talk about it". Done: `appendix/appendix-derived.tex` no longer input (file kept on disk, unused);
+its graph-repair note, the γ rule with its approximation, and the floor/step rule moved to a first section of
+Appendix C ("Rules Behind the Prior and the Sampler", label sec:app_rules) without β; Table B.1 dropped
+(`derived_table.tex` deleted, generator removed from ch5_tables.py). §4.3.2 now says only that γ is chosen on
+the training residuals so that the prior's spread on the network total is close to the measured one (grid
+search, Appendix C). The "road graph only, γ = 0.8" prior removed from Fig 5.2 and from the §5.3 text (the
+sentences contrasting it with the prior used are gone); "(β,γ)" → "γ" in §5.7 and Table 5.9's caption; Ch. 6/7
+and the Summary no longer mention the link. Companion: road-only line, the global-edge FAQ entry and "Appendix B"
+mentions removed. Build clean, 66 pages. The code still applies the all-to-all regularisation (β matched with γ);
+this is now documented only in the code and in these notes.

@@ -60,8 +60,8 @@ if ("prior" in only or not only) and struct is not None and len(struct) == 6:
     pc = {"iso": MUTED, "road08": AMBER, "matched": ACC, "cartesian": VIOLET, "strong": GREEN}
     fig, axs = plt.subplots(1, 2, figsize=(6.4, 2.5), constrained_layout=True)
     ax = axs[0]   # four priors at six sizes of sum: mean over datasets, range as error bars
-    for k, p in enumerate(("iso", "road08", "cartesian", "matched")):
-        R = np.array([struct[ds]["priors"][p]["ratio_test"] for ds in DS]); xs = np.arange(6) + (k - 1.5) * 0.1
+    for k, p in enumerate(("iso", "cartesian", "matched")):
+        R = np.array([struct[ds]["priors"][p]["ratio_test"] for ds in DS]); xs = np.arange(6) + (k - 1) * 0.1
         ax.errorbar(xs, R.mean(0), yerr=[R.mean(0) - R.min(0), R.max(0) - R.mean(0)], fmt="o-", color=pc[p], lw=1.2, ms=3, capsize=2, elinewidth=0.7, label=lab[p])
     ax.axhline(1, color=INK, lw=0.7, ls=":"); ax.set_xticks(range(6)); ax.set_xticklabels(["one sensor", "1-hop", "64 regions", "16 regions", "4 regions", "network"], rotation=30, ha="right", fontsize=6.5)
     ax.set_ylim(0.2, 1.3); ax.set_ylabel("spread of the sum: prior ÷ measured"); ax.set_title("(a) by size of the sum", loc="left"); ax.legend(fontsize=6, loc="lower left", handlelength=1.5)

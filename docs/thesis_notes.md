@@ -1014,3 +1014,9 @@ model does not learn the residuals?" Checked on pems08f/gwn (`scripts/analysis/d
 the errors, not their direction (nothing predictable is left); with weak backbones it also recovers the
 predictable part of the residual from the history. Written into §5.5 ("what the denoiser adds"), §5.7 (weak
 backbones), the Fig 5.6 paragraph/caption ("one sample … size and texture, not values"), §6.1, and the companion.
+- **User decision (2026-09-13): the size-vs-sign discussion is NOT in the thesis** ("it will weaken our claims")
+  and the reverse-chain figure is removed. §5.5 back to "sharpens the ensemble around what the conditioning says
+  about the window"; the §5.7 sentence on the weak backbones' corrected forecast removed; §5.8 keeps the chain
+  diagnostic and the sampling rule ("two diagnostics"); §6.1 reverted; companion block removed. The
+  measurements stay in `results/analysis/denoiser_checks.json` and the scripts for reference. Chapter 5 now has
+  5 figures and 10 tables. Build clean, 68 pages.

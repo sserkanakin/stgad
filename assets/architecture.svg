@@ -1,0 +1,108 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 520" font-family="'Segoe UI',system-ui,-apple-system,Helvetica,Arial,sans-serif" role="img" aria-label="STGAD pipeline: traffic graph and history feed a Graph WaveNet backbone that produces a point forecast; the residual Y minus Y-hat is modelled by a graph-structured diffusion with a Kronecker prior; sampling yields a probabilistic forecast scored by CRPS, interval coverage and distributional fidelity.">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0a0f1e"/>
+      <stop offset="1" stop-color="#111a33"/>
+    </linearGradient>
+    <linearGradient id="teal" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2dd4bf"/><stop offset="1" stop-color="#0d9488"/></linearGradient>
+    <linearGradient id="amber" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fbbf24"/><stop offset="1" stop-color="#d97706"/></linearGradient>
+    <linearGradient id="violet" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#a78bfa"/><stop offset="1" stop-color="#7c3aed"/></linearGradient>
+    <linearGradient id="cyan" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#38bdf8"/><stop offset="1" stop-color="#0ea5e9"/></linearGradient>
+    <linearGradient id="violetfill" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#1b1446"/><stop offset="1" stop-color="#241a5c"/></linearGradient>
+    <filter id="soft" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="3" stdDeviation="6" flood-color="#000" flood-opacity="0.45"/></filter>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#64748b"/></marker>
+  </defs>
+
+  <rect x="0" y="0" width="1280" height="520" rx="22" fill="url(#bg)"/>
+  <rect x="0.5" y="0.5" width="1279" height="519" rx="22" fill="none" stroke="#233049" stroke-width="1"/>
+
+  <!-- header -->
+  <text x="40" y="52" fill="#f1f5ff" font-size="25" font-weight="700">STGAD — Graph-Structured Diffusion for Probabilistic Traffic Forecasting</text>
+  <text x="40" y="80" fill="#8ca0c4" font-size="15">A graph-aware diffusion prior over forecast residuals · matched <tspan fill="#a78bfa" font-weight="600">kron</tspan> vs <tspan fill="#94a3b8" font-weight="600">iso</tspan> study</text>
+
+  <!-- connector line -->
+  <line x1="40" y1="250" x2="1240" y2="250" stroke="#1f2b44" stroke-width="2"/>
+
+  <!-- STAGE 1: input -->
+  <g filter="url(#soft)">
+    <rect x="40" y="168" width="196" height="164" rx="14" fill="#141f38" stroke="#334467" stroke-width="1.2"/>
+  </g>
+  <rect x="40" y="168" width="196" height="5" rx="2.5" fill="#64748b"/>
+  <text x="138" y="200" text-anchor="middle" fill="#cbd5e1" font-size="12.5" font-weight="700" letter-spacing="1.2">INPUT</text>
+  <!-- mini sensor graph -->
+  <g stroke="#64748b" stroke-width="1.4" fill="#94a3b8">
+    <line x1="92" y1="238" x2="128" y2="224"/><line x1="128" y1="224" x2="176" y2="236"/><line x1="92" y1="238" x2="118" y2="266"/><line x1="118" y1="266" x2="176" y2="236"/><line x1="118" y1="266" x2="150" y2="286"/>
+    <circle cx="92" cy="238" r="6"/><circle cx="128" cy="224" r="6"/><circle cx="176" cy="236" r="6"/><circle cx="118" cy="266" r="6"/><circle cx="150" cy="286" r="6"/>
+  </g>
+  <text x="138" y="316" text-anchor="middle" fill="#8ca0c4" font-size="12">Sensor graph + 12-step history</text>
+
+  <!-- STAGE 2: backbone -->
+  <g filter="url(#soft)">
+    <rect x="292" y="168" width="196" height="164" rx="14" fill="#102a2a" stroke="#1d5f58" stroke-width="1.2"/>
+  </g>
+  <rect x="292" y="168" width="196" height="5" rx="2.5" fill="url(#teal)"/>
+  <text x="390" y="200" text-anchor="middle" fill="#5eead4" font-size="12.5" font-weight="700" letter-spacing="1">BACKBONE</text>
+  <text x="390" y="238" text-anchor="middle" fill="#e6fffb" font-size="17" font-weight="700">Graph WaveNet</text>
+  <text x="390" y="262" text-anchor="middle" fill="#9fe8df" font-size="12.5">dilated TCN + adaptive graph</text>
+  <text x="390" y="300" text-anchor="middle" fill="#8ca0c4" font-size="12.5">point forecast  <tspan fill="#5eead4" font-weight="700" font-style="italic">Ŷ</tspan></text>
+
+  <!-- STAGE 3: residual -->
+  <g filter="url(#soft)">
+    <rect x="544" y="168" width="196" height="164" rx="14" fill="#2b2008" stroke="#7c5a12" stroke-width="1.2"/>
+  </g>
+  <rect x="544" y="168" width="196" height="5" rx="2.5" fill="url(#amber)"/>
+  <text x="642" y="200" text-anchor="middle" fill="#fcd34d" font-size="12.5" font-weight="700" letter-spacing="1">RESIDUAL</text>
+  <text x="642" y="244" text-anchor="middle" fill="#fff7e6" font-size="20" font-weight="700" font-style="italic">R = Y − Ŷ</text>
+  <text x="642" y="276" text-anchor="middle" fill="#f0cf94" font-size="12.5">raw units, masked</text>
+  <text x="642" y="302" text-anchor="middle" fill="#8ca0c4" font-size="12">structure the backbone left behind</text>
+
+  <!-- STAGE 4: diffusion (highlighted contribution) -->
+  <g filter="url(#soft)">
+    <rect x="796" y="150" width="212" height="200" rx="16" fill="url(#violetfill)" stroke="#8b5cf6" stroke-width="1.8"/>
+  </g>
+  <rect x="796" y="150" width="212" height="5" rx="2.5" fill="url(#violet)"/>
+  <g transform="translate(980,140)"><rect x="-70" y="0" width="70" height="20" rx="10" fill="#7c3aed"/><text x="-35" y="14" text-anchor="middle" fill="#fff" font-size="10.5" font-weight="700" letter-spacing="0.5">CONTRIBUTION</text></g>
+  <text x="902" y="186" text-anchor="middle" fill="#c4b5fd" font-size="12.5" font-weight="700" letter-spacing="1">DIFFUSION</text>
+  <text x="902" y="214" text-anchor="middle" fill="#f3efff" font-size="16" font-weight="700">Graph-structured prior</text>
+  <text x="902" y="246" text-anchor="middle" fill="#ddd6fe" font-size="19" font-weight="700">Σ = Σ_T ⊗ Σ_S</text>
+  <text x="902" y="272" text-anchor="middle" fill="#c4b5fd" font-size="13">Σ_S = (L + γI)⁻¹</text>
+  <text x="902" y="300" text-anchor="middle" fill="#a99be0" font-size="12">UGnet denoiser · FCPS schedule</text>
+  <text x="902" y="322" text-anchor="middle" fill="#a99be0" font-size="12">closed-form OU reverse SDE</text>
+
+  <!-- STAGE 5: output -->
+  <g filter="url(#soft)">
+    <rect x="1064" y="168" width="176" height="164" rx="14" fill="#0b2436" stroke="#155e82" stroke-width="1.2"/>
+  </g>
+  <rect x="1064" y="168" width="176" height="5" rx="2.5" fill="url(#cyan)"/>
+  <text x="1152" y="200" text-anchor="middle" fill="#7dd3fc" font-size="12.5" font-weight="700" letter-spacing="1">FORECAST</text>
+  <!-- fan chart glyph -->
+  <g>
+    <path d="M1096 300 C1120 288 1140 268 1172 252 L1210 244 L1210 300 Z" fill="#0ea5e9" opacity="0.18"/>
+    <path d="M1096 300 C1120 294 1140 280 1172 270 L1210 266 L1210 300 Z" fill="#38bdf8" opacity="0.28"/>
+    <path d="M1096 300 C1120 291 1140 274 1172 261 L1210 255" fill="none" stroke="#7dd3fc" stroke-width="2"/>
+  </g>
+  <text x="1152" y="320" text-anchor="middle" fill="#8ca0c4" font-size="12">probabilistic ensemble</text>
+
+  <!-- arrows -->
+  <g stroke="#64748b" stroke-width="2.2" marker-end="url(#arrow)">
+    <line x1="238" y1="250" x2="288" y2="250"/>
+    <line x1="490" y1="250" x2="540" y2="250"/>
+    <line x1="742" y1="250" x2="792" y2="250"/>
+    <line x1="1010" y1="250" x2="1060" y2="250"/>
+  </g>
+
+  <!-- footer metrics band -->
+  <rect x="40" y="396" width="1200" height="92" rx="14" fill="#0e1830" stroke="#223150" stroke-width="1"/>
+  <text x="62" y="428" fill="#e2e8f0" font-size="14" font-weight="700">Evaluated as matched pairs — the only axis that changes is the prior</text>
+  <g font-size="12.5">
+    <g transform="translate(62,452)"><circle cx="6" cy="-4" r="5" fill="#a78bfa"/><text x="20" y="0" fill="#c4b5fd" font-weight="600">kron</text><text x="60" y="0" fill="#8ca0c4">graph-structured Σ_T⊗Σ_S</text></g>
+    <g transform="translate(300,452)"><circle cx="6" cy="-4" r="5" fill="#64748b"/><text x="20" y="0" fill="#cbd5e1" font-weight="600">flat</text><text x="54" y="0" fill="#8ca0c4">temporal-only Σ_S = I</text></g>
+    <g transform="translate(540,452)"><circle cx="6" cy="-4" r="5" fill="#94a3b8"/><text x="20" y="0" fill="#e2e8f0" font-weight="600">iso</text><text x="48" y="0" fill="#8ca0c4">isotropic σ²I baseline</text></g>
+  </g>
+  <g transform="translate(792,440)" font-size="12.5">
+    <text x="0" y="0" fill="#8ca0c4">Scored by</text>
+    <g transform="translate(70,-14)"><rect width="104" height="22" rx="11" fill="#172338" stroke="#2dd4bf" stroke-opacity="0.5"/><text x="52" y="15" text-anchor="middle" fill="#5eead4" font-size="11.5" font-weight="600">CRPS</text></g>
+    <g transform="translate(184,-14)"><rect width="150" height="22" rx="11" fill="#172338" stroke="#fbbf24" stroke-opacity="0.5"/><text x="75" y="15" text-anchor="middle" fill="#fcd34d" font-size="11.5" font-weight="600">interval coverage</text></g>
+    <g transform="translate(344,-14)"><rect width="104" height="22" rx="11" fill="#172338" stroke="#38bdf8" stroke-opacity="0.5"/><text x="52" y="15" text-anchor="middle" fill="#7dd3fc" font-size="11.5" font-weight="600">SW₁ / energy</text></g>
+  </g>
+</svg>
